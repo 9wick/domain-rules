@@ -39,14 +39,14 @@ rule は、操作ごとではなく対象ごとに1組だけ持ちます。あ�
 
 | 部品 | 責務 | 持つもの |
 |---|---|---|
-| model | 値の形と、既存の値の取得 | 入力の schema と永続化の schema、model の port(id から取る) |
+| model | 値の形 | 入力の schema と永続化の schema |
 | action | 保存を伴わない操作の入力の形 | 入力の schema |
 | rule | 線路の1つの step | 名前、`requires`、`when`、`check` |
 | port | check から呼ぶ外の機能の宣言 | 名前、引数と結果と失敗の型 |
 | cached | port に、1回の呼び出しの中での cache を付ける | 元の port |
-| modelRules | model の rule の組 | 保存の rule の並び、削除の rule の並び |
+| modelRules | model の rule の組 | 既存の値を取る port、保存の rule の並び、削除の rule の並び |
 | actionRules | action の rule の組 | rule の並び、`output` |
-| provider | port の実装 | check から呼ぶ port、model の port、時計の実装 |
+| provider | port の実装 | check から呼ぶ port、既存の値を取る port、時計の実装 |
 | bind | rule の組と provider を束ね、呼び出せるメソッドを作る | なし |
 
 成功と失敗は [@praha/byethrow](https://github.com/praha-inc/byethrow) の `Result` で表します。provider と、束ねたあとのメソッドは `ResultAsync`(byethrow の型で、`Promise<Result>`)を返します。時計の provider だけは、時刻の数を返します。check は `Result` を返します。port を呼ぶ check は async の関数にして、`Promise<Result>` を返します。
@@ -101,13 +101,14 @@ export const article = model({
 
 export type ArticleValue = Value<typeof article>;   // schema.input の出力の型
 export type Article = Persisted<typeof article>;    // schema.persisted の出力の型
+export type ExistingArticle = Omit<Article, "id"> & { id: ArticleIdExisted }; // DB から読んだ記事の型
 ```
 
 - **`schema.input`。** 入力の値の形です。Valibot の `v.object` でなければなりません。更新のときに、入力にある項目だけをその項目の schema で検証するため、ライブラリが項目ごとの schema(`entries`)を読むからです。そのため、object 全体に付けた検証は使われません。項目をまたぐ条件(「著者とレビュアーは別の人」など)は rule に書きます。
-- **`schema.persisted`。** 永続化の形です。DB とやり取りするときの型で、DB に保存する値と、既存の値の両方がこの型です。入力より強い型を持てます。この例では、`blogId` と `reviewerId` を、存在を確かめた id の型にしています(`BlogIdExistedSchema` は `v.pipe(BlogIdSchema, v.brand("BlogIdExisted"))`)。`id` は、既存の記事なら `ArticleIdExisted`、新しく作る記事なら `ArticleIdNew` です。保存するには、すべての項目がこの型になっている必要があります。ライブラリは、この schema で入力も既存の値も検証しません。入力を通すと、確かめていない値に brand が付いてしまうからです。ライブラリはこの schema を、永続化の型を決めるためにだけ使います。
+- **`schema.persisted`。** 永続化の形です。DB とやり取りするときの型で、DB に保存する値はこの型です。既存の値の型は、この型に代入できる型です。入力より強い型を持てます。この例では、`blogId` と `reviewerId` を、存在を確かめた id の型にしています(`BlogIdExistedSchema` は `v.pipe(BlogIdSchema, v.brand("BlogIdExisted"))`)。`id` は、既存の記事なら `ArticleIdExisted`、新しく作る記事なら `ArticleIdNew` です。保存するには、すべての項目がこの型になっている必要があります。ライブラリは、この schema で入力も既存の値も検証しません。入力を通すと、確かめていない値に brand が付いてしまうからです。ライブラリはこの schema を、永続化の型を決めるためにだけ使います。
 - **作成時の既定値。** `schema.input` の `v.optional` の既定値に書きます。新規作成のときだけ使われます。
 
-model は1つの port を自動で宣言します。`article.load` は、schema の `id` の項目の値で既存の記事を取る port です。実装は provider として注入します。`article.load` は `Article` を返すので、既存の値は最初から永続化の型です。ライブラリは load の結果を検証しません。
+model は port を持ちません。既存の値を取る port は利用者が宣言し、rule の組の `load` に渡します(「model の rule の組を作る」を参照)。既存の値の型は、その port の返り値の型から決まります。この例の `ExistingArticle` は、id が `ArticleIdExisted` に絞られた型です。ライブラリは、既存の値を取る port の結果を検証しません。
 
 ライブラリは新しい id を作りません。id も、ほかの項目と同じく rule で昇格します(「確かめた値で型を昇格する」を参照)。
 
@@ -117,11 +118,11 @@ rule は、どの線路に属するかを値で受け取ります。線路は3�
 
 | 線路 | 書き方 | 状態の初めの形 |
 |---|---|---|
-| model の保存 | `article.save` | `{ pre: Article \| null, next: ArticleValue, actor, now }` |
-| model の削除 | `article.delete` | `{ pre: Article, next: null, actor, now }` |
+| model の保存 | `article.save` | `{ pre: ExistingArticle \| null, next: ArticleValue, actor, now }` |
+| model の削除 | `article.delete` | `{ pre: ExistingArticle, next: null, actor, now }` |
 | action | `previewArticle.decide` | `{ input, actor, now }` |
 
-- `pre` は既存の値です。DB から読んだ値で、新規作成のときは `null` です。
+- `pre` は既存の値です。DB から読んだ値で、型は rule の組の `load` に渡した port の返り値の型です。新規作成のときは `null` です。
 - `next` は変更後の値です。既存の値に入力を重ねたものです。型は `ArticleValue` ですが、入力にない項目には、既存の値がそのまま入っています。
 - `now` は呼び出された時刻です。`clock` の provider が返し、1回の呼び出しの中では同じ値です。
 
@@ -142,6 +143,10 @@ port は、check から呼ぶ外の機能の宣言です。引数、結果、失
 ```ts
 import { port, cached } from "domain-rules";
 
+// 既存の記事を取る。rule の組の load に渡す
+export const findArticleById = port("findArticleById")
+  .of<(id: ArticleId) => ExistingArticle | null, InfraError>();
+
 // 存在すれば、同じ id を存在を確かめた型で返す
 export const requireExistingUser = port("requireExistingUser")
   .of<(id: UserId) => UserIdExisted, "USER_NOT_FOUND" | InfraError>();
@@ -152,7 +157,7 @@ export const findBlog = cached(
 );
 
 export const findArticlesInBlog = cached(
-  port("findArticlesInBlog").of<(blogId: BlogId) => readonly Article[], InfraError>(),
+  port("findArticlesInBlog").of<(blogId: BlogId) => readonly ExistingArticle[], InfraError>(),
 );
 
 export const newArticleId = port("newArticleId").of<() => ArticleIdNew, InfraError>();
@@ -405,6 +410,7 @@ model ごとに、rule の組を1つ作ります。並べた順が、線路の�
 import { modelRules } from "domain-rules";
 
 export const articleRules = modelRules(article, {
+  load: findArticleById,
   save: [
     memberCanSave,
     statusChangesAreAllowed,
@@ -426,6 +432,7 @@ export const articleRules = modelRules(article, {
 });
 ```
 
+- **`load`。** 既存の値を取る port です。ライブラリは入力の `id` でこの port を呼び、`null` なら load の step で失敗します。返り値の型は、model の `schema.persisted` の型に代入できなければなりません。`save` で `update` や `upsert` を、または `delete` を使うときに要ります。
 - **`save`。** `article.save` の rule を並べます。`create`、`update`、`upsert` のどれで呼ばれても、この並びを順に通ります。
 - **`delete`。** `article.delete` の rule を並べます。`delete` を書かなければ、その model は削除できません。束ねたあとに `delete` のメソッドが作られないからです。`save` も同じです。
 
@@ -461,7 +468,7 @@ export const previewArticle = action({
 });
 
 export const findArticle = cached(
-  port("findArticle").of<(blogId: BlogId, id: ArticleId) => Article | null, InfraError>(),
+  port("findArticle").of<(blogId: BlogId, id: ArticleId) => ExistingArticle | null, InfraError>(),
 );
 
 export const targetArticleExists = rule(previewArticle.decide, {
@@ -474,14 +481,14 @@ export const targetArticleExists = rule(previewArticle.decide, {
   },
 });
 
-export const notArchived = rule(previewArticle.decide.with<{ article: Article }>(), {
+export const notArchived = rule(previewArticle.decide.with<{ article: ExistingArticle }>(), {
   name: "アーカイブ済みの記事はプレビューできない",
   when: always,
   check: ({ article }) =>
     article.status !== "ARCHIVED" ? Result.succeed() : Result.fail("ARCHIVED"),
 });
 
-export const canPreview = rule(previewArticle.decide.with<{ article: Article }>(), {
+export const canPreview = rule(previewArticle.decide.with<{ article: ExistingArticle }>(), {
   name: "プレビューできるのはメンバーの著者かレビュアーだけ",
   when: always,
   check: ({ actor, article }) => {
@@ -508,14 +515,14 @@ export const previewArticleRules = actionRules(previewArticle, {
 
 ### provider を定義して束ねる
 
-provider は port の実装です。check から呼ぶ port、model の port(`load`)、時計のどれでも、同じ `provide` で渡します。この例では、ドメインの外で定義しています。
+provider は port の実装です。check から呼ぶ port、既存の値を取る port、時計のどれでも、同じ `provide` で渡します。この例では、ドメインの外で定義しています。
 
 ```ts
 import { provide, bind, clock } from "domain-rules";
-import { article, articleRules, findArticle, findArticlesInBlog, findBlog, newArticleId, previewArticleRules, requireExistingUser } from "@example/domain";
+import { articleRules, findArticle, findArticleById, findArticlesInBlog, findBlog, newArticleId, previewArticleRules, requireExistingUser } from "@example/domain";
 
 export const providers = [
-  provide(article.load, (id) => articleRepository.findById(id)),
+  provide(findArticleById, (id) => articleRepository.findById(id)),
   provide(newArticleId, () => createArticleId()),
   provide(requireExistingUser, (id) => userRepository.requireExisting(id)),
   provide(findBlog, (id) => blogRepository.findById(id)),
@@ -535,7 +542,7 @@ provider の不足を型で検出するには、provider の一覧を `as const`
 
 この例では、`bind` を起動時に1回だけ呼んでいます。`bind` は provider の確認を2段階で行います。
 
-- **型での確認。** rule の組の rule が `requires` に書いた port と model の port のうち、provider の一覧にないものがあれば型エラーにします。
+- **型での確認。** rule の組の `load` と、rule が `requires` に書いた port のうち、provider の一覧にないものがあれば型エラーにします。
 - **起動時の確認。** provider の不足と、同じ port の重複を確かめ、見つかればエラーにします。
 
 provider の実装が、別の repository や別の取得を使うのは自由です。どう取るかは provider の中の都合なので、ライブラリは provider 同士の依存を扱いません。
@@ -545,7 +552,7 @@ provider の実装が、別の repository や別の取得を使うのは自由�
 ```ts
 const testDomain = bind([articleRules], {
   providers: [
-    provide.value(article.load, existingArticle),
+    provide.value(findArticleById, existingArticle),
     provide.value(newArticleId, ArticleIdNewSchema.parse("art_1")),
     provide.value(requireExistingUser, UserIdExistedSchema.parse("usr_1")),
     provide.value(findBlog, openBlog),
@@ -585,7 +592,7 @@ import { open } from "domain-rules";
 
 const save = (p: Persistable<typeof article, "create" | "update">) => {
   const { pre, next, actor } = open(p);
-  // pre: Readonly<Article> | null。create なら null、update なら Readonly<Article>
+  // pre: Readonly<ExistingArticle> | null。create なら null、update なら Readonly<ExistingArticle>
   // next: Readonly<Article>。永続化の型
   ...
 };
@@ -613,7 +620,7 @@ const save = (p: Persistable<typeof article, "create" | "update">) => {
 ```ts
 type Failure =
   | { step: "input"; error: { issues: SchemaIssue[] } }       // 入力が schema を満たさない
-  | { step: "load"; error: "NOT_FOUND" | LoadError }           // 既存の値がないか、load の port が失敗した
+  | { step: "load"; error: "NOT_FOUND" | LoadError }           // 既存の値がないか、既存の値を取る port が失敗した
   | { step: "著者とレビュアーは別の人"; error: "SAME_AUTHOR_AND_REVIEWER" }
   | { step: "レビュアーが存在する"; error: "USER_NOT_FOUND" | InfraError }
   | ...;                                                        // 並べた rule ごとに1つ
@@ -628,7 +635,7 @@ rule の失敗の値は、check が `Result.fail` に入れた値そのもので
 | 順 | step | やること | 失敗 |
 |---|---|---|---|
 | 1 | input | 入力を schema で検証する | 検証で見つかった問題 |
-| 2 | load | id から既存の値を取る | `NOT_FOUND`、load の port の失敗 |
+| 2 | load | rule の組の `load` の port で、入力の `id` の既存の値を取る | `NOT_FOUND`、load の port の失敗 |
 | 3 | merge | 既存の値に、検証済みの入力を重ねて next を作る | なし |
 | 4 | rule | rule の組に並べた rule を、並べた順に1つずつ通る | その rule の check の失敗 |
 | 5 | seal または output | 保存では最後の状態に封をする。action では `output` で値を組み立てて封をする | なし |
