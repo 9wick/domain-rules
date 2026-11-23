@@ -62,12 +62,20 @@ export default defineConfig({
       "vitest/expect-expect": ["error", { assertFunctionNames: ["expect", "expectTypeOf"] }],
     },
     overrides: [
-      // ── 性質上許すもの:そのファイルが何であるかによって、ルールが守る性質が別の形で保たれるもの ──
+      // ── テストの方針:テストでだけ許すもの ──
       {
-        // 型の契約テストは「コンパイルできないこと」を ts-expect-error のコメントで確かめる。理由の説明を必須にする
         files: ["test/**/*.ts"],
         rules: {
+          // 型の契約テストは「コンパイルできないこと」を ts-expect-error のコメントで確かめる。理由の説明は必須にする
           "typescript/ban-ts-comment": ["error", { "ts-expect-error": "allow-with-description", "ts-ignore": true }],
+          // rule の check や provider が throw したときの振る舞いを確かめるため、throw を書く
+          "strict/no-throw": "off",
+          // brand 付きの id や、わざと型に合わない値を作って渡す
+          "typescript/consistent-type-assertions": "off",
+          "typescript/no-unsafe-type-assertion": "off",
+          "typescript/no-unsafe-assignment": "off",
+          // README の例と同じく、actor の絞り込みに型述語を使う
+          "strict/no-type-predicate": "off",
         },
       },
       {
@@ -75,14 +83,10 @@ export default defineConfig({
         files: ["test/types.ts", "test/engine.test.ts"],
         rules: { "vitest/expect-expect": "off" },
       },
+      // ── 実装の例外:そのファイルが何であるかによって、ルールが守る性質が別の形で保たれるもの ──
       {
         // 復帰できない異常(provider の重複・不足、偽造された値)は throw で止める
         files: ["src/bind.ts", "src/seal.ts"],
-        rules: { "strict/no-throw": "off" },
-      },
-      {
-        // rule の check や provider が throw したときの振る舞いを確かめるため、テストでは throw を書く
-        files: ["test/**/*.test.ts"],
         rules: { "strict/no-throw": "off" },
       },
       {
@@ -163,38 +167,6 @@ export default defineConfig({
           "typescript/no-unsafe-type-assertion": "off",
           "typescript/strict-boolean-expressions": "off",
         },
-      },
-      // テストが brand 付きの id などを型 assertion で作っている。
-      // 返済:domain の schema や生成関数を通して値を作る
-      {
-        files: ["test/action.test.ts"],
-        rules: { "typescript/consistent-type-assertions": "off", "typescript/no-unsafe-type-assertion": "off" },
-      },
-      {
-        files: ["test/blog.test.ts"],
-        rules: {
-          "typescript/consistent-type-assertions": "off",
-          "typescript/no-unsafe-assignment": "off",
-          "typescript/no-unsafe-type-assertion": "off",
-        },
-      },
-      {
-        files: ["test/engine.test.ts"],
-        rules: { "typescript/consistent-type-assertions": "off", "typescript/no-unsafe-type-assertion": "off" },
-      },
-      {
-        files: ["test/types.ts"],
-        rules: { "typescript/consistent-type-assertions": "off", "typescript/no-unsafe-type-assertion": "off" },
-      },
-      {
-        files: ["test/when.test.ts"],
-        rules: { "typescript/consistent-type-assertions": "off" },
-      },
-      // README の例と同じく、actor の絞り込みに型述語を使っている。
-      // 返済:README の例とあわせて、schema による検証で絞り込む形に変える
-      {
-        files: ["test/blog/domain.ts"],
-        rules: { "strict/no-type-predicate": "off" },
       },
     ],
     options: {
