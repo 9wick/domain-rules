@@ -12,8 +12,18 @@ export type Persistable<
   Pre = Persisted<M>,
   A = Actor,
 > = Op extends "create"
-  ? Sealed<"persistable", M["name"], "create", { readonly pre: null; readonly next: Readonly<Persisted<M>>; readonly actor: A }>
-  : Sealed<"persistable", M["name"], "update", { readonly pre: Readonly<Pre>; readonly next: Readonly<Persisted<M>>; readonly actor: A }>;
+  ? Sealed<
+      "persistable",
+      M["name"],
+      "create",
+      { readonly pre: null; readonly next: Readonly<Persisted<M>>; readonly actor: A }
+    >
+  : Sealed<
+      "persistable",
+      M["name"],
+      "update",
+      { readonly pre: Readonly<Pre>; readonly next: Readonly<Persisted<M>>; readonly actor: A }
+    >;
 
 export type Deletable<M extends Model, Pre = Persisted<M>, A = Actor> = Sealed<
   "deletable",
@@ -46,8 +56,7 @@ class Seal {
   }
 }
 
-export const seal = <S extends AnySealed>(c: S[typeof sealed]["contents"]): S =>
-  new Seal(c) as unknown as S;
+export const seal = <S extends AnySealed>(c: S[typeof sealed]["contents"]): S => new Seal(c) as unknown as S;
 
 export const open = <S extends AnySealed>(s: S): S[typeof sealed]["contents"] =>
   Seal.open(s) as S[typeof sealed]["contents"];

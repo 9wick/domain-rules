@@ -24,13 +24,18 @@ type ModelMethods<M extends Model, I> = I extends {
 }
   ? Pick<
       {
-        create: (args: Args<Omit<InputOf<M>, "id">>) => Result.ResultAsync<Persistable<M, "create", X, SA>, InputFailure | SF>;
+        create: (
+          args: Args<Omit<InputOf<M>, "id">>,
+        ) => Result.ResultAsync<Persistable<M, "create", X, SA>, InputFailure | SF>;
         update: (
           args: Args<InputOf<M> & { readonly id: Id<M> }>,
         ) => Result.ResultAsync<Persistable<M, "update", X, SA>, InputFailure | LF | SF>;
         upsert: (
           args: Args<InputOf<M>>,
-        ) => Result.ResultAsync<Persistable<M, "create", X, SA> | Persistable<M, "update", X, SA>, InputFailure | LF | SF>;
+        ) => Result.ResultAsync<
+          Persistable<M, "create", X, SA> | Persistable<M, "update", X, SA>,
+          InputFailure | LF | SF
+        >;
         delete: (args: Args<{ readonly id: Id<M> }>) => Result.ResultAsync<Deletable<M, X, DA>, InputFailure | LF | DF>;
       },
       Ms & ("create" | "update" | "upsert" | "delete")
@@ -45,11 +50,12 @@ type ActionMethods<A extends Action, I> = I extends { actor: infer Ac; failure: 
     }
   : never;
 
-type MethodsOf<S> = S extends ModelRules<infer M>
-  ? ModelMethods<M, RuleSetInfo<S>>
-  : S extends ActionRules<infer A>
-    ? ActionMethods<A, RuleSetInfo<S>>
-    : never;
+type MethodsOf<S> =
+  S extends ModelRules<infer M>
+    ? ModelMethods<M, RuleSetInfo<S>>
+    : S extends ActionRules<infer A>
+      ? ActionMethods<A, RuleSetInfo<S>>
+      : never;
 
 export type Bound<Sets extends readonly RuleSet[]> = { readonly [S in Sets[number] as S["name"]]: MethodsOf<S> };
 
@@ -73,7 +79,9 @@ export function bind<const Sets extends readonly RuleSet[], const Ps extends rea
   const bound: Record<string, unknown> = {};
   for (const set of sets) {
     if (Object.hasOwn(bound, set.name)) throw new Error(`bind: "${set.name}" の rule の組が重複しています`);
-    const missing = requiredPorts(set).filter((port) => !impls.has(port.token)).map((port) => port.name);
+    const missing = requiredPorts(set)
+      .filter((port) => !impls.has(port.token))
+      .map((port) => port.name);
     if (missing.length > 0) throw new Error(`bind: provider が足りない port: ${missing.join(", ")}`);
     bound[set.name] = set.kind === "modelRules" ? modelMethods(set, impls) : actionMethods(set, impls);
   }
@@ -114,7 +122,9 @@ const validateWhole = async (schema: ObjectSchema, input: State): Promise<Result
   const unknown = unknownKeys(schema, defined, (key) => key !== "id");
   const r = await validate(schema, defined);
   const issues = [...unknown, ...(Result.isFailure(r) ? r.error : [])];
-  return issues.length > 0 || Result.isFailure(r) ? Result.fail(inputFailure(issues)) : Result.succeed(r.value as State);
+  return issues.length > 0 || Result.isFailure(r)
+    ? Result.fail(inputFailure(issues))
+    : Result.succeed(r.value as State);
 };
 
 // 更新では入力にある項目だけを、その項目の schema で検証する
@@ -132,12 +142,16 @@ const validatePartial = async (schema: ObjectSchema, input: State): Promise<Resu
 };
 
 const requireId = (input: State): Result.Result<unknown, Failure> =>
-  input.id === undefined ? Result.fail(inputFailure([{ message: "id は必須です", path: ["id"] }])) : Result.succeed(input.id);
+  input.id === undefined
+    ? Result.fail(inputFailure([{ message: "id は必須です", path: ["id"] }]))
+    : Result.succeed(input.id);
 
 const load = async (inv: Invocation, port: Port, id: unknown): Promise<Result.Result<State, Failure>> => {
   const r = await inv.call(port, [id]);
   if (Result.isFailure(r)) return Result.fail({ step: "load", error: r.error });
-  return r.value === null ? Result.fail({ step: "load", error: "NOT_FOUND" }) : Result.succeed({ ...(r.value as State) });
+  return r.value === null
+    ? Result.fail({ step: "load", error: "NOT_FOUND" })
+    : Result.succeed({ ...(r.value as State) });
 };
 
 const overlay = (state: State, value: unknown): State => {
@@ -148,7 +162,11 @@ const overlay = (state: State, value: unknown): State => {
     : { ...state, ...v };
 };
 
-const runRules = async (inv: Invocation, rules: readonly Rule[], start: State): Promise<Result.Result<State, Failure>> => {
+const runRules = async (
+  inv: Invocation,
+  rules: readonly Rule[],
+  start: State,
+): Promise<Result.Result<State, Failure>> => {
   let state = start;
   for (const r of rules) {
     if (!r.when(state)) continue;
@@ -161,7 +179,11 @@ const runRules = async (inv: Invocation, rules: readonly Rule[], start: State): 
 };
 
 const sealSave = (state: State) =>
-  seal({ pre: state.pre === null ? null : Object.freeze(state.pre as State), next: Object.freeze(state.next as State), actor: state.actor } as never);
+  seal({
+    pre: state.pre === null ? null : Object.freeze(state.pre as State),
+    next: Object.freeze(state.next as State),
+    actor: state.actor,
+  } as never);
 
 const modelMethods = (set: ModelRules, impls: ReadonlyMap<symbol, (...args: any[]) => unknown>) => {
   const { save, delete: del, load: loadPort, model } = set;
@@ -202,7 +224,9 @@ const modelMethods = (set: ModelRules, impls: ReadonlyMap<symbol, (...args: any[
     if (Result.isFailure(existing)) return existing;
     const { inv, pre } = existing.value;
     const r = await runRules(inv, del!, { pre, next: null, actor, now: inv.now });
-    return Result.isFailure(r) ? r : Result.succeed(seal({ pre: Object.freeze(r.value.pre as State), actor: r.value.actor } as never));
+    return Result.isFailure(r)
+      ? r
+      : Result.succeed(seal({ pre: Object.freeze(r.value.pre as State), actor: r.value.actor } as never));
   };
 
   return Object.freeze({

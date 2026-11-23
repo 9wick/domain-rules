@@ -55,8 +55,13 @@ export function rule<
   }) as unknown as Rule<K, T, N, S, SuccessOf<R>, FailureOf<R> | PortErrors<P>, P, IsAlways<W>>;
 }
 
-type Join<F extends readonly string[]> = F extends readonly [infer H extends string, ...infer Rest extends readonly string[]]
-  ? Rest extends readonly [] ? H : `${H}, ${Join<Rest>}`
+type Join<F extends readonly string[]> = F extends readonly [
+  infer H extends string,
+  ...infer Rest extends readonly string[],
+]
+  ? Rest extends readonly []
+    ? H
+    : `${H}, ${Join<Rest>}`
   : string;
 
 export const immutable = <

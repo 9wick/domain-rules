@@ -1,5 +1,5 @@
 import { Result } from "@praha/byethrow";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test } from "vite-plus/test";
 import { bind, clock, open, plan, provide, type Provider } from "../src/index.ts";
 import {
   articleRules,
@@ -34,18 +34,27 @@ const draft: ExistingArticle = {
 };
 const openBlog: Blog = { id: "blg_1" as never, acceptsPosts: true };
 
-const setup = (overrides: { existing?: ExistingArticle | null; articles?: ExistingArticle[]; blog?: Blog | null } = {}) => {
+const setup = (
+  overrides: { existing?: ExistingArticle | null; articles?: ExistingArticle[]; blog?: Blog | null } = {},
+) => {
   const calls: string[] = [];
-  const record = <T,>(name: string, value: T) => (...args: unknown[]) => {
-    calls.push(`${name}(${args.join(",")})`);
-    return Result.succeed(value);
-  };
+  const record =
+    <T>(name: string, value: T) =>
+    (...args: unknown[]) => {
+      calls.push(`${name}(${args.join(",")})`);
+      return Result.succeed(value);
+    };
   const providers = [
-    provide(findArticleById, record("findArticleById", overrides.existing === undefined ? draft : overrides.existing) as never),
+    provide(
+      findArticleById,
+      record("findArticleById", overrides.existing === undefined ? draft : overrides.existing) as never,
+    ),
     provide(newArticleId, record("newArticleId", "art_new" as ArticleIdNew)),
     provide(requireExistingUser, (id) => {
       calls.push(`requireExistingUser(${id})`);
-      return Promise.resolve(id.startsWith("usr_") ? Result.succeed(id as UserIdExisted) : Result.fail("USER_NOT_FOUND" as const));
+      return Promise.resolve(
+        id.startsWith("usr_") ? Result.succeed(id as UserIdExisted) : Result.fail("USER_NOT_FOUND" as const),
+      );
     }),
     provide(findBlog, record("findBlog", overrides.blog === undefined ? openBlog : overrides.blog) as never),
     provide(findArticlesInBlog, record("findArticlesInBlog", overrides.articles ?? []) as never),
@@ -78,14 +87,19 @@ describe("create", () => {
     const { domain, calls } = setup();
     const r = await domain.article.create({ input: { ...newArticle, slug: "", publishAt: 1.5 }, actor: author });
     expect(Result.unwrapError(r).step).toBe("input");
-    expect(Result.unwrapError(r).error).toMatchObject({ issues: [{ path: expect.anything() }, { path: expect.anything() }] });
+    expect(Result.unwrapError(r).error).toMatchObject({
+      issues: [{ path: expect.anything() }, { path: expect.anything() }],
+    });
     expect(calls).toEqual([]);
   });
 
   test("schema にない項目と id は受け付けない", async () => {
     const { domain } = setup();
     const r = await domain.article.create({ input: { ...newArticle, extra: 1, id: "art_x" } as never, actor: author });
-    expect(Result.unwrapError(r)).toMatchObject({ step: "input", error: { issues: [{ path: ["extra"] }, { path: ["id"] }] } });
+    expect(Result.unwrapError(r)).toMatchObject({
+      step: "input",
+      error: { issues: [{ path: ["extra"] }, { path: ["id"] }] },
+    });
   });
 
   test("最初に失敗した rule で止まり、後ろの rule は実行しない", async () => {
@@ -115,7 +129,6 @@ describe("create", () => {
     const r = await domain.article.create({ input: newArticle, actor: author });
     expect(Result.unwrapError(r)).toEqual({ step: "slug はブログ内で一意", error: "DUPLICATED_SLUG" });
   });
-
 });
 
 describe("update", () => {
@@ -152,10 +165,19 @@ describe("update", () => {
     expect(Result.unwrapError(byAuthor)).toEqual({ step: "公開できるのは今のレビュアーだけ", error: "NOT_REVIEWER" });
     const back = setup({ existing: { ...draft, status: "PUBLISHED" } });
     const archived = await back.domain.article.update({ input: { id: "art_1", status: "DRAFT" }, actor: author });
-    expect(Result.unwrapError(archived)).toEqual({ step: "status は許可された変化だけ", error: "STATUS_CHANGE_NOT_ALLOWED" });
+    expect(Result.unwrapError(archived)).toEqual({
+      step: "status は許可された変化だけ",
+      error: "STATUS_CHANGE_NOT_ALLOWED",
+    });
     const locked = await back.domain.article.update({ input: { id: "art_1", slug: "other" }, actor: author });
-    expect(Result.unwrapError(locked)).toEqual({ step: "公開後の slug を変えられるのは管理者だけ", error: "SLUG_LOCKED" });
-    const admin = await back.domain.article.update({ input: { id: "art_1", slug: "other" }, actor: { ...author, role: "ADMIN" } });
+    expect(Result.unwrapError(locked)).toEqual({
+      step: "公開後の slug を変えられるのは管理者だけ",
+      error: "SLUG_LOCKED",
+    });
+    const admin = await back.domain.article.update({
+      input: { id: "art_1", slug: "other" },
+      actor: { ...author, role: "ADMIN" },
+    });
     expect(Result.isSuccess(admin)).toBe(true);
   });
 
@@ -174,7 +196,9 @@ describe("upsert", () => {
     const { domain } = setup();
     const created = open(Result.unwrap(await domain.article.upsert({ input: newArticle, actor: author })));
     expect(created.pre).toBeNull();
-    const updated = open(Result.unwrap(await domain.article.upsert({ input: { id: "art_1", slug: "s" }, actor: author })));
+    const updated = open(
+      Result.unwrap(await domain.article.upsert({ input: { id: "art_1", slug: "s" }, actor: author })),
+    );
     expect(updated.pre).toEqual(draft);
   });
 

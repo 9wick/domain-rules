@@ -80,7 +80,10 @@ export type Article = Persisted<typeof article>;
 export type ExistingArticle = Omit<Article, "id"> & { id: ArticleIdExisted };
 
 export const findArticleById = port("findArticleById").of<(id: ArticleId) => ExistingArticle | null, InfraError>();
-export const requireExistingUser = port("requireExistingUser").of<(id: UserId) => UserIdExisted, "USER_NOT_FOUND" | InfraError>();
+export const requireExistingUser = port("requireExistingUser").of<
+  (id: UserId) => UserIdExisted,
+  "USER_NOT_FOUND" | InfraError
+>();
 export const findBlog = cached(port("findBlog").of<(id: BlogId) => Blog | null, InfraError>());
 export const findArticlesInBlog = cached(
   port("findArticlesInBlog").of<(blogId: BlogId) => readonly ExistingArticle[], InfraError>(),
@@ -94,8 +97,7 @@ export const isApproved = (a: ArticleValue) => a.approvedAt !== null;
 export const authorIsNotReviewer = rule(article.save, {
   name: "著者とレビュアーは別の人",
   when: always,
-  check: (s) =>
-    s.next.authorId !== s.next.reviewerId ? Result.succeed() : Result.fail("SAME_AUTHOR_AND_REVIEWER"),
+  check: (s) => (s.next.authorId !== s.next.reviewerId ? Result.succeed() : Result.fail("SAME_AUTHOR_AND_REVIEWER")),
 });
 
 export const uniqueSlugInBlog = rule(article.save, {

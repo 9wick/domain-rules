@@ -1,4 +1,4 @@
-import { describe as group, expect, test } from "vitest";
+import { describe as group, expect, test } from "vite-plus/test";
 import { actor, always, and, changed, describe, next, not, onCreate, or, pre } from "../src/index.ts";
 
 type S = { pre: { status: string } | null; next: { status: string }; actor: { role: string } };
@@ -10,12 +10,61 @@ const state = (p: string | null, n: string, role = "MEMBER"): S => ({
 
 group("changed", () => {
   const cases: [string, (s: S) => boolean, [string | null, string, boolean][]][] = [
-    ["項目だけ", changed("status"), [[null, "DRAFT", true], ["DRAFT", "DRAFT", false], ["DRAFT", "PUBLISHED", true]]],
-    ["pre だけ", changed("status", { pre: "DRAFT" }), [[null, "DRAFT", false], ["DRAFT", "PUBLISHED", true], ["PUBLISHED", "ARCHIVED", false], ["DRAFT", "DRAFT", false]]],
-    ["next だけ", changed("status", { next: "PUBLISHED" }), [[null, "PUBLISHED", true], [null, "DRAFT", false], ["DRAFT", "PUBLISHED", true], ["PUBLISHED", "PUBLISHED", false]]],
-    ["pre と next", changed("status", { pre: "DRAFT", next: "PUBLISHED" }), [[null, "PUBLISHED", false], ["DRAFT", "PUBLISHED", true], ["ARCHIVED", "PUBLISHED", false], ["DRAFT", "ARCHIVED", false]]],
-    ["述語", changed("status", { next: (v: string) => v !== "DRAFT" }), [["DRAFT", "PUBLISHED", true], ["PUBLISHED", "DRAFT", false]]],
-    ["undefined は条件なし", changed("status", { pre: undefined, next: undefined }), [[null, "DRAFT", true], ["DRAFT", "PUBLISHED", true]]],
+    [
+      "項目だけ",
+      changed("status"),
+      [
+        [null, "DRAFT", true],
+        ["DRAFT", "DRAFT", false],
+        ["DRAFT", "PUBLISHED", true],
+      ],
+    ],
+    [
+      "pre だけ",
+      changed("status", { pre: "DRAFT" }),
+      [
+        [null, "DRAFT", false],
+        ["DRAFT", "PUBLISHED", true],
+        ["PUBLISHED", "ARCHIVED", false],
+        ["DRAFT", "DRAFT", false],
+      ],
+    ],
+    [
+      "next だけ",
+      changed("status", { next: "PUBLISHED" }),
+      [
+        [null, "PUBLISHED", true],
+        [null, "DRAFT", false],
+        ["DRAFT", "PUBLISHED", true],
+        ["PUBLISHED", "PUBLISHED", false],
+      ],
+    ],
+    [
+      "pre と next",
+      changed("status", { pre: "DRAFT", next: "PUBLISHED" }),
+      [
+        [null, "PUBLISHED", false],
+        ["DRAFT", "PUBLISHED", true],
+        ["ARCHIVED", "PUBLISHED", false],
+        ["DRAFT", "ARCHIVED", false],
+      ],
+    ],
+    [
+      "述語",
+      changed("status", { next: (v: string) => v !== "DRAFT" }),
+      [
+        ["DRAFT", "PUBLISHED", true],
+        ["PUBLISHED", "DRAFT", false],
+      ],
+    ],
+    [
+      "undefined は条件なし",
+      changed("status", { pre: undefined, next: undefined }),
+      [
+        [null, "DRAFT", true],
+        ["DRAFT", "PUBLISHED", true],
+      ],
+    ],
   ];
   for (const [name, when, rows] of cases) {
     test.each(rows)(`${name}: pre=%s next=%s → %s`, (p, n, expected) => {
@@ -34,7 +83,12 @@ group("ほかの when", () => {
     ["pre は既存の値を見る", pre(isDraft), state("DRAFT", "PUBLISHED"), true],
     ["next は変更後の値を見る", next(isDraft), state("PUBLISHED", "DRAFT"), true],
     ["actor", actor((a: { role: string }) => a.role === "ADMIN"), state("DRAFT", "DRAFT", "ADMIN"), true],
-    ["actor は状態も受け取る", actor((a: { role: string }, s: S) => a.role === "MEMBER" && s.pre === null), state(null, "DRAFT"), true],
+    [
+      "actor は状態も受け取る",
+      actor((a: { role: string }, s: S) => a.role === "MEMBER" && s.pre === null),
+      state(null, "DRAFT"),
+      true,
+    ],
     ["and", and(not(onCreate), changed("status")), state("DRAFT", "PUBLISHED"), true],
     ["and はすべてを要求する", and(not(onCreate), changed("status")), state(null, "PUBLISHED"), false],
     ["or", or(onCreate, next(isDraft)), state("PUBLISHED", "DRAFT"), true],
@@ -47,7 +101,10 @@ group("ほかの when", () => {
   test("組み合わせた when の説明は、組み合わせた形を保つ", () => {
     expect(and(not(onCreate), changed("status", { pre: "DRAFT" })).description).toEqual({
       kind: "and",
-      conditions: [{ kind: "not", condition: { kind: "onCreate" } }, { kind: "changed", field: "status", pre: "DRAFT" }],
+      conditions: [
+        { kind: "not", condition: { kind: "onCreate" } },
+        { kind: "changed", field: "status", pre: "DRAFT" },
+      ],
     });
     expect(describe("下書きのまま", () => true).description).toEqual({ kind: "custom", description: "下書きのまま" });
   });
