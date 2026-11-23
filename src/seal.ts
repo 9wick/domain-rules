@@ -31,16 +31,23 @@ export type Decision<Ac extends Action, T = void, A = Actor> = Sealed<
 
 type AnySealed = Sealed<string, string, string, unknown>;
 
-// 中身を封をした値そのものに結び付ける。作り直した値は登録されていないので open できない
-const contents = new WeakMap<object, unknown>();
+class Seal {
+  readonly #contents: unknown;
 
-export const seal = <S extends AnySealed>(c: S[typeof sealed]["contents"]): S => {
-  const s = Object.freeze({}) as S;
-  contents.set(s, Object.freeze(c));
-  return s;
-};
+  constructor(contents: unknown) {
+    this.#contents = Object.freeze(contents);
+    Object.setPrototypeOf(this, null);
+    Object.freeze(this);
+  }
 
-export const open = <S extends AnySealed>(s: S): S[typeof sealed]["contents"] => {
-  if (!contents.has(s)) throw new Error("open: メソッドが作った封をした値ではありません");
-  return contents.get(s) as S[typeof sealed]["contents"];
-};
+  static open(value: object): unknown {
+    if (!(#contents in value)) throw new Error("open: メソッドが作った封をした値ではありません");
+    return value.#contents;
+  }
+}
+
+export const seal = <S extends AnySealed>(c: S[typeof sealed]["contents"]): S =>
+  new Seal(c) as unknown as S;
+
+export const open = <S extends AnySealed>(s: S): S[typeof sealed]["contents"] =>
+  Seal.open(s) as S[typeof sealed]["contents"];

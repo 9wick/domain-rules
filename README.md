@@ -439,7 +439,7 @@ export const articleRules = modelRules(article, {
 });
 ```
 
-- **`load`。** 既存の値を取る port です。ライブラリは入力の `id` でこの port を呼び、`null` なら load の step で失敗します。返り値の型は、model の `schema.persisted` の型に代入できなければなりません。`save` で `update` や `upsert` を、または `delete` を使うときに要ります。
+- **`load`。** 既存の値を取る port です。ライブラリは `schema.input` で検証・変換した後の `id` でこの port を呼びます。load を宣言するには入力スキーマに `id` があり、port が変換後の型を受け取れる必要があります。戻り値が `null` なら load の step で失敗します。返り値の型は、model の `schema.persisted` の型に代入できなければなりません。`save` で `update` や `upsert` を、または `delete` を使うときに要ります。
 - **`save`。** `article.save` の rule を並べます。`create`、`update`、`upsert` のどれで呼ばれても、この並びを順に通ります。
 - **`delete`。** `article.delete` の rule を並べます。`delete` を書かなければ、その model は削除できません。束ねたあとに `delete` のメソッドが作られないからです。`save` も同じです。
 
@@ -550,7 +550,7 @@ provider の一覧は、配列のリテラルのまま渡すか、`as const` を
 この例では、`bind` を起動時に1回だけ呼んでいます。`bind` は provider の確認を2段階で行います。
 
 - **型での確認。** rule の組の `load` と、rule が `requires` に書いた port のうち、provider の一覧にないものがあれば型エラーにします。
-- **起動時の確認。** provider の不足と、同じ port の重複を確かめ、見つかればエラーにします。
+- **起動時の確認。** provider は port の宣言ごとに照合します。名前が同じ別の宣言は別の port で、`cached` は元の宣言と同じ port として扱います。provider の不足や、同じ宣言に対する provider の重複はエラーになります。
 
 provider の実装が、別の repository や別の取得を使うのは自由です。どう取るかは provider の中の都合なので、ライブラリは provider 同士の依存を扱いません。
 

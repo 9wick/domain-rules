@@ -49,7 +49,7 @@ export function rule<
     kind: "rule",
     track: { kind: track.kind, target: track.target },
     name: def.name,
-    requires: def.requires ?? {},
+    requires: Object.freeze({ ...def.requires }),
     when: def.when,
     check: def.check,
   }) as unknown as Rule<K, T, N, S, SuccessOf<R>, FailureOf<R> | PortErrors<P>, P, IsAlways<W>>;

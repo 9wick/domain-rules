@@ -6,10 +6,11 @@ export type Port<N extends string = string, A extends readonly unknown[] = any, 
   readonly kind: "port";
   readonly name: N;
   readonly cached: boolean;
+  readonly token: symbol;
   readonly [portTypes]: { readonly args: A; readonly value: T; readonly error: E };
 };
 
-export type Clock = { readonly kind: "clock"; readonly name: "clock" };
+export type Clock = { readonly kind: "clock"; readonly name: "clock"; readonly token: symbol };
 
 export type PortArgs<P> = P extends Port<string, infer A, any, any> ? A : never;
 export type PortValue<P> = P extends Port<string, any, infer T, any> ? T : never;
@@ -23,12 +24,12 @@ export type PortErrors<P extends Ports> = { [K in keyof P]: PortError<P[K]> }[ke
 
 export const port = <const N extends string>(name: N) => ({
   of: <F extends (...args: any[]) => unknown, E = never>(): Port<N, Parameters<F>, ReturnType<F>, E> =>
-    Object.freeze({ kind: "port", name, cached: false }) as unknown as Port<N, Parameters<F>, ReturnType<F>, E>,
+    Object.freeze({ kind: "port", name, token: Symbol(name), cached: false }) as unknown as Port<N, Parameters<F>, ReturnType<F>, E>,
 });
 
 export const cached = <P extends Port>(p: P): P => Object.freeze({ ...p, cached: true });
 
-export const clock: Clock = Object.freeze({ kind: "clock", name: "clock" });
+export const clock: Clock = Object.freeze({ kind: "clock", name: "clock", token: Symbol("clock") });
 
 type Impl<P extends Port> = (
   ...args: PortArgs<P>
@@ -36,13 +37,14 @@ type Impl<P extends Port> = (
 
 export type Provider<N extends string = string> = {
   readonly name: N;
+  readonly token: symbol;
   readonly impl: (...args: any[]) => unknown;
 };
 
 export function provide<P extends Port>(target: P, impl: Impl<P>): Provider<P["name"]>;
 export function provide(target: Clock, impl: () => number): Provider<"clock">;
 export function provide(target: Port | Clock, impl: (...args: any[]) => unknown): Provider {
-  return Object.freeze({ name: target.name, impl });
+  return Object.freeze({ name: target.name, token: target.token, impl });
 }
 
 function value<P extends Port>(target: P, v: PortValue<P>): Provider<P["name"]>;
@@ -56,13 +58,13 @@ provide.value = value;
 
 export type PortCall = (p: Port, args: readonly unknown[]) => Promise<Result.Result<unknown, unknown>>;
 
-export const portCaller = (impls: ReadonlyMap<string, (...args: any[]) => unknown>): PortCall => {
-  const cache = new Map<string, Map<string, Promise<Result.Result<unknown, unknown>>>>();
+export const portCaller = (impls: ReadonlyMap<symbol, (...args: any[]) => unknown>): PortCall => {
+  const cache = new Map<symbol, Map<string, Promise<Result.Result<unknown, unknown>>>>();
   return (p, args) => {
-    const run = async () => (await impls.get(p.name)!(...args)) as Result.Result<unknown, unknown>;
+    const run = async () => (await impls.get(p.token)!(...args)) as Result.Result<unknown, unknown>;
     if (!p.cached) return run();
-    const byArgs = cache.get(p.name) ?? new Map();
-    cache.set(p.name, byArgs);
+    const byArgs = cache.get(p.token) ?? new Map();
+    cache.set(p.token, byArgs);
     const key = JSON.stringify(args);
     const hit = byArgs.get(key);
     if (hit) return hit;

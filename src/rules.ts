@@ -1,6 +1,6 @@
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 import type { Action, Actor, DecideState, DeleteState, Model, Overlay, Persisted, SaveState, Value } from "./model.ts";
-import type { Port, PortError, PortValue } from "./port.ts";
+import type { Port, PortArgs, PortError, PortValue } from "./port.ts";
 import type { Rule } from "./rule.ts";
 import { describeWhen, type TrackKind, type WhenDescription } from "./when.ts";
 
@@ -49,10 +49,17 @@ type PortNamesOfRules<Rs> = Rs extends readonly (infer R)[]
 
 type AnyLoad = Port<string, readonly [unknown], unknown, unknown>;
 type Existing<L> = [L] extends [never] ? never : Exclude<PortValue<L>, null>;
+type LoadId<M extends Model> = "id" extends keyof Value<M> ? Exclude<Value<M>["id"], undefined> : never;
+type LoadIdMismatch<M extends Model, L> = [LoadId<M>] extends [never]
+  ? { readonly "load には入力スキーマの id が要る": true }
+  : [LoadId<M>] extends [PortArgs<L>[0]]
+    ? unknown
+    : { readonly "load が検証済みの id を受け取れない": LoadId<M> };
+
 type LoadMismatch<M extends Model, L> = [L] extends [never]
   ? unknown
   : [PortValue<L>] extends [Persisted<M> | null]
-    ? unknown
+    ? LoadIdMismatch<M, L>
     : { readonly "load の返り値が永続化の型に代入できない": PortValue<L> };
 
 type SaveStart<M extends Model, L> = SaveState<Existing<L> | null, Value<M>>;
@@ -128,8 +135,8 @@ export function modelRules<
     name: m.name,
     model: m,
     load: def.load,
-    save: def.save,
-    delete: def.delete,
+    save: def.save && Object.freeze([...def.save]),
+    delete: def.delete && Object.freeze([...def.delete]),
   }) as unknown as ModelRules<M, any>;
 }
 
@@ -153,7 +160,7 @@ export function actionRules<A extends Action, const Rs extends readonly Rule[], 
     readonly output?: (s: DecideWalk<A, Rs>["state"]) => T;
   },
 ): ActionRules<A, { actor: ActorOf<DecideWalk<A, Rs>["state"]>; failure: RuleFailure<Rs>; ports: PortNamesOfRules<Rs>; output: T }> {
-  return Object.freeze({ kind: "actionRules", name: a.name, action: a, rules: def.rules, output: def.output }) as unknown as ActionRules<A, any>;
+  return Object.freeze({ kind: "actionRules", name: a.name, action: a, rules: Object.freeze([...def.rules]), output: def.output }) as unknown as ActionRules<A, any>;
 }
 
 export type RuleSet = ModelRules | ActionRules;

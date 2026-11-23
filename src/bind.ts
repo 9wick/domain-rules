@@ -1,7 +1,7 @@
 import { Result } from "@praha/byethrow";
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 import type { Action, Actor, InputOf, Model, ObjectSchema } from "./model.ts";
-import { portCaller, runWithPorts, type Port, type PortCall, type Provider } from "./port.ts";
+import { clock, portCaller, runWithPorts, type Clock, type Port, type PortCall, type Provider } from "./port.ts";
 import type { Rule } from "./rule.ts";
 import type { ActionRules, InputFailure, ModelRules, RuleSet, RuleSetInfo } from "./rules.ts";
 import { seal, type Decision, type Deletable, type Persistable } from "./seal.ts";
@@ -65,32 +65,32 @@ export function bind<const Sets extends readonly RuleSet[], const Ps extends rea
     ? unknown
     : { readonly "provider が足りない port": MissingProviders<Sets, Ps> }),
 ): Bound<Sets> {
-  const impls = new Map<string, (...args: any[]) => unknown>();
+  const impls = new Map<symbol, (...args: any[]) => unknown>();
   for (const p of options.providers) {
-    if (impls.has(p.name)) throw new Error(`bind: port "${p.name}" の provider が重複しています`);
-    impls.set(p.name, p.impl);
+    if (impls.has(p.token)) throw new Error(`bind: port "${p.name}" の provider が重複しています`);
+    impls.set(p.token, p.impl);
   }
   const bound: Record<string, unknown> = {};
   for (const set of sets) {
     if (Object.hasOwn(bound, set.name)) throw new Error(`bind: "${set.name}" の rule の組が重複しています`);
-    const missing = requiredPorts(set).filter((name) => !impls.has(name));
+    const missing = requiredPorts(set).filter((port) => !impls.has(port.token)).map((port) => port.name);
     if (missing.length > 0) throw new Error(`bind: provider が足りない port: ${missing.join(", ")}`);
     bound[set.name] = set.kind === "modelRules" ? modelMethods(set, impls) : actionMethods(set, impls);
   }
   return bound as Bound<Sets>;
 }
 
-const requiredPorts = (set: RuleSet): string[] => {
+const requiredPorts = (set: RuleSet): (Port | Clock)[] => {
   const rules = set.kind === "modelRules" ? [...(set.save ?? []), ...(set.delete ?? [])] : set.rules;
-  const load = set.kind === "modelRules" && set.load ? [set.load.name] : [];
-  return ["clock", ...load, ...rules.flatMap((r) => Object.values(r.requires).map((p) => (p as Port).name))];
+  const load = set.kind === "modelRules" && set.load ? [set.load] : [];
+  return [clock, ...load, ...rules.flatMap((r) => Object.values<Port>(r.requires))];
 };
 
 type Invocation = { readonly call: PortCall; readonly now: number };
 
-const invocation = (impls: ReadonlyMap<string, (...args: any[]) => unknown>): Invocation => ({
+const invocation = (impls: ReadonlyMap<symbol, (...args: any[]) => unknown>): Invocation => ({
   call: portCaller(impls),
-  now: impls.get("clock")!() as number,
+  now: impls.get(clock.token)!() as number,
 });
 
 const inputFailure = (issues: readonly StandardSchemaV1.Issue[]): Failure => ({ step: "input", error: { issues } });
@@ -163,7 +163,7 @@ const runRules = async (inv: Invocation, rules: readonly Rule[], start: State): 
 const sealSave = (state: State) =>
   seal({ pre: state.pre === null ? null : Object.freeze(state.pre as State), next: Object.freeze(state.next as State), actor: state.actor } as never);
 
-const modelMethods = (set: ModelRules, impls: ReadonlyMap<string, (...args: any[]) => unknown>) => {
+const modelMethods = (set: ModelRules, impls: ReadonlyMap<symbol, (...args: any[]) => unknown>) => {
   const { save, delete: del, load: loadPort, model } = set;
   const schema = model.schema.input as ObjectSchema;
 
@@ -173,33 +173,35 @@ const modelMethods = (set: ModelRules, impls: ReadonlyMap<string, (...args: any[
   };
 
   const create = async ({ input, actor }: Args<State>) => {
-    const inv = invocation(impls);
     const next = await validateWhole(schema, input);
-    return Result.isFailure(next) ? next : saveWith(inv, null, next.value, actor);
+    return Result.isFailure(next) ? next : saveWith(invocation(impls), null, next.value, actor);
   };
 
-  const update = async ({ input, actor }: Args<State>) => {
-    const inv = invocation(impls);
+  const loadExisting = async (input: State) => {
     const validated = await validatePartial(schema, input);
     if (Result.isFailure(validated)) return validated;
     const id = requireId(validated.value);
     if (Result.isFailure(id)) return id;
+    const inv = invocation(impls);
     const pre = await load(inv, loadPort!, id.value);
     if (Result.isFailure(pre)) return pre;
-    return saveWith(inv, pre.value, { ...pre.value, ...validated.value }, actor);
+    return Result.succeed({ inv, pre: pre.value, validated: validated.value });
+  };
+
+  const update = async ({ input, actor }: Args<State>) => {
+    const existing = await loadExisting(input);
+    if (Result.isFailure(existing)) return existing;
+    const { inv, pre, validated } = existing.value;
+    return saveWith(inv, pre, { ...pre, ...validated }, actor);
   };
 
   const upsert = (args: Args<State>) => (args.input.id === undefined ? create(args) : update(args));
 
   const remove = async ({ input, actor }: Args<State>) => {
-    const inv = invocation(impls);
-    const validated = await validatePartial(schema, input);
-    if (Result.isFailure(validated)) return validated;
-    const id = requireId(validated.value);
-    if (Result.isFailure(id)) return id;
-    const pre = await load(inv, loadPort!, id.value);
-    if (Result.isFailure(pre)) return pre;
-    const r = await runRules(inv, del!, { pre: pre.value, next: null, actor, now: inv.now });
+    const existing = await loadExisting(input);
+    if (Result.isFailure(existing)) return existing;
+    const { inv, pre } = existing.value;
+    const r = await runRules(inv, del!, { pre, next: null, actor, now: inv.now });
     return Result.isFailure(r) ? r : Result.succeed(seal({ pre: Object.freeze(r.value.pre as State), actor: r.value.actor } as never));
   };
 
@@ -210,11 +212,11 @@ const modelMethods = (set: ModelRules, impls: ReadonlyMap<string, (...args: any[
   }) satisfies Record<string, Run<unknown, unknown>>;
 };
 
-const actionMethods = (set: ActionRules, impls: ReadonlyMap<string, (...args: any[]) => unknown>) => {
+const actionMethods = (set: ActionRules, impls: ReadonlyMap<symbol, (...args: any[]) => unknown>) => {
   const decide = async ({ input, actor }: Args<unknown>) => {
-    const inv = invocation(impls);
     const validated = await validate(set.action.input, input);
     if (Result.isFailure(validated)) return Result.fail(inputFailure(validated.error));
+    const inv = invocation(impls);
     const r = await runRules(inv, set.rules, { input: validated.value, actor, now: inv.now });
     if (Result.isFailure(r)) return r;
     return Result.succeed(seal({ value: set.output?.(r.value), actor: r.value.actor } as never));
