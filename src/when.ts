@@ -52,12 +52,13 @@ export const always: Always = when({ kind: "always" }, () => true);
 
 export const onCreate: When<"save", { readonly pre: unknown }> = when({ kind: "onCreate" }, (s) => s.pre === null);
 
-type Match = unknown | ((v: never) => boolean);
+// undefined は「条件なし」を表すので比べる値に含めない。関数は値ではなく述語として扱う
+type Match = ((v: never) => boolean) | string | number | bigint | boolean | symbol | object | null;
 const matches = (m: Match, v: unknown) => (typeof m === "function" ? m(v as never) : Object.is(m, v));
 
 export const changed = <const F extends string>(
   field: F,
-  values: { readonly pre?: Match; readonly next?: Match } = {},
+  values: { readonly pre?: Match | undefined; readonly next?: Match | undefined } = {},
 ): When<
   "save",
   { readonly pre: { readonly [P in F]: unknown } | null; readonly next: { readonly [P in F]: unknown } }
