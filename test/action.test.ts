@@ -1,6 +1,6 @@
 import { Result } from "@praha/byethrow";
 import * as v from "valibot";
-import { expect, test } from "vitest";
+import { expect, test } from "vite-plus/test";
 import { action, actionRules, always, bind, clock, open, plan, provide, rule } from "../src/index.ts";
 
 const download = action({ name: "download", input: v.object({ fileId: v.pipe(v.string(), v.minLength(1)) }) });

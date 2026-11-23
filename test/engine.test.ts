@@ -1,6 +1,6 @@
 import { Result } from "@praha/byethrow";
 import * as v from "valibot";
-import { expect, test } from "vitest";
+import { expect, test } from "vite-plus/test";
 import { always, bind, cached, clock, model, modelRules, open, port, provide, rule } from "../src/index.ts";
 
 const item = model({ name: "item", schema: { input: v.object({ id: v.optional(v.string()), n: v.number() }), persisted: v.object({ id: v.string(), n: v.number() }) } });

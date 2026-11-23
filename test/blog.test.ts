@@ -1,5 +1,5 @@
 import { Result } from "@praha/byethrow";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test } from "vite-plus/test";
 import { bind, clock, open, plan, provide, type Provider } from "../src/index.ts";
 import {
   articleRules,

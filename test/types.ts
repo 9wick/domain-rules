@@ -1,5 +1,5 @@
 import { Result } from "@praha/byethrow";
-import { describe, expectTypeOf, test } from "vitest";
+import { describe, expectTypeOf, test } from "vite-plus/test";
 import { actor, always, bind, changed, clock, modelRules, open, port, provide, rule, type Persistable } from "../src/index.ts";
 import {
   article,

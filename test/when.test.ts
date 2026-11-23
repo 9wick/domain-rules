@@ -1,4 +1,4 @@
-import { describe as group, expect, test } from "vitest";
+import { describe as group, expect, test } from "vite-plus/test";
 import { actor, always, and, changed, describe, next, not, onCreate, or, pre } from "../src/index.ts";
 
 type S = { pre: { status: string } | null; next: { status: string }; actor: { role: string } };
