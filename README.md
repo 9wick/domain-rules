@@ -363,7 +363,7 @@ export const blogAcceptsPosts = rule(article.save.with<{ next: { blogId: BlogIdE
 
 `when` が当たらずに飛ばされる rule は、状態を変えません。そのため、昇格する rule に `always` 以外の `when` を書くと、その rule のあとの型は「昇格した型か、していない型」の和になります。昇格した型を要求する rule が後ろにあるか、永続化の型が揃わなければ、rule の組を作るときに型エラーになります。
 
-記事の id も、同じように rule で昇格します。merge のあとの `next.id` は、入力の型の `ArticleId | undefined` です。
+記事の id も、同じように rule で昇格します。この例の `next.id` は `ArticleId | undefined` です。更新で省略した項目は永続化済みの値を引き継ぐため、入力と既存値で型が違う項目には両方の型が現れます。
 
 ```ts
 // 既存の記事なら、その id は存在を確かめたもの。
@@ -588,7 +588,7 @@ const saved = await Result.pipe(
 | `delete` | `{ input: { id }, actor }` | `Deletable<M>` |
 | `decide` | `{ input, actor }` | `Decision<A, T>` |
 
-`input` は、`schema.input` の入力の型を `Partial` にしたものです。`create` の `input` は `id` を持ちません。`upsert` は、`input.id` がなければ新規作成、あって既存の値が見つかれば更新、あって見つからなければ load の step で失敗します。利用者が id を決めて新規作成する使い方は、まだ扱いません(未決定の論点を参照)。
+`input` は、`schema.input` の入力の型を `Partial` にしたものです。`create` の `input` は `id` を持ちません。model の `schema.input` に `id` を定義する場合は、省略可能にします。`upsert` は、`input.id` がなければ新規作成、あって既存の値が見つかれば更新、あって見つからなければ load の step で失敗します。利用者が id を決めて新規作成する使い方は、まだ扱いません(未決定の論点を参照)。
 
 ### 返り値は封をした値
 

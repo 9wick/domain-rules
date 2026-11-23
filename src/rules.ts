@@ -1,5 +1,5 @@
 import type { StandardSchemaV1 } from "@standard-schema/spec";
-import type { Action, Actor, DecideState, DeleteState, Model, Overlay, Persisted, SaveState, Value } from "./model.ts";
+import type { Action, Actor, DecideState, DeleteState, Model, Overlay, Persisted, SaveStates, Value } from "./model.ts";
 import type { Port, PortArgs, PortError, PortValue } from "./port.ts";
 import type { Rule } from "./rule.ts";
 import { describeWhen, type TrackKind, type WhenDescription } from "./when.ts";
@@ -62,7 +62,7 @@ type LoadMismatch<M extends Model, L> = [L] extends [never]
     ? LoadIdMismatch<M, L>
     : { readonly "load の返り値が永続化の型に代入できない": PortValue<L> };
 
-type SaveStart<M extends Model, L> = SaveState<Existing<L> | null, Value<M>>;
+type SaveStart<M extends Model, L> = SaveStates<Existing<L>, Value<M>>;
 type DeleteStart<L> = DeleteState<Existing<L>>;
 type SaveWalk<M extends Model, L, Save> = Walk<SaveStart<M, L>, Save, "save", M["name"]>;
 type DeleteWalk<M extends Model, L, Del> = Walk<DeleteStart<L>, Del, "delete", M["name"]>;

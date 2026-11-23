@@ -184,7 +184,7 @@ test("load は入力スキーマで変換された id を受け取る", async ()
   const transformed = model({
     name: "transformed",
     schema: {
-      input: v.object({ id: v.pipe(v.string(), v.transform(Number)) }),
+      input: v.object({ id: v.optional(v.pipe(v.string(), v.transform(Number))) }),
       persisted: v.object({ id: v.number() }),
     },
   });
@@ -197,4 +197,45 @@ test("load は入力スキーマで変換された id を受け取る", async ()
   });
   const result = await domain.transformed.delete({ input: { id: "42" }, actor: member });
   expect(open(Result.unwrap(result)).pre.id).toBe(42);
+});
+
+test("save は更新で引き継いだ永続化済みの値と検証済みの入力を扱える", async () => {
+  const appointment = model({
+    name: "appointment",
+    schema: {
+      input: v.object({ id: v.optional(v.string()), date: v.string() }),
+      persisted: v.object({ id: v.string(), date: v.date() }),
+    },
+  });
+  const date = new Date("2026-11-24");
+  const find = port("findAppointment").of<(id: string) => { id: string; date: Date }>();
+  const stringOnly = rule(appointment.save.with<{ next: { date: string } }>(), {
+    name: "stringOnly",
+    when: always,
+    check: ({ next }) => Result.succeed({ next: { id: "new", date: new Date(next.date) } }),
+  });
+  // @ts-expect-error 更新で date を省略すると、永続化済みの Date が渡る
+  modelRules(appointment, { load: find, save: [stringOnly] });
+  modelRules(appointment, { save: [stringOnly] });
+
+  const normalize = rule(appointment.save, {
+    name: "normalize",
+    when: always,
+    check: ({ next }) => Result.succeed({
+      next: { id: next.id ?? "new", date: typeof next.date === "string" ? new Date(next.date) : next.date },
+    }),
+  });
+  const domain = bind([modelRules(appointment, { load: find, save: [normalize] })], {
+    providers: [provide(find, (id) => Result.succeed({ id, date })), provide.value(clock, 0)],
+  });
+  const created = await domain.appointment.create({ input: { date: "2026-11-24" }, actor: member });
+  const updated = await domain.appointment.update({ input: { id: "existing" }, actor: member });
+  expect(open(Result.unwrap(created)).next.date).toEqual(date);
+  expect(open(Result.unwrap(updated)).next.date).toBe(date);
+});
+
+test("model の入力スキーマは id を必須にできない", () => {
+  const schema = { input: v.object({ id: v.string() }), persisted: v.object({ id: v.string() }) };
+  // @ts-expect-error create は入力から id を受け取らない
+  model({ name: "requiredId", schema });
 });
