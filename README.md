@@ -16,35 +16,47 @@
 
 ## 中心となるモデル
 
-```
-model       = id の schema + 値の schema + pre(既存の値を取る relation)
-relation    = 名前 + 型。「何が必要か」の宣言だけで、取得方法は持たない
-rule        = requires(使う relation) + when(適用する条件) + check(判定)
-ruleSet     = model + rule の組。1つの操作で守るべきルールの一覧
-provider    = relation の取得方法、または model の id の生成方法
-checker     = ruleSet + provider + 時計。コマンドを受け取って検証する関数
-persistable = pre(変更前) + value(id 付きの変更後) + 「適用されたすべての rule を通った」証明
-```
+### ルールの組は対象と1対1
 
-schema は値の形と検証の規則で、これもドメインの知識です。そのため model は schema を持ち、ドメインのパッケージに置きます。schema には Valibot など、[Standard Schema](https://standardschema.dev) を実装したライブラリを使えます。
+ルールは、操作ごとではなく対象ごとに1組だけ持ちます。ある記事を保存するときに守るべきルールは、どの画面や API から保存しても同じだからです。「公開する」は、status が DRAFT から PUBLISHED に変わる保存にすぎません。どのルールが当たるかは、各ルールの `when` が値の変化を見て決めます。
 
-成功と失敗は [@praha/byethrow](https://github.com/praha-inc/byethrow) の `Result` で表します。rule の `check` は `Result`、provider と checker は `ResultAsync`(`Promise<Result>`)を返します。
+| 対象 | ルールの組 | 呼び出し方 |
+|---|---|---|
+| model | model ごとに1つ。保存のルールと削除のルールを持つ | `create`、`update`、`upsert`、`delete` |
+| action | action ごとに1つ。判定のルールと、値を決める `decide` を持つ | `decide` |
 
-定義する場所と時期は、次の3段階に分かれます。
+新規作成か更新かは、ルールの違いではなく呼び出し方の違いです。そのため、同じ保存のルールが `create`、`update`、`upsert` のどれにも当たります。
+
+### 部品と責務
+
+| 部品 | 責務 | 持つもの |
+|---|---|---|
+| model | エンティティの形 | id の schema、値の schema、port の宣言(id から取る、新しい id を作る) |
+| action | 保存を伴わない操作の入力の形 | 入力の schema |
+| rule | 1つの条件 | `requires`、`when`、`check`、`refines` |
+| relation | 判定に必要なデータの宣言 | 名前、どの Snapshot から決まるか、型 |
+| entityRules | model のルールの組 | 受け付ける actor の型ガード、保存のルール、削除のルール |
+| actionRules | action のルールの組 | 受け付ける actor の型ガード、判定のルール、`decide` |
+| provider | 宣言された port の実装 | relation、model の port、時計のどれか1つの実装 |
+| bind | ルールの組と provider を束ねる | なし |
+
+成功と失敗は [@praha/byethrow](https://github.com/praha-inc/byethrow) の `Result` で表します。rule の `check` は `Result`、provider と、束ねたあとに呼ぶ関数は `ResultAsync`(`Promise<Result>`)を返します。schema には Valibot など、[Standard Schema](https://standardschema.dev) を実装したライブラリを使えます。
+
+### 定義する場所
 
 | 段階 | 場所 | やること |
 |---|---|---|
-| 組む | ドメインのパッケージ | model と relation を宣言し、rule を定義し、操作ごとに ruleSet にまとめて公開する |
-| 束ねる | アプリケーションの組み立て部分(DI の設定) | 名前を付けた ruleSet の一覧に provider と時計を渡し、checker の一覧を作る |
-| 実行する | usecase | checker にコマンドを渡す |
+| 組む | ドメインのパッケージ | model、action、relation、rule を定義し、対象ごとにルールの組を作って公開する |
+| 束ねる | アプリケーションの組み立て部分(DI の設定) | ルールの組の一覧に provider を渡す |
+| 実行する | usecase | 束ねた結果の、対象ごとのメソッドを呼ぶ |
 
-ドメインのパッケージは model、relation、rule、ruleSet だけを公開し、repository や DB を一切知りません。
+ドメインのパッケージは repository や DB を一切知りません。副作用はすべて port として宣言され、provider として外から注入されます。
 
 ## 使用例(構想)
 
 ブログ記事を題材にします。
 
-### model を定義する(ドメインのパッケージ)
+### model を定義する
 
 ```ts
 import * as v from "valibot";
@@ -66,41 +78,48 @@ export const article = model({
   }),
 });
 
-// schema の出力の型。id を持たない
-export type ArticleValue = Value<typeof article>;
-// { id: ArticleId } と ArticleValue を合わせたもの
-export type Article = Entity<typeof article>;
+export type ArticleValue = Value<typeof article>;   // schema の出力の型。id を持たない
+export type Article = Entity<typeof article>;       // { id: ArticleId } と ArticleValue を合わせたもの
 ```
 
-`article.pre` と `article.newId` は model が自動で持つ宣言です。`article.pre` は「id から既存の記事を取る」、`article.newId` は「新しい id を1つ作る」という意味です。どちらも、取得方法は relation と同じく provider として後から注入します。
+model は2つの port を自動で宣言します。`article.load` は「id から既存の記事を取る」、`article.newId` は「新しい id を1つ作る」です。どちらも実装は provider として後から注入します。
 
-作成時の既定値は schema に書きます。新規作成のときは pre がないので、入力にない項目には schema の既定値が入ります。更新のときは pre の値が入るので、既定値は使われません。
+作成時の既定値は schema に書きます。新規作成のときは既存の値がないので、入力にない項目には schema の既定値が入ります。更新のときは既存の値が入るので、既定値は使われません。
 
-### relation を宣言する
+### Snapshot の種類を知る
 
-relation は「この操作の判定には、こういうデータが必要だ」という宣言です。名前と型だけを持ち、取得方法は持ちません。
-
-```ts
-import { relation } from "domain-rules";
-
-// Snapshot<Article> から決まる、同じブログ内の記事一覧
-export const articlesInBlog = relation<Article, readonly Article[]>("articlesInBlog");
-```
-
-### rule を定義する
-
-rule は1つのルールで、`Snapshot` についての条件です。ここでは保存の rule(`saveRule` で作るもの)を例にします。削除と判定の rule は、「操作の種類を選ぶ」の節で扱います。
+rule と relation は、Snapshot を受け取ります。Snapshot は、何に対する判定かによって3種類あります。
 
 ```ts
-type Snapshot<S extends { id: unknown }> = {
-  pre: S | null;          // 変更前。新規作成のときは null
-  next: Omit<S, "id">;    // 変更後。入力を pre にマージし、schema で検証したもの
-  actor: Actor;           // 操作した人。型はアプリケーションが決める(後述)
-  now: number;            // checker が呼ばれた時刻。1回の実行の中では同じ値
+type SaveSnapshot<M> = {
+  pre: Entity<M> | null;   // 変更前。新規作成のときは null
+  next: Value<M>;          // 変更後。入力を pre にマージし、schema で検証したもの
+  actor: Actor;
+  now: number;             // 呼び出された時刻。1回の実行の中では同じ値
+};
+
+type DeleteSnapshot<M> = {
+  pre: Entity<M>;          // 削除する対象
+  next: null;
+  actor: Actor;
+  now: number;
+};
+
+type ActionSnapshot<A> = {
+  input: ActionInput<A>;   // 入力の schema で検証したもの
+  actor: Actor;
+  now: number;
 };
 ```
 
-ライブラリは「状態」という概念を持ちません。どの項目が状態なのかを、ライブラリは知りません。rule が見るのは、pre と next という2つの値の変化だけです。「下書き」「承認済み」のような判断は、値についての述語(`(value) => boolean` の関数)としてドメインの側に書きます。
+ドメインのパッケージでは、よく使う Snapshot に別名を付けておくと読みやすくなります。
+
+```ts
+export type ArticleSave = SaveSnapshot<typeof article>;
+export type ArticleDelete = DeleteSnapshot<typeof article>;
+```
+
+ライブラリは「状態」という概念を持ちません。どの項目が状態なのかを、ライブラリは知りません。「下書き」「承認済み」のような判断は、値についての述語としてドメインの側に書きます。述語はただの関数で、ライブラリに登録する必要はありません。
 
 ```ts
 export const isDraft = (a: ArticleValue) => a.status === "DRAFT";
@@ -108,15 +127,28 @@ export const isPublished = (a: ArticleValue) => a.status === "PUBLISHED";
 export const isApproved = (a: ArticleValue) => a.approvedAt !== null;
 ```
 
-述語はただの関数です。ライブラリに登録する必要はなく、1つの項目を見ても、複数の項目を組み合わせてもかまいません。
+### relation を宣言する
 
-`requires` には relation そのものを渡します。文字列の名前を使わないので、`check` の引数の型は自動で決まり、宣言していない relation は使えません。
+relation は「この判定には、こういうデータが必要だ」という宣言です。どの Snapshot から決まるかと、型だけを持ち、取得方法は持ちません。
 
 ```ts
-import { saveRule, always, changed, next, pre, actor, and, not } from "domain-rules";
+import { relation } from "domain-rules";
+
+// 保存の Snapshot から決まる、同じブログ内の記事一覧
+export const articlesInBlog = relation<ArticleSave, readonly Article[]>("articlesInBlog");
+```
+
+relation の Snapshot の種類と、それを使う rule の Snapshot の種類が違うと型エラーになります。保存の Snapshot から決まる relation は、`next` が `null` の削除の判定では使えないからです。
+
+### rule を定義する
+
+rule は1つの条件です。型引数に、どの Snapshot に対する条件かを書きます。`requires` には relation そのものを渡します。文字列の名前を使わないので、`check` の引数の型は自動で決まり、宣言していない relation は使えません。
+
+```ts
+import { rule, always, changed, next, pre, actor, and, not } from "domain-rules";
 import { Result } from "@praha/byethrow";
 
-export const authorIsNotReviewer = saveRule<Article>({
+export const authorIsNotReviewer = rule<ArticleSave>({
   name: "著者とレビュアーは別の人",
   when: always,
   check: (s) =>
@@ -125,7 +157,7 @@ export const authorIsNotReviewer = saveRule<Article>({
       : Result.fail("SAME_AUTHOR_AND_REVIEWER"),
 });
 
-export const uniqueSlugInBlog = saveRule<Article>({
+export const uniqueSlugInBlog = rule<ArticleSave>({
   name: "slug はブログ内で一意",
   requires: { articlesInBlog },
   when: changed("slug"),
@@ -135,28 +167,27 @@ export const uniqueSlugInBlog = saveRule<Article>({
       : Result.succeed(),
 });
 
-export const publishAtInFuture = saveRule<Article>({
+export const publishAtInFuture = rule<ArticleSave>({
   name: "公開日時は未来",
   when: changed("publishAt"),
   check: (s) =>
     s.next.publishAt > s.now ? Result.succeed() : Result.fail("PUBLISH_AT_IN_PAST"),
 });
 
-export const onlyReviewerPublishes = saveRule<Article>({
+export const onlyReviewerPublishes = rule<ArticleSave>({
   name: "公開できるのはレビュアーだけ",
   when: changed("status", { pre: "DRAFT", next: "PUBLISHED" }),
   check: (s) =>
     s.actor.id === s.next.reviewerId ? Result.succeed() : Result.fail("NOT_REVIEWER"),
 });
 
-// 公開後の slug は管理者しか変えられない
-export const slugLockedAfterPublish = saveRule<Article>({
+export const slugLockedAfterPublish = rule<ArticleSave>({
   name: "公開後の slug を変えられるのは管理者だけ",
   when: and(changed("slug"), pre(isPublished), not(actor(isAdmin))),
   check: () => Result.fail("SLUG_LOCKED"),
 });
 
-export const publishedIsApproved = saveRule<Article>({
+export const publishedIsApproved = rule<ArticleSave>({
   name: "公開中の記事は承認済み",
   when: next(isPublished),
   check: (s) => (isApproved(s.next) ? Result.succeed() : Result.fail("NOT_APPROVED")),
@@ -169,7 +200,7 @@ const allowedStatusChanges: Record<ArticleValue["status"], readonly ArticleValue
   ARCHIVED: ["ARCHIVED"],
 };
 
-export const statusChangesAreAllowed = saveRule<Article>({
+export const statusChangesAreAllowed = rule<ArticleSave>({
   name: "status は許可された変化だけ",
   when: changed("status"),
   check: (s) => {
@@ -179,52 +210,13 @@ export const statusChangesAreAllowed = saveRule<Article>({
       : Result.fail("STATUS_CHANGE_NOT_ALLOWED");
   },
 });
+
+export const onlyDraftIsDeletable = rule<ArticleDelete>({
+  name: "削除できるのは下書きだけ",
+  when: not(pre(isDraft)),
+  check: () => Result.fail("NOT_DRAFT"),
+});
 ```
-
-`when` の種類は次のとおりです。
-
-| 種類 | when |
-|---|---|
-| 常に | `always` |
-| 新規作成のとき | `onCreate` |
-| 項目の値が変わったとき | `changed("slug")`。新規作成のときも満たす |
-| 項目の値が、ある値から変わったとき | `changed("status", { pre: "DRAFT" })`。新規作成のときは満たさない |
-| 項目の値が、ある値に変わったとき | `changed("status", { next: "PUBLISHED" })`。新規作成でその値から始まるときも満たす |
-| 項目の値が、ある値からある値に変わったとき | `changed("status", { pre: "DRAFT", next: "PUBLISHED" })` |
-| 変更後の値が述語を満たすとき | `next(isPublished)` |
-| 変更前の値が述語を満たすとき | `pre(isDraft)`。新規作成のときは満たさない |
-| 操作した人が述語を満たすとき | `actor(isAdmin)`、`actor((a, s) => a.id === s.next.authorId)` |
-| 組み合わせ | `and(...)`、`or(...)`、`not(...)` |
-| 独自の条件 | `(s) => boolean` の関数をそのまま渡す |
-
-`changed` の `pre` と `next` には、その項目の値か、その項目の値を受け取る述語を渡します。`changed("publishAt", { next: (t) => t > 0 })` のように書けます。どちらも、値が変わったときだけ当たります。`pre` も `next` も同じ値のままなら、`changed` は当たりません。
-
-`actor` には、操作した人を受け取る述語を渡します。述語の2つ目の引数には Snapshot が渡るので、「著者本人なら」のように値と組み合わせた条件も書けます。
-
-actor を when に書くか check に書くかは、次のように分けます。
-
-- **rule を当てるかどうかが、操作した人で変わる。** when に書きます。例えば「管理者以外が公開後に slug を変えたら違反」は、管理者のときには rule 自体が当たりません。
-- **操作した人が条件を満たすかどうかが、rule の中身そのもの。** check に書きます。例えば「公開できるのはレビュアーだけ」は、公開という変化のときに当たり、レビュアーでなければ違反にします。
-
-actor の型は、ライブラリでは決めません。アプリケーションが1回だけ登録します。
-
-```ts
-declare module "domain-rules" {
-  interface Register {
-    actor: AppActor;
-  }
-}
-
-export const isAdmin = (a: AppActor) => a.role === "ADMIN";
-```
-
-1つの項目の変化は `changed` で書きます。複数の項目にまたがる条件は、`pre(述語)` と `next(述語)` を `and` などで組み合わせて書きます。
-
-when の正体は `(s: Snapshot) => boolean` という関数です。`changed`、`pre`、`next`、`actor`、`and` などは、この関数を作る関数です。例えば `next(isPublished)` は `(s) => isPublished(s.next)` と同じ判定をします。
-
-`isPublished` のような述語は値を受け取る関数で、Snapshot を受け取る when とは型が違います。そのため `when: isPublished` とは書けず、`next` か `pre` で包むか、`(s) => isPublished(s.next)` と書きます。
-
-作る関数を使う利点は、when が自分の内容を説明できることです。作る関数が返す when には、`{ kind: "changed", field: "status", pre: "DRAFT", next: "PUBLISHED" }` のような説明が付きます。plan はこれを使って「なぜこの rule が当たったか」を表示します。手書きの関数は説明を持たないので、plan では「独自の条件」とだけ表示します。必要なら `describe("公開済みの記事", (s) => ...)` で説明を付けられます。
 
 よく使う形の rule は、rule を返す関数として用意します。
 
@@ -232,123 +224,99 @@ when の正体は `(s: Snapshot) => boolean` という関数です。`changed`�
 import { immutable } from "domain-rules";
 
 // 作成後に変えられない項目
-export const articleImmutableFields = immutable<Article>(["blogId", "authorId"]);
+export const articleImmutableFields = immutable<ArticleSave>(["blogId", "authorId"]);
 ```
 
-### ruleSet にまとめて公開する(ドメインのパッケージ)
+### when を書く
 
-操作ごとに、model と守るべき rule をまとめて公開します。ruleSet は、中の rule が必要とする relation の一覧を型として持ちます。
+`when` の種類は次のとおりです。
 
-```ts
-import { upsertRuleSet } from "domain-rules";
-
-export const saveArticleRules = upsertRuleSet(article, [
-  statusChangesAreAllowed,
-  articleImmutableFields,
-  authorIsNotReviewer,
-  uniqueSlugInBlog,
-  publishAtInFuture,
-  onlyReviewerPublishes,
-  slugLockedAfterPublish,
-  publishedIsApproved,
-]);
-// RuleSet<typeof article, typeof article.pre | typeof articlesInBlog>
-```
-
-ruleSet は普通の値なので、操作ごとに別の組を作ったり、複数の ruleSet で同じ rule を使い回したりできます。
-
-ドメインのパッケージは、操作の名前を付けて ruleSet をまとめて公開します。この名前が、そのまま checker の名前になります。
-
-```ts
-export const articleOperations = {
-  saveArticle: saveArticleRules,
-  archiveArticle: archiveArticleRules,
-};
-```
-
-### 操作の種類を選ぶ(ドメインのパッケージ)
-
-ruleSet は、操作の種類ごとに別の関数で作ります。`ruleSet` という1つの関数に文字列やオプションを渡して種類を切り替えることはしません。種類によって Command の型と受け取るオプションが違うので、関数を分けたほうが、間違えたときの型エラーが「この関数にはこのオプションがない」と素直に出るからです。rule も同じく、種類ごとに別の関数で作ります。
-
-relation、provider、`bind` の仕組みはすべての種類で共通です。違うのは Snapshot の形と、checker が返すものだけです。
-
-| 種類 | ruleSet の作り方 | rule の作り方 | Snapshot | checker が返すもの |
-|---|---|---|---|---|
-| 新規作成 | `createRuleSet(model, rules, options?)` | `saveRule` | `{ pre: null, next, actor, now }` | `Persistable<S>` |
-| 更新 | `updateRuleSet(model, rules, options?)` | `saveRule` | `{ pre: S, next, actor, now }` | `Persistable<S>`(`pre` は必ずある) |
-| 新規作成か更新 | `upsertRuleSet(model, rules, options?)` | `saveRule` | `{ pre: S \| null, next, actor, now }` | `Persistable<S>` |
-| 削除 | `deleteRuleSet(model, rules, options?)` | `deleteRule` | `{ pre: S, next: null, actor, now }` | `Deletable<S>` |
-| 判定 | `decideRuleSet(action, rules, { decide })` | `decideRule` | `{ input, actor, now }` | `Decision<T>` |
-
-新規作成、更新、新規作成か更新の3つは、Command の `id` の扱いだけが違います。
-
-| ruleSet | Command の `id` | pre がないとき |
+| 種類 | when | 使える Snapshot |
 |---|---|---|
-| `createRuleSet` | 受け取らない | (常にない) |
-| `updateRuleSet` | 必須 | `notFound` を返す |
-| `upsertRuleSet` | あってもなくてもよい | `id` があれば `notFound`、なければ新規作成 |
+| 常に | `always` | すべて |
+| 新規作成のとき | `onCreate` | 保存 |
+| 項目の値が変わったとき | `changed("slug")`。新規作成のときも満たす | 保存 |
+| 項目の値が、ある値から変わったとき | `changed("status", { pre: "DRAFT" })`。新規作成のときは満たさない | 保存 |
+| 項目の値が、ある値に変わったとき | `changed("status", { next: "PUBLISHED" })`。新規作成でその値から始まるときも満たす | 保存 |
+| 項目の値が、ある値からある値に変わったとき | `changed("status", { pre: "DRAFT", next: "PUBLISHED" })` | 保存 |
+| 変更後の値が述語を満たすとき | `next(isPublished)` | 保存 |
+| 変更前の値が述語を満たすとき | `pre(isDraft)`。新規作成のときは満たさない | 保存、削除 |
+| 操作した人が述語を満たすとき | `actor(isAdmin)`、`actor((a, s) => a.id === s.next.authorId)` | すべて |
+| 組み合わせ | `and(...)`、`or(...)`、`not(...)` | すべて |
+| 独自の条件 | `(s) => boolean` の関数をそのまま渡す | すべて |
 
-`saveRule` で作った rule は、この3つのどれにも入れられます。`saveRule` の Snapshot の pre は `S | null` で、3つの Snapshot のどれでも受け取れるからです。
+使えない Snapshot の rule に書くと、型エラーになります。
 
-#### 操作で変えてよい項目を決める(`editableKeys`)
+`changed` の `pre` と `next` には、その項目の値か、その項目の値を受け取る述語を渡します。どちらも、値が変わったときだけ当たります。1つの項目の変化は `changed` で書き、複数の項目にまたがる条件は `pre(述語)` と `next(述語)` を `and` などで組み合わせて書きます。
 
-`editableKeys` は、新規作成、更新、新規作成か更新の ruleSet が受け取るオプションです。この操作で、Command の `input` から受け取り、値を変えてよい model の項目名を並べます。
+actor を when に書くか check に書くかは、次のように分けます。
+
+- **rule を当てるかどうかが、操作した人で変わる。** when に書きます。例えば「管理者以外が公開後に slug を変えたら違反」は、管理者のときには rule 自体が当たりません。
+- **操作した人が条件を満たすかどうかが、rule の中身そのもの。** check に書きます。例えば「公開できるのはレビュアーだけ」は、公開という変化のときに当たり、レビュアーでなければ違反にします。
+
+when の正体は `(s: Snapshot) => boolean` という関数で、`changed` や `next` などはこの関数を作る関数です。作る関数が返す when には、`{ kind: "changed", field: "status", pre: "DRAFT", next: "PUBLISHED" }` のような説明が付きます。plan はこれを使って「なぜこの rule が当たったか」を表示します。手書きの関数には、`describe("公開済みの記事", (s) => ...)` で説明を付けられます。
+
+### model のルールの組を作る
+
+model ごとに、ルールの組を1つ作ります。保存のルールと削除のルールを、それぞれ並べます。
 
 ```ts
-// 記事を公開する操作。既存の記事だけが対象で、変えてよいのは status と publishAt だけ
-export const publishArticleRules = updateRuleSet(article, [statusChangesAreAllowed, onlyReviewerPublishes], {
-  editableKeys: ["status", "publishAt"],
+import { entityRules } from "domain-rules";
+
+const isMember = (a: AppActor): a is MemberActor => a.role === "MEMBER" || a.role === "ADMIN";
+
+export const articleRules = entityRules(article, {
+  actor: isMember,
+  save: [
+    statusChangesAreAllowed,
+    articleImmutableFields,
+    authorIsNotReviewer,
+    uniqueSlugInBlog,
+    publishAtInFuture,
+    onlyReviewerPublishes,
+    slugLockedAfterPublish,
+    publishedIsApproved,
+  ],
+  delete: [onlyDraftIsDeletable],
 });
-// Command の型は { id: string; input: Partial<Pick<記事の入力, "status" | "publishAt">>; actor }
 ```
 
-- **型。** 項目名は model の schema の項目名に限られます。Command の `input` は、並べた項目だけを持つ型になります。並べていない項目を渡すと型エラーになります。
-- **実行時。** 型を通り抜けて、並べていない項目が `input` に入ってきたら、`invalid` を返します。黙って捨てると、呼び出す側のバグが隠れるからです。
-- **並べていない項目の値。** 更新では pre の値がそのまま残ります。新規作成では schema の既定値が入ります。既定値がない必須の項目を並べ忘れると、新規作成は必ず `invalid` になるので、`createRuleSet` と `upsertRuleSet` ではこれを型エラーにします。
-- **省略したとき。** schema のすべての項目を受け取ります。
+- **`save`。** 保存の Snapshot に対する rule を並べます。`create`、`update`、`upsert` のどれで呼ばれても、この一覧から `when` が当たるものを判定します。
+- **`delete`。** 削除の Snapshot に対する rule を並べます。`delete` を書かなければ、その model は削除できません。束ねたあとに `delete` のメソッドが作られないからです。`save` も同じです。
+- **`actor`。** この model を操作できる actor の型ガードです。省略すると、どの actor でも受け付けます。
 
-#### 削除する
+`actor` の型ガードは、id や入力の検証と同じく、Command を受け取る境界での検証です。満たさなければ、何も取得せずに `forbidden` を返します。通った actor は、ルールの組の中のすべての rule と provider で、型ガードの型(この例では `MemberActor`)として扱われます。rule が絞った型の actor を必要とするときは、`rule<SaveSnapshot<typeof article, MemberActor>>` のように Snapshot の型引数で宣言します。その rule を、actor を `MemberActor` に絞らないルールの組に入れると型エラーになります。
 
-削除の ruleSet は、`id` だけを受け取ります。pre を取得し、見つからなければ `notFound` を返します。next は常に `null` です。
+actor の型そのものは、アプリケーションが1回だけ登録します。
 
 ```ts
-import { deleteRuleSet, deleteRule, pre, not } from "domain-rules";
-
-export const draftOnlyDeletable = deleteRule<Article>({
-  name: "削除できるのは下書きだけ",
-  when: not(pre(isDraft)),
-  check: () => Result.fail("NOT_DRAFT"),
-});
-
-export const deleteArticleRules = deleteRuleSet(article, [draftOnlyDeletable]);
-// Command は { id: string; actor }。checker は Deletable<Article> を返す
+declare module "domain-rules" {
+  interface Register {
+    actor: AppActor;
+  }
+}
 ```
 
-```ts
-type Deletable<S extends { id: unknown }> = {
-  pre: S; // 削除する対象。存在したことが確かめられている
-  readonly [proof]: true;
-};
-```
+1つの model に、ルールの組は1つだけです。同じ model のルールの組を2つ束ねようとすると、`bind` が型エラーにします。
 
-`deleteRule` で作る rule は、next が `null` の Snapshot を受け取ります。`changed` と `next` は使えず、使うと型エラーになります。保存用の rule を削除の ruleSet に入れることも、型エラーになります。
+### action のルールの組を作る
 
-#### 判定する
-
-何も保存せず、「この操作をしてよいか」と「そのとき何が分かったか」だけを返す操作もあります。プレビューの閲覧、ファイルのダウンロード、外部の装置への指示などです。この種類は model ではなく action を対象にします。
+何も保存せず、「この操作をしてよいか」と「そのとき何が分かったか」だけを返す操作は、action として定義します。プレビューの閲覧、ファイルのダウンロード、外部の装置への指示などです。
 
 ```ts
-import { action, relation, decideRule, decideRuleSet, always } from "domain-rules";
+import { action, actionRules, relation, rule, always, type ActionSnapshot } from "domain-rules";
 
 export const previewArticle = action({
   name: "previewArticle",
   input: v.object({ articleId: ArticleIdSchema }),
 });
 
-// 入力の articleId から決まる記事
-export const targetArticle = relation<ActionInput<typeof previewArticle>, Article>("targetArticle");
+type PreviewArticle = ActionSnapshot<typeof previewArticle>;
 
-export const notArchived = decideRule<typeof previewArticle>({
+// 入力の articleId から決まる記事
+export const targetArticle = relation<PreviewArticle, Article>("targetArticle");
+
+export const notArchived = rule<PreviewArticle>({
   name: "アーカイブ済みの記事はプレビューできない",
   requires: { targetArticle },
   when: always,
@@ -356,7 +324,9 @@ export const notArchived = decideRule<typeof previewArticle>({
     targetArticle.status !== "ARCHIVED" ? Result.succeed() : Result.fail("ARCHIVED"),
 });
 
-export const previewArticleRules = decideRuleSet(previewArticle, [notArchived], {
+export const previewArticleRules = actionRules(previewArticle, {
+  actor: isMember,
+  rules: [notArchived],
   decide: {
     requires: { targetArticle },
     decide: (s, { targetArticle }) =>
@@ -367,38 +337,11 @@ export const previewArticleRules = decideRuleSet(previewArticle, [notArchived], 
           : Result.fail("NOT_ALLOWED"),
   },
 });
-// checker は Decision<{ article: Article; viewerRole: "author" | "reviewer" }> を返す
 ```
 
-```ts
-type Decision<T> = {
-  value: T; // decide が返したものだけ。取得した relation のうち、返さなかったものは含まない
-  actor: Actor;
-  readonly [proof]: true;
-};
-```
+`decide` は、すべての rule を通ったあとに1回だけ呼ばれ、返す値を決めます。rule は合否だけを返し、値を決めるのは `decide` だけです。`decide` が失敗を返したら、rule の違反と同じく `violations` になります。返り値の `Decision` には、`decide` が返したものだけが入ります。
 
-`decide` は、すべての rule を通ったあとに1回だけ呼ばれます。rule は合否だけを返し、値を決めるのは `decide` だけです。`decide` が失敗を返したら、rule の違反と同じく `violations` になります。
-
-`decide` が返したものだけが `Decision` に入ります。usecase は、判定に使った関連データを取り直さずに、`decision.value.article` を使えます。
-
-### 検証のあとに型を強くする(ドメインのパッケージ)
-
-rule を通ったことで分かった事実を、返り値の型に反映できます。証明は checker からしか作れないので、型を強くしても嘘になりません。
-
-#### actor の型を絞る
-
-ruleSet の `actor` に型ガードを渡すと、ほかの段階より先に actor を確かめます。満たさなければ `forbidden` を返し、何も取得しません。
-
-```ts
-const isMember = (a: AppActor): a is MemberActor => a.role === "MEMBER" || a.role === "ADMIN";
-
-export const saveArticleRules = upsertRuleSet(article, [...], { actor: isMember });
-```
-
-この ruleSet の中では、Snapshot の `actor` は `MemberActor` 型になります。rule は、自分が必要とする actor の型を `saveRule<Article, MemberActor>` のように宣言できます。`MemberActor` を必要とする rule を、`actor` で絞っていない ruleSet に入れると型エラーになります。provider に渡る Snapshot の `actor` も同じ型に絞られるので、provider は `actor.organizationId` のような、絞った型にだけある項目を使えます。
-
-#### 項目の値が確かめられたことを型に残す
+### 確かめた値を型に残す
 
 rule の `refines` に書いた項目は、rule を通ったあと、返り値の型で brand 付きの型になります。値そのものは変わりません。
 
@@ -406,7 +349,7 @@ rule の `refines` に書いた項目は、rule を通ったあと、返り値�
 import { brand, exists } from "domain-rules";
 
 // 前の例の uniqueSlugInBlog に refines を足したもの。when は always にする
-export const uniqueSlugInBlog = saveRule<Article>({
+export const uniqueSlugInBlog = rule<ArticleSave>({
   name: "slug はブログ内で一意",
   requires: { articlesInBlog },
   when: always,
@@ -417,126 +360,138 @@ export const uniqueSlugInBlog = saveRule<Article>({
   refines: { slug: brand<"UniqueInBlog">() },
 });
 
-// 関連データが存在することを確かめ、その id の項目を Existed<BlogId> にする
-export const blogOfArticle = relation<Article, Blog | null>("blogOfArticle");
+// relation が null でなければ通り、blogId を Existed<BlogId> にする rule を作る
+export const blogOfArticle = relation<ArticleSave, Blog | null>("blogOfArticle");
 export const blogExists = exists(blogOfArticle, "blogId");
 ```
 
-`exists(relation, 項目)` は、「relation が `null` でなければ通り、その項目を `Existed<T>` にする」rule を作る関数です。`Persistable<Article>` の `value.blogId` は `Existed<BlogId>` 型になり、保存する側は存在の確認を繰り返す必要がありません。
+- **when は `always` に限る。** 当たらないことがある rule だと、当たらなかったときにも型が強くなってしまい、型が嘘になるからです。`always` 以外の when と `refines` を一緒に書くと型エラーになります。
+- **強くなるのは返り値の型だけ。** 同じルールの組のほかの rule が見る Snapshot は強くなりません。rule の判定は互いに順序を持たないので、ほかの rule の結果を前提にできないからです。
 
-`refines` を持つ rule の when は `always` に限ります。`changed("slug")` のように当たらないことがある rule だと、当たらなかったときにも返り値の型が強くなってしまい、型が嘘になるからです。`always` 以外の when と `refines` を一緒に書くと型エラーになります。
+actor の型の絞り込みは、ここではなく、ルールの組の `actor` で行います。actor の型ガードは境界での検証で、rule の結果ではないからです。
 
-型が強くなるのは checker の返り値だけです。同じ ruleSet のほかの rule の Snapshot は強くなりません。rule の判定の順序に依存しないためです。関連データの中身が必要な rule は、型ではなく relation の値そのものを使います。
+### provider を定義して束ねる
 
-### provider を定義して束ねる(アプリケーションの組み立て部分)
-
-provider は relation の実装です。ドメインの外で定義します。provider は他の relation を使って取得することもできます。relation 同士の依存は「どう取るか」の都合なので、宣言ではなく provider の側に書きます。
+provider は、宣言された port の実装です。relation、model の port(`load` と `newId`)、時計のどれでも、同じ `provide` で渡します。ドメインの外で定義します。
 
 ```ts
-import { relation, provide, bind } from "domain-rules";
-import { article, articlesInBlog, articleOperations } from "@example/domain";
-
-export const articlePreProvider = provide(article.pre, (id) => articleRepository.findById(id));
-
-// 新規作成のときだけ呼ばれる
-export const articleIdProvider = provide(article.newId, () => createArticleId());
+import { relation, provide, bind, clock } from "domain-rules";
+import { article, articlesInBlog, articleRules, previewArticleRules, targetArticle } from "@example/domain";
 
 // provider の中だけで使う relation。ドメインの rule からは見えなくてよい
-const blog = relation<Article, Blog>("blog");
+const blog = relation<ArticleSave, Blog>("blog");
 
-export const blogProvider = provide(blog, (s) => blogRepository.findById(s.next.blogId));
+export const providers = [
+  provide(article.load, (id) => articleRepository.findById(id)),
+  provide(article.newId, () => createArticleId()),
+  provide(articlesInBlog, {
+    requires: { blog },
+    load: (_s, { blog }) => articleRepository.findByBlog(blog.id),
+  }),
+  provide(blog, (s) => blogRepository.findById(s.next.blogId)),
+  provide(targetArticle, (s) => articleRepository.findById(s.input.articleId)),
+  provide(clock, () => Date.now()),
+];
 
-export const articlesInBlogProvider = provide(articlesInBlog, {
-  requires: { blog },
-  load: (_s, { blog }) => articleRepository.findByBlog(blog.id),
-});
-
-// すべての ruleSet が必要とする relation と id の生成のうち、provider がないものがあれば型エラーにする
-export const operations = bind(
-  { ...articleOperations, ...blogOperations },
-  {
-    providers: [articlePreProvider, articleIdProvider, blogProvider, articlesInBlogProvider],
-    clock: () => Date.now(),
-  },
-);
+export const domain = bind([articleRules, previewArticleRules], { providers });
 // {
-//   saveArticle: (command: Command<typeof article>) => ResultAsync<Persistable<Article>, CheckError>;
-//   archiveArticle: ...;
-//   ...
+//   article: { create, update, upsert, delete },
+//   previewArticle: { decide },
 // }
 ```
 
-`bind` は、名前を付けた ruleSet の一覧と provider の一覧を受け取り、同じ名前の checker の一覧を返します。provider は全部の ruleSet で共有します。ある ruleSet が使わない provider が混ざっていてもかまいません。
+provider は他の relation を使って取得することもできます。relation 同士の依存は「どう取るか」の都合なので、宣言ではなく provider の側に書きます。
 
-束ねるのは起動時に1回だけです。provider の不足は、ここで型エラーとして分かります。
+`bind` は起動時に1回だけ呼びます。ルールの組が必要とする port のうち、provider がないものがあれば型エラーにします。ある組が使わない provider が混ざっていてもかまいません。
 
-`article.newId` は、`article.pre` と同じく model が自動で持つ宣言で、「新しい id を1つ作る」という意味です。id の生成は乱数や時刻に依存する副作用なので、ほかの取得と同じく provider として注入します。model ごとに id の作り方が違っても、provider を並べるだけで済みます。時計は全部の checker で共通なので、provider とは別に1つだけ渡します。
-
-テストでは、固定の値を返す provider と時計で束ねるだけで済みます。repository の mock はいりません。
+テストでは、固定の値を返す provider で束ねるだけで済みます。repository の mock はいりません。
 
 ```ts
-const testOperations = bind(articleOperations, {
+const testDomain = bind([articleRules], {
   providers: [
-    provide.value(article.pre, existingArticle),
+    provide.value(article.load, existingArticle),
     provide.value(article.newId, "art_1" as ArticleId),
     provide.value(articlesInBlog, []),
+    provide.value(clock, 1_700_000_000_000),
   ],
-  clock: () => 1_700_000_000_000,
 });
 ```
 
 ### 実行する(usecase)
 
-usecase は、注入された checker の一覧から1つを呼ぶだけです。rule も provider も知りません。
+usecase は、束ねた結果の、対象ごとのメソッドを呼ぶだけです。rule も provider も知りません。
 
 ```ts
-type Command<M> = {
-  id?: string;                        // あれば更新、なければ新規作成
-  input: Partial<SchemaInput<M>>;     // schema の入力の型から作る。検証前の値
-  actor: Actor;
-};
-
 const saved = await Result.pipe(
-  operations.saveArticle({ id: articleId, input: { status: "PUBLISHED" }, actor }),
+  domain.article.update({ id: articleId, input: { status: "PUBLISHED" }, actor }),
   Result.andThen((persistable) => repository.save(persistable)), // save は Persistable しか受け取らない
 );
 ```
 
-保存の checker が返す型は次のとおりです。削除と判定の返り値は「操作の種類を選ぶ」の節にあります。
+| メソッド | 受け取るもの | 返すもの |
+|---|---|---|
+| `create` | `{ input, actor }` | `Persistable<S>`(`pre` は `null`) |
+| `update` | `{ id, input, actor }` | `Persistable<S>`(`pre` は必ずある) |
+| `upsert` | `{ id?, input, actor }` | `Persistable<S>` |
+| `delete` | `{ id, actor }` | `Deletable<S>` |
+| `decide` | `{ input, actor }` | `Decision<T>` |
+
+`input` は、schema の入力の型を `Partial` にしたものです。
 
 ```ts
-type Persistable<S extends { id: unknown }> = {
-  pre: S | null; // 新規か更新かの判断や、楽観ロックに使える
-  value: S;
-  readonly [proof]: true; // proof は公開しない unique symbol
+type Persistable<S> = {
+  pre: S | null;             // 新規か更新かの判断や、楽観ロックに使える
+  value: S;                  // refines で強くなった型を含む
+  readonly [proof]: true;    // proof は公開しない unique symbol
+};
+
+type Deletable<S> = {
+  pre: S;                    // 削除する対象。存在したことが確かめられている
+  readonly [proof]: true;
+};
+
+type Decision<T> = {
+  value: T;                  // decide が返したもの
+  actor: Actor;              // ルールの組の actor の型ガードで絞った型
+  readonly [proof]: true;
 };
 
 type CheckError =
-  | { kind: "forbidden" }                             // actor が ruleSet の型ガードを満たさない
-  | { kind: "invalid"; issues: SchemaIssue[] }       // id か値が schema を満たさない
-  | { kind: "notFound" }                              // id を指定したのに pre がない
+  | { kind: "forbidden" }                             // actor が型ガードを満たさない
+  | { kind: "invalid"; issues: SchemaIssue[] }        // id、入力、マージした値が schema を満たさない
+  | { kind: "notFound" }                              // 指定した id の既存の値がない
   | { kind: "violations"; violations: RuleViolation[] }
-  | { kind: "loadFailed"; relation: string; cause: unknown };
+  | { kind: "loadFailed"; port: string; cause: unknown };
 ```
 
 ## 実行モデル
 
-checker は呼ばれるたびに、次の6段階で進みます。
+束ねたメソッドは、呼ばれるたびに次の段階で進みます。
 
-0. **actor の確認。** ruleSet に `actor` の型ガードがあれば確かめ、満たさなければ `forbidden` を返します。
-1. **resolve。** `id` があれば id の schema で検証し、`article.pre` の provider で既存の値を取ります。見つからなければ `notFound` を返します。`id` がなければ pre は `null` です。
-2. **merge。** pre の値に入力を重ねます。入力で `undefined` の項目は pre の値を残し、`null` の項目は `null` で上書きします。
-3. **parse。** マージした値を schema で検証し、`next` を作ります。検証には byethrow の `Result.parse` を使い、失敗したら Standard Schema の issue(項目のパス付き)を `invalid` として返します。
-4. **plan。** `when` で適用する rule を選び、それらの `requires` と、対応する provider の `requires` をたどって必要な relation を集めます。この段階は純関数です。
-5. **load と check。** plan で集めた relation だけを、互いに依存しないものは並列に取得します。そのあと、適用するすべての rule を判定します。最初の違反で止めず、`Result.collect` で違反をすべて集めて返します。
-6. **seal。** 違反がなければ、操作の種類に応じた返り値を作って封をします。保存なら id を付けて(更新なら `pre.id`、新規なら `article.newId` の provider で作った id)`Persistable<S>` を、削除なら `Deletable<S>` を作ります。判定なら `decide` を呼んで `Decision<T>` を作ります。
+| 段階 | やること | 責任を持つ部品 | 失敗したとき |
+|---|---|---|---|
+| 1. 受け取る | id、入力、actor を検証する | model と action の schema、ルールの組の `actor` | `invalid`、`forbidden` |
+| 2. resolve | 既存の値を取る | `model.load` の provider | `notFound` |
+| 3. merge | 既存の値に入力を重ねる | ライブラリ | なし |
+| 4. parse | マージした値を検証して next を作る | model の schema | `invalid` |
+| 5. plan | 当たる rule と、必要な relation を決める | ルールの組の rule の `when` と `requires` | なし |
+| 6. load と check | relation を取り、rule を判定する | relation の provider、rule の `check` | `loadFailed`、`violations` |
+| 7. seal | 返り値を作って封をする | `model.newId` の provider、action の `decide` | `violations` |
 
-削除では merge と parse を行いません。判定では resolve と merge を行わず、parse は action の入力の schema に対して行います。
+- **merge の規則。** 入力で `undefined` の項目は既存の値を残し、`null` の項目は `null` で上書きします。
+- **load と check。** 互いに依存しない relation は並列に取得します。rule は最初の違反で止めず、`Result.collect` で違反をすべて集めて返します。
+- **seal。** 保存では id を付けます(更新なら既存の id、新規なら `model.newId` の provider で作った id)。
 
-`plan` は単体でも呼べるので、「どの rule が当たり、何が必要か」をテストやデバッグで確かめられます。ruleSet に対して呼ぶと、provider を使わずにドメインの範囲だけで分かることを返します。checker に対して呼ぶと、provider の依存までたどった結果を返します。
+メソッドによって、通らない段階があります。
+
+- **`create`。** resolve を行いません。
+- **`delete`。** merge と parse を行いません。
+- **`decide`。** resolve と merge を行わず、parse は action の入力の schema に対して行います。
+
+`plan` は単体でも呼べるので、「どの rule が当たり、何が必要か」をテストやデバッグで確かめられます。
 
 ```ts
-plan(saveArticleRules, snapshot);
+plan(articleRules, snapshot);
 // { rules: ["著者とレビュアーは別の人", "公開できるのはレビュアーだけ", ...], relations: [] }
 ```
 
@@ -548,43 +503,45 @@ plan(saveArticleRules, snapshot);
 
 ## 設計原則
 
-- **小さな単位で定義する。** model も relation も rule も、1つずつ独立した値です。全体をまとめる設定オブジェクトは作りません。
-- **値の検証規則はドメインが持つ。** schema は model の一部としてドメインのパッケージに置きます。checker の外で検証を済ませる必要はありません。
-- **マージの規則は1つにする。** `undefined` は「変えない」、`null` は「空にする」です。項目ごとにマージを書く必要はありません。
-- **relation は宣言と実装を分ける。** rule は「何が必要か」だけに依存し、「どう取るか」は provider として外から注入します。既存の値(pre)の取得も、同じ仕組みで注入します。
+- **ルールの組は対象と1対1。** 操作ごとにルールの組を作りません。どのルールが当たるかは `when` が値の変化から決めます。ルールの並べ忘れで、ある操作だけ検査が抜けることはありません。
+- **小さな単位で定義する。** model、action、relation、rule は1つずつ独立した値です。
+- **境界で受け取り、中では信じる。** id、入力、actor は最初の段階で検証します。通ったあとは、すべての rule と provider がその型を信じます。
+- **副作用はすべて port。** relation、既存の値の取得、id の生成、時計は、どれも宣言された port で、どれも `provide` で注入します。
+- **値の検証規則はドメインが持つ。** schema は model の一部としてドメインのパッケージに置きます。
+- **マージの規則は1つにする。** `undefined` は「変えない」、`null` は「空にする」です。
+- **relation と rule は Snapshot の種類を持つ。** 種類の違うものを組み合わせると型エラーになります。
 - **`requires` は静的に宣言する。** 依存を実行前に知ることができるので、plan による最適化と説明ができます。
-- **ライブラリは状態を知らない。** rule が見るのは pre と next の値の変化だけです。どの値が状態にあたるかは、ドメインが述語として書きます。
-- **`when` は Snapshot だけを見る同期の純関数にする。** 関連データを見ないと決まらない条件は、`check` の中で「当てはまらなければ ok」として書きます。
-- **`check` は同期の純関数にする。** 副作用は provider と時計にだけ置きます。rule のテストはデータを渡すだけで済みます。
-- **証明は checker からしか作れない。** `Persistable<S>`、`Deletable<S>`、`Decision<T>` は、外に公開しない `unique symbol` による brand 型です。
-- **rule は合否だけを返す。** 判定の操作で値を決めるのは `decide` だけです。rule が値を返すと、どの rule の値を使うかが判定の順序に依存してしまうからです。
-- **id は rule の判定に使わない。** id を付けるのは判定のあとです。rule が自分自身を除外したいときは `pre?.id` を使います。
+- **ライブラリは状態を知らない。** rule が見るのは pre と next の値の変化だけです。
+- **`when` と `check` は同期の純関数にする。** 関連データを見ないと決まらない条件は、`check` の中で「当てはまらなければ ok」として書きます。
+- **rule は合否だけを返す。** 値を決めるのは action の `decide` だけです。
+- **証明は束ねたメソッドからしか作れない。** `Persistable<S>`、`Deletable<S>`、`Decision<T>` は、外に公開しない `unique symbol` による brand 型です。
 
 ## スコープ外
 
-- **永続化。** `Persistable<S>` を受け取って保存するのは利用する側の責務です。
+- **永続化。** `Persistable<S>` や `Deletable<S>` を受け取って保存・削除するのは利用する側の責務です。
 - **並行実行での整合性(TOCTOU)。** 一意性などは DB の制約と併用してください。
-- **通信の形からコマンドへの変換。** GraphQL や HTTP の型を `Command` に詰め替えるのは、利用する側の責務です。値の検証は checker が行います。
+- **API ごとの入力の形。** 「この API からは status しか受け取らない」のような制限は、usecase が受け取る型を狭めて行います。「status を変えられるのはレビュアーだけ」のようなドメインの制限は、rule として書きます。
+- **通信の形からの変換。** GraphQL や HTTP の型を、メソッドの引数に詰め替えるのは利用する側の責務です。
 - **時間経過による自動遷移やワークフローの実行。**
 
 ## 先行事例
 
 - **Haxl**(Facebook)。ルールが使うデータの取得を自動で重複除去・batch・並列化する Haskell ライブラリです。論文は "There is no Fork"(ICFP 2014)。
 - **Build Systems à la Carte**(ICFP 2018)。依存を静的に宣言するタスク(Applicative)は、実行前に最適化できます。`requires` を静的にする根拠です。
-- **Ports and Adapters と Effect の `Context.Tag`**。必要なものを型付きの宣言として表し、実装は外から注入する考え方です。relation と provider の関係がこれにあたります。
+- **Ports and Adapters と Effect の `Context.Tag`**。必要なものを型付きの宣言として表し、実装は外から注入する考え方です。port と provider の関係がこれにあたります。
 - **Event-B と Design by Contract**。不変条件と遷移のガードを分けて書く考え方です。
-- **Parse, don't validate**(Alexis King)。検証が通ったら、より強い型に変える考え方です。parse の段階と `Persistable<S>` がこれにあたります。
+- **Parse, don't validate**(Alexis King)。検証が通ったら、より強い型に変える考え方です。境界での検証と、`refines` と、返り値の brand 型がこれにあたります。
 - **Standard Schema**。schema ライブラリに共通のインターフェースです。これに対応することで、特定の schema ライブラリに依存しません。
 
 ## 未決定の論点
 
-- **provider の網羅を型で保証できるか。** 束ねるすべての ruleSet が必要とする relation と id の生成(provider の requires をたどった先も含む)のすべてに provider があることを、`bind` の型で確かめたい。ruleSet の一覧と provider の配列から推論が成り立つかは、まだ試していません。
-- **既存の値の再検証。** 更新のたびに、pre とマージした値の全体を schema で検証します。schema を厳しくしたあと、古いデータを持つ記事は、関係ない項目を更新するときにも失敗します。これを正しい振る舞いとするか、変更した項目だけを検証する方法を用意するかは決めていません。
-- **入れ子の値のマージ。** 今の規則は1段目の項目だけを重ねます。入れ子のオブジェクトを部分的に更新したい場合の扱いは決めていません。
-- **relation に引数を持たせるか。** 今は `Snapshot` から決まる値だけを扱います(`article.pre` は id を引数にとる例外)。「next の blog」と「pre の blog」のように対象が違うものは、別の relation として宣言します。
-- **actor の型の登録方法。** 今は `Register` への型の登録(module augmentation)で、アプリケーション全体で1つの actor の型を使う想定です。境界付けられたコンテキストごとに actor の型が違う場合は、`ruleFor<Article, Actor>()` のように型を束ねた rule の作り方が必要になります。
-- **保存の操作で値を決める。** 今の `decide` は判定の操作だけで使えます。保存の操作でも「保存した値と一緒に、決めた値を返す」必要が出たら、保存の ruleSet にも `decide` を足します。
-- **`refines` の型の計算。** 複数の rule の `refines` を合わせて返り値の型を作る計算(union から intersection への変換)が、rule の数が増えても実用的な速さで終わるかは試していません。
+- **port の網羅を型で保証できるか。** 束ねるすべてのルールの組が必要とする port(provider の requires をたどった先も含む)のすべてに provider があることを、`bind` の型で確かめたい。推論が成り立つかは、まだ試していません。
+- **既存の値の再検証。** 更新のたびに、マージした値の全体を schema で検証します。schema を厳しくしたあと、古いデータを持つ記事は、関係ない項目を更新するときにも失敗します。これを正しい振る舞いとするかは決めていません。
+- **入れ子の値のマージ。** 今の規則は1段目の項目だけを重ねます。
+- **relation に引数を持たせるか。** 今は Snapshot から決まる値だけを扱います。「next の blog」と「pre の blog」のように対象が違うものは、別の relation として宣言します。
+- **actor の型の登録方法。** 今は `Register` への型の登録(module augmentation)で、アプリケーション全体で1つの actor の型を使う想定です。
+- **保存で値を決める。** 今の `decide` は action だけが持ちます。保存でも「保存した値と一緒に、決めた値を返す」必要が出たら、model のルールの組にも足します。
+- **`refines` の型の計算。** 複数の rule の `refines` を合わせて返り値の型を作る計算が、rule の数が増えても実用的な速さで終わるかは試していません。
 - **`when` が関連データを必要とするケース。** これがどのくらい出てくるかによって、二段階の plan を入れるかを決めます。
 
 ## License
