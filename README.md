@@ -39,7 +39,7 @@
 
 | 部品 | 責務 | 持つもの |
 |---|---|---|
-| model | エンティティの形と、取り出し方 | 値の schema、保存済みの値の型、id の schema、model の port(id から取る、新しい id を作る) |
+| model | エンティティの形と、取り出し方 | 入力と保存済みの値の schema、id の schema、model の port(id から取る、新しい id を作る) |
 | action | 保存を伴わない操作の入力の形 | 入力の schema |
 | rule | 線路の1つの step | 名前、`requires`、`when`、`check` |
 | port | check から呼ぶ外の機能の宣言 | 名前、引数と結果と失敗の型 |
@@ -69,11 +69,11 @@
 
 ```ts
 import * as v from "valibot";
-import { model, stored, type Entity, type Stored, type Value } from "domain-rules";
+import { model, type Entity, type Persisted, type Value } from "domain-rules";
 
 export const ArticleIdSchema = v.pipe(v.string(), v.startsWith("art_"), v.brand("ArticleId"));
 
-const articleSchema = v.object({
+const articleInput = v.object({
   blogId: BlogIdSchema,
   status: v.optional(v.picklist(["DRAFT", "PUBLISHED", "ARCHIVED"]), "DRAFT"),
   authorId: UserIdSchema,
@@ -83,29 +83,28 @@ const articleSchema = v.object({
   approvedAt: v.optional(v.nullable(v.number()), null),
 });
 
-type ArticleSchemaOutput = v.InferOutput<typeof articleSchema>;
-
 export const article = model({
   name: "article",
   id: ArticleIdSchema,
-  schema: articleSchema,
-  stored: stored<
-    Omit<ArticleSchemaOutput, "blogId" | "reviewerId"> & {
-      blogId: BlogIdExisted;
-      reviewerId: UserIdExisted;
-    }
-  >(),
+  schema: {
+    input: articleInput,
+    persisted: v.object({
+      ...articleInput.entries,
+      blogId: BlogIdExistedSchema,
+      reviewerId: UserIdExistedSchema,
+    }),
+  },
 });
 
-export type ArticleValue = Value<typeof article>;   // schema の出力の型
-export type StoredArticle = Stored<typeof article>; // 保存済みの値の型
-export type Article = Entity<typeof article>;       // { id: ArticleId } と StoredArticle を合わせたもの
+export type ArticleValue = Value<typeof article>;         // schema.input の出力の型
+export type PersistedArticle = Persisted<typeof article>; // schema.persisted の出力の型
+export type Article = Entity<typeof article>;             // { id: ArticleId } と PersistedArticle を合わせたもの
 ```
 
-- **`schema`。** 入力の値の形です。Valibot の `v.object` を使います。更新のときに、入力にある項目だけをその項目の schema で検証するため、ライブラリが項目ごとの schema(`entries`)を読む必要があるからです。項目をまたぐ条件(「著者とレビュアーは別の人」など)は、schema ではなく rule に書きます。
-- **`stored`。** 保存済みの値の型です。schema の出力の型より強い型を持てます。この例では、`blogId` と `reviewerId` が、存在を確かめた id の型です。保存するには、すべての項目がこの型になっている必要があります。
+- **`schema.input`。** 入力の値の形です。Valibot の `v.object` を使います。更新のときに、入力にある項目だけをその項目の schema で検証するため、ライブラリが項目ごとの schema(`entries`)を読む必要があるからです。項目をまたぐ条件(「著者とレビュアーは別の人」など)は、schema ではなく rule に書きます。
+- **`schema.persisted`。** 保存済みの値の形です。入力より強い型を持てます。この例では、`blogId` と `reviewerId` が、存在を確かめた id の型(`BlogIdExistedSchema` は `v.pipe(BlogIdSchema, v.brand("BlogIdExisted"))`)です。保存するには、すべての項目がこの型になっている必要があります。ライブラリは、この schema で入力を検証しません。入力を通すと、確かめていない値に brand が付いてしまうからです。この schema は、保存済みの値の型を決めることと、テストで保存済みの値を作ることに使います。
 - **`id`。** 新しく作る id の形です。
-- **作成時の既定値。** schema の `v.optional` の既定値に書きます。新規作成のときだけ使われます。
+- **作成時の既定値。** `schema.input` の `v.optional` の既定値に書きます。新規作成のときだけ使われます。
 
 model は2つの port を自動で宣言します。`article.load` は「id から既存の記事を取る」、`article.newId` は「新しい id を1つ作る」です。どちらも実装は provider として後から注入します。`article.load` は `Article` を返すので、既存の値は最初から保存済みの値の型です。
 
@@ -407,7 +406,7 @@ export const articleRules = entityRules(article, {
 ルールの組を作るとき、並びを先頭から順にたどって、状態の型を確かめます。
 
 - **前提の型。** `blogAcceptsPosts` は `next.blogId` が `BlogIdExisted` であることを前提にしています。`blogExists` より前に並べると型エラーになります。
-- **保存済みの値の型。** 並びの最後の状態で、`next` が model の `stored` の型にならなければ型エラーになります。`reviewerExists` を並べ忘れると、`next.reviewerId` が `UserId` のままなので型エラーになります。
+- **保存済みの値の型。** 並びの最後の状態で、`next` が model の `schema.persisted` の型にならなければ型エラーになります。`reviewerExists` を並べ忘れると、`next.reviewerId` が `UserId` のままなので型エラーになります。
 
 認証済みの actor は呼び出し側が渡します。操作を許可しない場合、認可の rule が失敗を返します。
 
@@ -546,7 +545,7 @@ const saved = await Result.pipe(
 | `delete` | `{ id, actor }` | `Deletable<M>` |
 | `decide` | `{ input, actor }` | `Decision<A, T>` |
 
-`input` は、schema の入力の型を `Partial` にし、`id` を足したものです。`create` の `input` は `id` を持ちません。`upsert` は、`input.id` がなければ新規作成、あって既存の値が見つかれば更新、あって見つからなければ load の step で失敗します。呼び出す側が id を決めて新規作成する使い方は、まだ扱いません(未決定の論点を参照)。
+`input` は、`schema.input` の入力の型を `Partial` にし、`id` を足したものです。`create` の `input` は `id` を持ちません。`upsert` は、`input.id` がなければ新規作成、あって既存の値が見つかれば更新、あって見つからなければ load の step で失敗します。呼び出す側が id を決めて新規作成する使い方は、まだ扱いません(未決定の論点を参照)。
 
 ### 返り値は封をした値
 
