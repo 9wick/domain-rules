@@ -9,15 +9,13 @@ const member = { id: "usr_1" as never, role: "MEMBER" } as const;
 const allowed = rule(download.decide, {
   name: "メンバーだけ",
   when: always,
-  check: ({ actor, input }) => (actor.role === "MEMBER" ? Result.succeed({ url: `/files/${input.fileId}` }) : Result.fail("FORBIDDEN")),
+  check: ({ actor, input }) =>
+    actor.role === "MEMBER" ? Result.succeed({ url: `/files/${input.fileId}` }) : Result.fail("FORBIDDEN"),
 });
 
-const domain = bind(
-  [
-    actionRules(download, { rules: [allowed], output: ({ url }) => url }),
-  ],
-  { providers: [provide.value(clock, 0)] },
-);
+const domain = bind([actionRules(download, { rules: [allowed], output: ({ url }) => url })], {
+  providers: [provide.value(clock, 0)],
+});
 
 test("入力の全体を action の schema で検証する", async () => {
   const r = await domain.download.decide({ input: { fileId: "" }, actor: member });
@@ -36,7 +34,9 @@ test("rule の失敗で止まる", async () => {
 
 test("output を省略すると value は undefined", async () => {
   const bare = bind([actionRules(download, { rules: [allowed] })], { providers: [provide.value(clock, 0)] });
-  expect(open(Result.unwrap(await bare.download.decide({ input: { fileId: "f1" }, actor: member }))).value).toBeUndefined();
+  expect(
+    open(Result.unwrap(await bare.download.decide({ input: { fileId: "f1" }, actor: member }))).value,
+  ).toBeUndefined();
 });
 
 test("plan は action の線路も表示する", () => {

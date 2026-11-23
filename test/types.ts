@@ -1,6 +1,18 @@
 import { Result } from "@praha/byethrow";
 import { describe, expectTypeOf, test } from "vite-plus/test";
-import { actor, always, bind, changed, clock, modelRules, open, port, provide, rule, type Persistable } from "../src/index.ts";
+import {
+  actor,
+  always,
+  bind,
+  changed,
+  clock,
+  modelRules,
+  open,
+  port,
+  provide,
+  rule,
+  type Persistable,
+} from "../src/index.ts";
 import {
   article,
   articleIdAssigned,
@@ -28,7 +40,10 @@ declare const domain: ReturnType<typeof bind<readonly [typeof articleRules, type
 
 describe("型", () => {
   test("束ねたメソッドの返り値は、昇格した型を持つ封をした値", async () => {
-    const r = await domain.article.update({ input: { id: "art_1", status: "PUBLISHED" }, actor: { id: "usr_1" as never, role: "MEMBER" } });
+    const r = await domain.article.update({
+      input: { id: "art_1", status: "PUBLISHED" },
+      actor: { id: "usr_1" as never, role: "MEMBER" },
+    });
     if (Result.isFailure(r)) {
       expectTypeOf(r.error.step).toEqualTypeOf<
         | "input"
@@ -62,12 +77,17 @@ describe("型", () => {
   test("rule の失敗の値に、check の失敗と port の失敗が入る", async () => {
     const r = await domain.article.create({ input: {}, actor: { id: "usr_1" as never, role: "MEMBER" } });
     if (Result.isFailure(r) && r.error.step === "レビュアーが存在する") {
-      expectTypeOf(r.error.error).toEqualTypeOf<"USER_NOT_FOUND" | { readonly type: "INFRA"; readonly cause: unknown }>();
+      expectTypeOf(r.error.error).toEqualTypeOf<
+        "USER_NOT_FOUND" | { readonly type: "INFRA"; readonly cause: unknown }
+      >();
     }
   });
 
   test("action は output の値を返す", async () => {
-    const r = await domain.previewArticle.decide({ input: { blogId: "blg_1", articleId: "art_1" }, actor: { id: "usr_1" as never, role: "MEMBER" } });
+    const r = await domain.previewArticle.decide({
+      input: { blogId: "blg_1", articleId: "art_1" },
+      actor: { id: "usr_1" as never, role: "MEMBER" },
+    });
     if (Result.isSuccess(r)) {
       expectTypeOf(open(r.value).value.viewerRole).toEqualTypeOf<"author" | "reviewer">();
     }
@@ -140,7 +160,10 @@ describe("型", () => {
   });
 
   test("provider が足りなければ型エラー", () => {
-    const set = modelRules(article, { load: findArticleById, save: [blogExists, reviewerExists, existingArticleId, articleIdAssigned] });
+    const set = modelRules(article, {
+      load: findArticleById,
+      save: [blogExists, reviewerExists, existingArticleId, articleIdAssigned],
+    });
     const run = () => {
       // @ts-expect-error findBlog などの provider がない
       bind([set], { providers: [provide(clock, () => 0)] });

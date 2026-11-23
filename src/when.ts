@@ -58,7 +58,10 @@ const matches = (m: Match, v: unknown) => (typeof m === "function" ? m(v as neve
 export const changed = <const F extends string>(
   field: F,
   values: { readonly pre?: Match; readonly next?: Match } = {},
-): When<"save", { readonly pre: { readonly [P in F]: unknown } | null; readonly next: { readonly [P in F]: unknown } }> =>
+): When<
+  "save",
+  { readonly pre: { readonly [P in F]: unknown } | null; readonly next: { readonly [P in F]: unknown } }
+> =>
   when({ kind: "changed", field, ...values }, (s) => {
     const nextMatches = values.next === undefined || matches(values.next, s.next[field]);
     if (s.pre === null) return values.pre === undefined && nextMatches;
@@ -72,8 +75,9 @@ export const next = <V>(predicate: (v: V) => boolean): When<"save", { readonly n
 export const pre = <V>(predicate: (v: V) => boolean): When<"save" | "delete", { readonly pre: V | null }> =>
   when({ kind: "pre" }, (s) => s.pre !== null && predicate(s.pre));
 
-export const actor = <A = Actor, S = unknown>(predicate: (a: A, s: S) => boolean): When<TrackKind, { readonly actor: A } & S> =>
-  when({ kind: "actor" }, (s) => predicate(s.actor, s));
+export const actor = <A = Actor, S = unknown>(
+  predicate: (a: A, s: S) => boolean,
+): When<TrackKind, { readonly actor: A } & S> => when({ kind: "actor" }, (s) => predicate(s.actor, s));
 
 export const and = <const Ws extends readonly AnyWhen[]>(...ws: Ws): Combine<Ws> =>
   when({ kind: "and", conditions: ws.map(descriptionOf) }, (s) => ws.every((w) => w(s as never)));

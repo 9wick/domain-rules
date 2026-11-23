@@ -6,9 +6,10 @@ import { describeWhen, type TrackKind, type WhenDescription } from "./when.ts";
 
 declare const ruleSetTypes: unique symbol;
 
-type RuleInfo<R> = R extends Rule<infer K, infer T, infer N, infer S, infer Out, infer E, infer P, infer A>
-  ? { kind: K; target: T; name: N; state: S; out: Out; error: E; ports: P; always: A }
-  : never;
+type RuleInfo<R> =
+  R extends Rule<infer K, infer T, infer N, infer S, infer Out, infer E, infer P, infer A>
+    ? { kind: K; target: T; name: N; state: S; out: Out; error: E; ports: P; always: A }
+    : never;
 
 type Advance<S, R> = RuleInfo<R>["always"] extends true
   ? Overlay<S, RuleInfo<R>["out"]>
@@ -22,15 +23,24 @@ export type RuleMismatch<Name, Need, Have> = {
 export type TrackMismatch<Name, Expected> = { readonly "線路の種類が違う rule": Name; readonly 期待した線路: Expected };
 
 // 並べた rule を先頭からたどり、各 rule の前提の型を確かめながら状態の型を進める
-export type Walk<S, Rs, K extends TrackKind, T extends string, Acc extends readonly unknown[] = []> = Rs extends readonly [
-  infer R,
-  ...infer Rest,
-]
+export type Walk<
+  S,
+  Rs,
+  K extends TrackKind,
+  T extends string,
+  Acc extends readonly unknown[] = [],
+> = Rs extends readonly [infer R, ...infer Rest]
   ? [K, T] extends [RuleInfo<R>["kind"], RuleInfo<R>["target"]]
     ? [S] extends [RuleInfo<R>["state"]]
       ? Walk<Advance<S, R>, Rest, K, T, [...Acc, R]>
-      : { readonly rules: readonly [...Acc, RuleMismatch<RuleInfo<R>["name"], RuleInfo<R>["state"], S>, ...Rest]; readonly state: never }
-    : { readonly rules: readonly [...Acc, TrackMismatch<RuleInfo<R>["name"], `${T}.${K}`>, ...Rest]; readonly state: never }
+      : {
+          readonly rules: readonly [...Acc, RuleMismatch<RuleInfo<R>["name"], RuleInfo<R>["state"], S>, ...Rest];
+          readonly state: never;
+        }
+    : {
+        readonly rules: readonly [...Acc, TrackMismatch<RuleInfo<R>["name"], `${T}.${K}`>, ...Rest];
+        readonly state: never;
+      }
   : { readonly rules: Acc; readonly state: S };
 
 export type RuleFailure<Rs> = Rs extends readonly (infer R)[]
@@ -38,12 +48,17 @@ export type RuleFailure<Rs> = Rs extends readonly (infer R)[]
     ? { readonly step: RuleInfo<R>["name"]; readonly error: RuleInfo<R>["error"] }
     : never
   : never;
-export type InputFailure = { readonly step: "input"; readonly error: { readonly issues: readonly StandardSchemaV1.Issue[] } };
+export type InputFailure = {
+  readonly step: "input";
+  readonly error: { readonly issues: readonly StandardSchemaV1.Issue[] };
+};
 export type LoadFailure<L> = { readonly step: "load"; readonly error: "NOT_FOUND" | PortError<L> };
 
 type PortNamesOfRules<Rs> = Rs extends readonly (infer R)[]
   ? R extends unknown
-    ? { [K in keyof RuleInfo<R>["ports"]]: RuleInfo<R>["ports"][K] extends Port<infer N> ? N : never }[keyof RuleInfo<R>["ports"]]
+    ? {
+        [K in keyof RuleInfo<R>["ports"]]: RuleInfo<R>["ports"][K] extends Port<infer N> ? N : never;
+      }[keyof RuleInfo<R>["ports"]]
     : never
   : never;
 
@@ -140,7 +155,12 @@ export function modelRules<
   }) as unknown as ModelRules<M, any>;
 }
 
-export type ActionRulesInfo = { readonly actor: unknown; readonly failure: unknown; readonly ports: string; readonly output: unknown };
+export type ActionRulesInfo = {
+  readonly actor: unknown;
+  readonly failure: unknown;
+  readonly ports: string;
+  readonly output: unknown;
+};
 
 export type ActionRules<A extends Action = Action, I extends ActionRulesInfo = any> = {
   readonly kind: "actionRules";
@@ -151,7 +171,12 @@ export type ActionRules<A extends Action = Action, I extends ActionRulesInfo = a
   readonly [ruleSetTypes]: I;
 };
 
-type DecideWalk<A extends Action, Rs> = Walk<DecideState<StandardSchemaV1.InferOutput<A["input"]>>, Rs, "decide", A["name"]>;
+type DecideWalk<A extends Action, Rs> = Walk<
+  DecideState<StandardSchemaV1.InferOutput<A["input"]>>,
+  Rs,
+  "decide",
+  A["name"]
+>;
 
 export function actionRules<A extends Action, const Rs extends readonly Rule[], T = void>(
   a: A,
@@ -159,8 +184,17 @@ export function actionRules<A extends Action, const Rs extends readonly Rule[], 
     readonly rules: Rs & DecideWalk<A, Rs>["rules"];
     readonly output?: (s: DecideWalk<A, Rs>["state"]) => T;
   },
-): ActionRules<A, { actor: ActorOf<DecideWalk<A, Rs>["state"]>; failure: RuleFailure<Rs>; ports: PortNamesOfRules<Rs>; output: T }> {
-  return Object.freeze({ kind: "actionRules", name: a.name, action: a, rules: Object.freeze([...def.rules]), output: def.output }) as unknown as ActionRules<A, any>;
+): ActionRules<
+  A,
+  { actor: ActorOf<DecideWalk<A, Rs>["state"]>; failure: RuleFailure<Rs>; ports: PortNamesOfRules<Rs>; output: T }
+> {
+  return Object.freeze({
+    kind: "actionRules",
+    name: a.name,
+    action: a,
+    rules: Object.freeze([...def.rules]),
+    output: def.output,
+  }) as unknown as ActionRules<A, any>;
 }
 
 export type RuleSet = ModelRules | ActionRules;
@@ -169,9 +203,16 @@ export type RuleSetInfo<S> = S extends { readonly [ruleSetTypes]: infer I } ? I 
 export type PlannedRule = { readonly name: string; readonly when: WhenDescription; readonly ports: readonly string[] };
 
 const planRules = (rules: readonly Rule[]): readonly PlannedRule[] =>
-  rules.map((r) => ({ name: r.name, when: describeWhen(r.when), ports: Object.values(r.requires).map((p) => (p as Port).name) }));
+  rules.map((r) => ({
+    name: r.name,
+    when: describeWhen(r.when),
+    ports: Object.values(r.requires).map((p) => (p as Port).name),
+  }));
 
-export function plan(set: ModelRules): { readonly save?: readonly PlannedRule[]; readonly delete?: readonly PlannedRule[] };
+export function plan(set: ModelRules): {
+  readonly save?: readonly PlannedRule[];
+  readonly delete?: readonly PlannedRule[];
+};
 export function plan(set: ActionRules): { readonly rules: readonly PlannedRule[] };
 export function plan(set: RuleSet) {
   if (set.kind === "actionRules") return { rules: planRules(set.rules) };

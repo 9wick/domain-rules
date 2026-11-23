@@ -24,7 +24,12 @@ export type PortErrors<P extends Ports> = { [K in keyof P]: PortError<P[K]> }[ke
 
 export const port = <const N extends string>(name: N) => ({
   of: <F extends (...args: any[]) => unknown, E = never>(): Port<N, Parameters<F>, ReturnType<F>, E> =>
-    Object.freeze({ kind: "port", name, token: Symbol(name), cached: false }) as unknown as Port<N, Parameters<F>, ReturnType<F>, E>,
+    Object.freeze({ kind: "port", name, token: Symbol(name), cached: false }) as unknown as Port<
+      N,
+      Parameters<F>,
+      ReturnType<F>,
+      E
+    >,
 });
 
 export const cached = <P extends Port>(p: P): P => Object.freeze({ ...p, cached: true });
@@ -50,9 +55,7 @@ export function provide(target: Port | Clock, impl: (...args: any[]) => unknown)
 function value<P extends Port>(target: P, v: PortValue<P>): Provider<P["name"]>;
 function value(target: Clock, v: number): Provider<"clock">;
 function value(target: Port | Clock, v: unknown): Provider {
-  return target.kind === "clock"
-    ? provide(target, () => v as number)
-    : provide(target, () => Result.succeed(v));
+  return target.kind === "clock" ? provide(target, () => v as number) : provide(target, () => Result.succeed(v));
 }
 provide.value = value;
 
