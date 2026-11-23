@@ -52,3 +52,29 @@ test("check が throw した例外は握りつぶさない", async () => {
   const domain = bind([modelRules(item, { save: [boom] })], { providers: [provide.value(clock, 0)] });
   await expect(domain.item.create({ input: { n: 1 }, actor: { id: "usr_1" as never, role: "MEMBER" } })).rejects.toThrow("bug");
 });
+
+test("check が port の失敗を catch して成功を返しても、port の失敗で止まる", async () => {
+  const failing = port("failing").of<() => number, "DOWN">();
+  const swallow = rule(item.save, {
+    name: "swallow",
+    requires: { failing },
+    when: always,
+    check: async (_, { failing }) => {
+      await failing().catch(() => 0);
+      return Result.succeed({ next: { id: "i" } });
+    },
+  });
+  const domain = bind([modelRules(item, { save: [swallow] })], {
+    providers: [provide(failing, () => Result.fail("DOWN" as const)), provide.value(clock, 0)],
+  });
+  const r = await domain.item.create({ input: { n: 1 }, actor: { id: "usr_1" as never, role: "MEMBER" } });
+  expect(Result.unwrapError(r)).toEqual({ step: "swallow", error: "DOWN" });
+});
+
+test("prototype の名前の項目も schema にない項目として失敗する", async () => {
+  const domain = bind([modelRules(item, { save: [twice("a")] })], {
+    providers: [provide.value(lookup, 1), provide.value(uncachedLookup, 1), provide.value(clock, 0)],
+  });
+  const r = await domain.item.create({ input: { n: "x", constructor: 1 } as never, actor: { id: "usr_1" as never, role: "MEMBER" } });
+  expect(Result.unwrapError(r)).toMatchObject({ step: "input", error: { issues: [{ path: ["constructor"] }, { path: [{ key: "n" }] }] } });
+});

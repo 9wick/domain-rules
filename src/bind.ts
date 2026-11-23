@@ -1,7 +1,7 @@
 import { Result } from "@praha/byethrow";
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 import type { Action, Actor, InputOf, Model, ObjectSchema } from "./model.ts";
-import { catchPortFailure, portCaller, portFns, type Port, type PortCall, type Provider } from "./port.ts";
+import { portCaller, runWithPorts, type Port, type PortCall, type Provider } from "./port.ts";
 import type { Rule } from "./rule.ts";
 import type { ActionRules, InputFailure, ModelRules, RuleSet, RuleSetInfo } from "./rules.ts";
 import { seal, type Decision, type Deletable, type Persistable } from "./seal.ts";
@@ -72,7 +72,7 @@ export function bind<const Sets extends readonly RuleSet[], const Ps extends rea
   }
   const bound: Record<string, unknown> = {};
   for (const set of sets) {
-    if (set.name in bound) throw new Error(`bind: "${set.name}" の rule の組が重複しています`);
+    if (Object.hasOwn(bound, set.name)) throw new Error(`bind: "${set.name}" の rule の組が重複しています`);
     const missing = requiredPorts(set).filter((name) => !impls.has(name));
     if (missing.length > 0) throw new Error(`bind: provider が足りない port: ${missing.join(", ")}`);
     bound[set.name] = set.kind === "modelRules" ? modelMethods(set, impls) : actionMethods(set, impls);
@@ -104,7 +104,7 @@ const validate = async (schema: StandardSchemaV1, value: unknown, path: readonly
 
 const unknownKeys = (schema: ObjectSchema, input: State, allowed: (key: string) => boolean): StandardSchemaV1.Issue[] =>
   Object.keys(input)
-    .filter((key) => !(key in schema.entries) || !allowed(key))
+    .filter((key) => !Object.hasOwn(schema.entries, key) || !allowed(key))
     .map((key) => ({ message: `schema にない項目です: ${key}`, path: [key] }));
 
 const definedEntries = (input: State) => Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined));
@@ -112,9 +112,9 @@ const definedEntries = (input: State) => Object.fromEntries(Object.entries(input
 const validateWhole = async (schema: ObjectSchema, input: State): Promise<Result.Result<State, Failure>> => {
   const defined = definedEntries(input);
   const unknown = unknownKeys(schema, defined, (key) => key !== "id");
-  if (unknown.length > 0) return Result.fail(inputFailure(unknown));
   const r = await validate(schema, defined);
-  return Result.isFailure(r) ? Result.fail(inputFailure(r.error)) : Result.succeed(r.value as State);
+  const issues = [...unknown, ...(Result.isFailure(r) ? r.error : [])];
+  return issues.length > 0 || Result.isFailure(r) ? Result.fail(inputFailure(issues)) : Result.succeed(r.value as State);
 };
 
 // 更新では入力にある項目だけを、その項目の schema で検証する
@@ -122,8 +122,8 @@ const validatePartial = async (schema: ObjectSchema, input: State): Promise<Resu
   const issues = unknownKeys(schema, input, () => true);
   const out: State = {};
   for (const [key, value] of Object.entries(definedEntries(input))) {
-    const entry = schema.entries[key];
-    if (!entry) continue;
+    if (!Object.hasOwn(schema.entries, key)) continue;
+    const entry = schema.entries[key]!;
     const r = await validate(entry, value, [key]);
     if (Result.isFailure(r)) issues.push(...r.error);
     else out[key] = r.value;
@@ -153,8 +153,7 @@ const runRules = async (inv: Invocation, rules: readonly Rule[], start: State): 
   for (const r of rules) {
     if (!r.when(state)) continue;
     const s = state;
-    const outcome = await catchPortFailure(async () => (await r.check(s, portFns(inv.call, r.requires))) as Result.Result<unknown, unknown>);
-    const result = Result.isSuccess(outcome) ? outcome.value : outcome;
+    const result = await runWithPorts(inv.call, r.requires, (fns) => r.check(s, fns));
     if (Result.isFailure(result)) return Result.fail({ step: r.name, error: result.error });
     state = overlay(state, result.value);
   }

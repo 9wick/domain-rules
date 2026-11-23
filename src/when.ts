@@ -60,9 +60,10 @@ export const changed = <const F extends string>(
   values: { readonly pre?: Match; readonly next?: Match } = {},
 ): When<"save", { readonly pre: { readonly [P in F]: unknown } | null; readonly next: { readonly [P in F]: unknown } }> =>
   when({ kind: "changed", field, ...values }, (s) => {
-    if (s.pre === null) return !("pre" in values) && (!("next" in values) || matches(values.next, s.next[field]));
+    const nextMatches = values.next === undefined || matches(values.next, s.next[field]);
+    if (s.pre === null) return values.pre === undefined && nextMatches;
     if (Object.is(s.pre[field], s.next[field])) return false;
-    return (!("pre" in values) || matches(values.pre, s.pre[field])) && (!("next" in values) || matches(values.next, s.next[field]));
+    return (values.pre === undefined || matches(values.pre, s.pre[field])) && nextMatches;
   });
 
 export const next = <V>(predicate: (v: V) => boolean): When<"save", { readonly next: V }> =>

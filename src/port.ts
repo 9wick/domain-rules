@@ -76,24 +76,32 @@ class PortFailed {
   constructor(readonly error: unknown) {}
 }
 
-// check の中では port の成功の値だけを見せたいので、失敗は throw で rule の実行まで運ぶ
-export const portFns = (call: PortCall, requires: Ports): Record<string, (...args: unknown[]) => Promise<unknown>> =>
-  Object.fromEntries(
+// check の中では port の成功の値だけを見せたいので、失敗は throw で check を抜けさせる。
+// check が throw を握りつぶして成功を返しても線路を止められるよう、最初の失敗を別に覚えておく
+export const runWithPorts = async (
+  call: PortCall,
+  requires: Ports,
+  check: (fns: Record<string, (...args: unknown[]) => Promise<unknown>>) => unknown,
+): Promise<Result.Result<unknown, unknown>> => {
+  let failed: PortFailed | undefined;
+  const fns = Object.fromEntries(
     Object.entries(requires).map(([key, p]) => [
       key,
       async (...args: unknown[]) => {
         const r = await call(p, args);
-        if (Result.isFailure(r)) throw new PortFailed(r.error);
+        if (Result.isFailure(r)) {
+          failed ??= new PortFailed(r.error);
+          throw failed;
+        }
         return r.value;
       },
     ]),
   );
-
-export const catchPortFailure = async <T>(run: () => Promise<T>): Promise<Result.Result<T, unknown>> => {
   try {
-    return Result.succeed(await run());
+    const result = (await check(fns)) as Result.Result<unknown, unknown>;
+    return failed ? Result.fail(failed.error) : result;
   } catch (e) {
-    if (e instanceof PortFailed) return Result.fail(e.error);
+    if (failed && e === failed) return Result.fail(failed.error);
     throw e;
   }
 };
