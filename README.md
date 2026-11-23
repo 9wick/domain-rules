@@ -49,7 +49,7 @@ rule は、操作ごとではなく対象ごとに1組だけ持ちます。あ�
 | provider | port の実装 | check から呼ぶ port、model の port、時計の実装 |
 | bind | rule の組と provider を束ね、呼び出せるメソッドを作る | なし |
 
-成功と失敗は [@praha/byethrow](https://github.com/praha-inc/byethrow) の `Result` で表します。provider と、束ねたあとのメソッドは `ResultAsync`(byethrow の型で、`Promise<Result>`)を返します。check は、port を呼ばなければ `Result`、呼ぶなら `ResultAsync` を返します。
+成功と失敗は [@praha/byethrow](https://github.com/praha-inc/byethrow) の `Result` で表します。provider と、束ねたあとのメソッドは `ResultAsync`(byethrow の型で、`Promise<Result>`)を返します。時計の provider だけは、時刻の数を返します。check は、port を呼ばなければ `Result`、呼ぶなら `ResultAsync` を返します。
 
 ### 定義する場所
 
@@ -63,7 +63,7 @@ rule は、操作ごとではなく対象ごとに1組だけ持ちます。あ�
 
 ## 使用例(構想)
 
-ブログ記事を題材にします。記事はブログに属し、ブログの id と記事の id の組で取り出します。
+ブログ記事を題材にします。記事はブログに属します。
 
 ### model を定義する
 
@@ -104,10 +104,12 @@ export type Article = Persisted<typeof article>;    // schema.persisted の出�
 ```
 
 - **`schema.input`。** 入力の値の形です。Valibot の `v.object` でなければなりません。更新のときに、入力にある項目だけをその項目の schema で検証するため、ライブラリが項目ごとの schema(`entries`)を読むからです。そのため、object 全体に付けた検証は使われません。項目をまたぐ条件(「著者とレビュアーは別の人」など)は rule に書きます。
-- **`schema.persisted`。** 永続化の形です。DB とやり取りするときの型で、DB に保存する値と、既存の値の両方がこの型です。入力より強い型を持てます。この例では、`blogId` と `reviewerId` を、存在を確かめた id の型にしています(`BlogIdExistedSchema` は `v.pipe(BlogIdSchema, v.brand("BlogIdExisted"))`)。`id` は、既存の記事なら `ArticleIdExisted`、新しく作る記事なら `ArticleIdNew` です。保存するには、すべての項目がこの型になっている必要があります。ライブラリは、この schema で入力も 既存の値も検証しません。入力を通すと、確かめていない値に brand が付いてしまうからです。ライブラリはこの schema を、永続化の型を決めるためにだけ使います。
+- **`schema.persisted`。** 永続化の形です。DB とやり取りするときの型で、DB に保存する値と、既存の値の両方がこの型です。入力より強い型を持てます。この例では、`blogId` と `reviewerId` を、存在を確かめた id の型にしています(`BlogIdExistedSchema` は `v.pipe(BlogIdSchema, v.brand("BlogIdExisted"))`)。`id` は、既存の記事なら `ArticleIdExisted`、新しく作る記事なら `ArticleIdNew` です。保存するには、すべての項目がこの型になっている必要があります。ライブラリは、この schema で入力も既存の値も検証しません。入力を通すと、確かめていない値に brand が付いてしまうからです。ライブラリはこの schema を、永続化の型を決めるためにだけ使います。
 - **作成時の既定値。** `schema.input` の `v.optional` の既定値に書きます。新規作成のときだけ使われます。
 
-model は1つの port を自動で宣言します。`article.load` は「schema の `id` の項目の値で、既存の記事を取る」port です。実装は provider として後から注入します。ライブラリは新しい id を作りません。id の昇格も、ほかの項目と同じく rule で行います(「確かめた値で型を昇格する」を参照)。どう作るかは rule の書き方次第で、この README の例では port を呼んでいます。`article.load` は `Article` を返すので、既存の値は最初から永続化の型です。ライブラリは load の結果を検証しません。provider が返す値は信用します。
+model は1つの port を自動で宣言します。`article.load` は、schema の `id` の項目の値で既存の記事を取る port です。実装は provider として注入します。`article.load` は `Article` を返すので、既存の値は最初から永続化の型です。ライブラリは load の結果を検証しません。
+
+ライブラリは新しい id を作りません。id も、ほかの項目と同じく rule で昇格します(「確かめた値で型を昇格する」を参照)。
 
 ### 線路の種類と状態
 
@@ -121,7 +123,7 @@ rule は、どの線路に属するかを値で受け取ります。線路は3�
 
 - `pre` は既存の値です。DB から読んだ値で、新規作成のときは `null` です。
 - `next` は変更後の値です。既存の値に入力を重ねたものです。型は `ArticleValue` ですが、入力にない項目には、既存の値がそのまま入っています。
-- `now` は呼び出された時刻で、1回の呼び出しの中では同じ値です。
+- `now` は呼び出された時刻です。`clock` の provider が返し、1回の呼び出しの中では同じ値です。
 
 線路の種類を値で渡すのは、TypeScript が型引数の一部だけを明示して残りを推論することができないからです。rule の型引数に状態の型を明示すると、`requires` から `check` の引数の型を推論できなくなります。値で渡せば、状態の型も `requires` の型も、すべて引数から推論されます。
 
@@ -132,14 +134,6 @@ article.save.with<{ next: { reviewerId: UserIdExisted } }>()
 ```
 
 この rule を rule の組に並べるとき、前の step までにその型になっていなければ、型エラーになります。
-
-ライブラリは「状態遷移」という概念を持ちません。「下書き」「承認済み」のような判断は、利用者が書きます。この例では、値についての述語として書いています。述語はただの関数で、ライブラリに登録する必要はありません。
-
-```ts
-export const isDraft = (a: ArticleValue) => a.status === "DRAFT";
-export const isPublished = (a: ArticleValue) => a.status === "PUBLISHED";
-export const isApproved = (a: ArticleValue) => a.approvedAt !== null;
-```
 
 ### port を宣言する
 
@@ -273,6 +267,14 @@ export const articleImmutableFields = immutable(article.save, ["blogId", "author
 
 ### when を書く
 
+ライブラリは「状態遷移」という概念を持ちません。「下書き」「承認済み」のような判断は、利用者が書きます。この例では、値についての述語として書いています。述語はただの関数で、ライブラリに登録する必要はありません。
+
+```ts
+export const isDraft = (a: ArticleValue) => a.status === "DRAFT";
+export const isPublished = (a: ArticleValue) => a.status === "PUBLISHED";
+export const isApproved = (a: ArticleValue) => a.approvedAt !== null;
+```
+
 | 種類 | when | 使える線路 |
 |---|---|---|
 | 常に | `always` | すべて |
@@ -321,6 +323,7 @@ export const reviewerExists = rule(article.save, {
   },
 });
 
+// Blog は blog の model の永続化の型で、id は BlogIdExisted
 export const blogExists = rule(article.save, {
   name: "ブログが存在する",
   requires: { findBlog },
@@ -355,7 +358,7 @@ export const blogAcceptsPosts = rule(article.save.with<{ next: { blogId: BlogIdE
 
 `reviewerExists` を通ったあとの状態では、`next.reviewerId` は `UserIdExisted` です。`requireExistingUser` は、ユーザーが存在すれば同じ id を `UserIdExisted` として返します。同じ id のままの更新では、既存の値を引き継ぎます。既存の値は最初から `UserIdExisted` なので、どちらの経路でもキャストは要りません。
 
-`when` が当たらずに飛ばされる rule は、状態を変えません。そのため、昇格する rule に `always` 以外の `when` を書くと、後ろの step からは「昇格した型か、していない型」に見えます。昇格した型を要求する rule が後ろにあるか、永続化の型が揃わなければ、rule の組を作るときに型エラーになります。
+`when` が当たらずに飛ばされる rule は、状態を変えません。そのため、昇格する rule に `always` 以外の `when` を書くと、その rule のあとの型は「昇格した型か、していない型」の和になります。昇格した型を要求する rule が後ろにあるか、永続化の型が揃わなければ、rule の組を作るときに型エラーになります。
 
 記事の id も、同じように rule で昇格します。merge のあとの `next.id` は、入力の型の `ArticleId | undefined` です。
 
@@ -381,7 +384,7 @@ export const articleIdAssigned = rule(
 );
 ```
 
-`existingArticleId` は `next.id` を `ArticleIdExisted | null` にし、`articleIdAssigned` は `ArticleIdExisted | ArticleIdNew` にします。`articleIdAssigned` は `when: onCreate` ではなく `always` で、check の中で分けています。`when` で飛ばせる rule のあとの型は、飛ばした場合と当てた場合の和になるので、更新の経路でも `next.id` の型に `null` が残るからです。この例では、2つの rule を並びの最後に置いています。後ろの rule で失敗したときに、作った id が無駄にならないようにするためです。どこに置くかは、rule の組を作る人が決めます。
+`existingArticleId` は `next.id` を `ArticleIdExisted | null` にし、`articleIdAssigned` は `ArticleIdExisted | ArticleIdNew` にします。`articleIdAssigned` は `when: onCreate` ではなく `always` で、check の中で分けています。`when: onCreate` にすると、その rule のあとの `next.id` の型に `null` が残るからです。この例では、2つの rule を並びの最後に置いています。後ろの rule で失敗したときに、作った id が無駄にならないようにするためです。どこに置くかは、rule の組を作る人が決めます。
 
 actor も同じように昇格できます。
 
@@ -549,7 +552,7 @@ const testDomain = bind([articleRules], {
   providers: [
     provide.value(article.load, existingArticle),
     provide.value(newArticleId, ArticleIdNewSchema.parse("art_1")),
-    provide.value(requireExistingUser, "usr_1" as UserIdExisted),
+    provide.value(requireExistingUser, UserIdExistedSchema.parse("usr_1")),
     provide.value(findBlog, openBlog),
     provide.value(findArticlesInBlog, []),
     provide.value(clock, 1_700_000_000_000),
@@ -573,10 +576,10 @@ const saved = await Result.pipe(
 | `create` | `{ input, actor }` | `Persistable<M, "create">` |
 | `update` | `{ input, actor }`。`input.id` は必須 | `Persistable<M, "update">` |
 | `upsert` | `{ input, actor }` | `Persistable<M, "create"> \| Persistable<M, "update">` |
-| `delete` | `{ id, actor }` | `Deletable<M>` |
+| `delete` | `{ input: { id }, actor }` | `Deletable<M>` |
 | `decide` | `{ input, actor }` | `Decision<A, T>` |
 
-`input` は、`schema.input` の入力の型を `Partial` にしたものです。`create` の `input` は `id` を持ちません。`upsert` は、`input.id` がなければ新規作成、あって既存の値が見つかれば更新、あって見つからなければ load の step で失敗します。呼び出す側が id を決めて新規作成する使い方は、まだ扱いません(未決定の論点を参照)。
+`input` は、`schema.input` の入力の型を `Partial` にしたものです。`create` の `input` は `id` を持ちません。`upsert` は、`input.id` がなければ新規作成、あって既存の値が見つかれば更新、あって見つからなければ load の step で失敗します。利用者が id を決めて新規作成する使い方は、まだ扱いません(未決定の論点を参照)。
 
 ### 返り値は封をした値
 
@@ -614,7 +617,7 @@ const save = (p: Persistable<typeof article, "create" | "update">) => {
 
 ```ts
 type Failure =
-  | { step: "input"; error: { issues: SchemaIssue[] } }       // id か入力が schema を満たさない
+  | { step: "input"; error: { issues: SchemaIssue[] } }       // 入力が schema を満たさない
   | { step: "load"; error: "NOT_FOUND" | LoadError }           // 既存の値がないか、load の port が失敗した
   | { step: "著者とレビュアーは別の人"; error: "SAME_AUTHOR_AND_REVIEWER" }
   | { step: "レビュアーが存在する"; error: "USER_NOT_FOUND" | InfraError }
@@ -629,7 +632,7 @@ rule の失敗の値は、check が `Result.fail` に入れた値そのもので
 
 | 順 | step | やること | 失敗 |
 |---|---|---|---|
-| 1 | input | id と入力を schema で検証する | 検証で見つかった問題 |
+| 1 | input | 入力を schema で検証する | 検証で見つかった問題 |
 | 2 | load | id から既存の値を取る | `NOT_FOUND`、load の port の失敗 |
 | 3 | merge | 既存の値に、検証済みの入力を重ねて next を作る | なし |
 | 4 | rule | rule の組に並べた rule を、並べた順に1つずつ通る | その rule の check の失敗 |
@@ -655,7 +658,6 @@ plan(articleRules);
 
 ## データ取得の方針
 
-- **重複除去。** `cached` を付けた port は、1回の呼び出しの中で、同じ引数の2回目から cache を返します。
 - **取得の順序。** 取得は、check が port を呼んだときに起きます。ライブラリが先回りして取得することはありません。
 - **batch。** 同じ種類で引数だけ違う取得をまとめる機能は、将来の課題です。
 - **リクエストをまたぐキャッシュ。** 行いません。rule は最新のデータで check する前提なので、古い値で check が通ると不正なデータが保存されます。
@@ -666,8 +668,8 @@ plan(articleRules);
 - **rule の組は対象と1対1。** 操作ごとに rule の組を作りません。どの rule が当たるかは `when` が値の変化から決めます。一覧に並べた rule は、操作ごとに並べ直す必要がありません。
 - **小さな単位で定義する。** model、action、port、rule は1つずつ独立した値です。
 - **型の昇格は状態の型の変化。** 確かめた step が、確かめた値で状態を置き換えます。確かめたと宣言するだけで型を強くする手段は持ちません。
-- **DB とやり取りする値は永続化の型。** 保存する値も 既存の値も、永続化の型です。既存の値は確かめて保存したものなので、マージでもその型のまま引き継ぎます。
-- **境界で受け取り、中では信じる。** id と入力は最初の step で検証します。既存の値と、provider が返す値は検証しません。
+- **DB とやり取りする値は永続化の型。** 保存する値も既存の値も、永続化の型です。既存の値は確かめて保存したものなので、マージでもその型のまま引き継ぎます。
+- **境界で受け取り、中では信じる。** 入力は最初の step で検証します。既存の値と、provider が返す値は検証しません。
 - **副作用は port で注入する。** check は、`requires` に宣言した port を2つ目の引数で受け取ります。既存の値の取得と時計も port です。
 - **値の形は schema、項目をまたぐ条件は rule。** schema は項目ごとの形を表し、更新では入力にある項目だけを検証します。項目をまたぐ条件は rule に書くので、更新のたびに値の全体を検証し直す必要はありません。
 - **マージの規則は1つにする。** `undefined` は「変えない」、`null` は「空にする」です。
@@ -689,7 +691,7 @@ plan(articleRules);
 ## 先行事例
 
 - **Railway Oriented Programming**(Scott Wlaschin)。`Result` を返す関数を1本の線路につなぎ、最初の失敗で止める考え方です。実行モデルの土台です。
-- **Haxl**(Facebook)。rule が使うデータの取得を、自動で重複除去する Haskell ライブラリです。論文は "There is no Fork"(ICFP 2014)。`cached` の重複除去がこれにあたります。Haxl が行う並列化と batch は、ここでは行いません。
+- **Haxl**(Facebook)。データの取得を自動で重複除去する Haskell ライブラリです。論文は "There is no Fork"(ICFP 2014)。`cached` の重複除去がこれにあたります。Haxl が行う並列化と batch は、ここでは行いません。
 - **Ports and Adapters と Effect の `Context.Tag`**。必要なものを型付きの宣言として表し、実装は外から注入する考え方です。port と provider の関係がこれにあたります。
 - **Event-B と Design by Contract**。不変条件と遷移のガードを分けて書く考え方です。
 - **Parse, don't validate**(Alexis King)。検証が通ったら、より強い型に変える考え方です。境界での検証と、check による型の昇格と、封をした返り値がこれにあたります。
