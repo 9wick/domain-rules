@@ -72,6 +72,7 @@ import * as v from "valibot";
 import { model, type Persisted, type Value } from "domain-rules";
 
 export const ArticleIdSchema = v.pipe(v.string(), v.startsWith("art_"), v.brand("ArticleId"));
+export const ArticleIdExistedSchema = v.pipe(ArticleIdSchema, v.brand("ArticleIdExisted"));
 
 const articleInput = v.object({
   id: v.optional(ArticleIdSchema),
@@ -90,7 +91,7 @@ export const article = model({
     input: articleInput,
     persisted: v.object({
       ...articleInput.entries,
-      id: ArticleIdSchema,
+      id: ArticleIdExistedSchema,
       blogId: BlogIdExistedSchema,
       reviewerId: UserIdExistedSchema,
     }),
@@ -102,7 +103,7 @@ export type Article = Persisted<typeof article>;    // schema.persisted の出�
 ```
 
 - **`schema.input`。** 入力の値の形です。Valibot の `v.object` を使います。更新のときに、入力にある項目だけをその項目の schema で検証するため、ライブラリが項目ごとの schema(`entries`)を読む必要があるからです。項目をまたぐ条件(「著者とレビュアーは別の人」など)は、schema ではなく rule に書きます。
-- **`schema.persisted`。** 永続化の形です。DB とやり取りするときの型で、DB に保存する値と、DB から読んだ値の両方がこの型です。入力より強い型を持てます。この例では、`blogId` と `reviewerId` が、存在を確かめた id の型(`BlogIdExistedSchema` は `v.pipe(BlogIdSchema, v.brand("BlogIdExisted"))`)です。保存するには、すべての項目がこの型になっている必要があります。ライブラリは、この schema で入力を検証しません。入力を通すと、確かめていない値に brand が付いてしまうからです。この schema は、永続化の型を決めることと、テストで DB から読んだ値を作ることに使います。
+- **`schema.persisted`。** 永続化の形です。DB とやり取りするときの型で、DB に保存する値と、DB から読んだ値の両方がこの型です。入力より強い型を持てます。この例では、`id`、`blogId`、`reviewerId` が、存在を確かめた id の型(`BlogIdExistedSchema` は `v.pipe(BlogIdSchema, v.brand("BlogIdExisted"))`)です。保存するには、すべての項目がこの型になっている必要があります。ライブラリは、この schema で入力を検証しません。入力を通すと、確かめていない値に brand が付いてしまうからです。この schema は、永続化の型を決めることと、テストで DB から読んだ値を作ることに使います。
 - **作成時の既定値。** `schema.input` の `v.optional` の既定値に書きます。新規作成のときだけ使われます。
 
 model は2つの port を自動で宣言します。`article.load` は「id から既存の記事を取る」、`article.newId` は「新しい id を1つ作る」です。どちらも、schema の `id` の項目を id として扱います。どちらも実装は provider として後から注入します。`article.load` は `Article` を返すので、既存の値は最初から永続化の型です。ライブラリは load の結果を検証しません。port の実装が返す値は信用します。
@@ -516,7 +517,7 @@ provider の一覧は、`as const` を付けた読み取り専用のタプルに
 const testDomain = bind([articleRules], {
   providers: [
     provide.value(article.load, existingArticle),
-    provide.value(article.newId, "art_1" as ArticleId),
+    provide.value(article.newId, ArticleIdExistedSchema.parse("art_1")),
     provide.value(requireExistingUser, "usr_1" as UserIdExisted),
     provide.value(findBlog, openBlog),
     provide.value(findArticlesInBlog, []),
