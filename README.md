@@ -39,7 +39,7 @@
 
 | 部品 | 責務 | 持つもの |
 |---|---|---|
-| model | エンティティの形と、取り出し方 | 入力の schema と永続化の schema、model の port(id から取る、新しい id を作る) |
+| model | エンティティの形と、取り出し方 | 入力の schema と永続化の schema、model の port(id から取る) |
 | action | 保存を伴わない操作の入力の形 | 入力の schema |
 | rule | 線路の1つの step | 名前、`requires`、`when`、`check` |
 | port | check から呼ぶ外の機能の宣言 | 名前、引数と結果と失敗の型 |
@@ -73,6 +73,7 @@ import { model, type Persisted, type Value } from "domain-rules";
 
 export const ArticleIdSchema = v.pipe(v.string(), v.startsWith("art_"), v.brand("ArticleId"));
 export const ArticleIdExistedSchema = v.pipe(ArticleIdSchema, v.brand("ArticleIdExisted"));
+export const ArticleIdNewSchema = v.pipe(ArticleIdSchema, v.brand("ArticleIdNew"));
 
 const articleInput = v.object({
   id: v.optional(ArticleIdSchema),
@@ -91,7 +92,7 @@ export const article = model({
     input: articleInput,
     persisted: v.object({
       ...articleInput.entries,
-      id: ArticleIdExistedSchema,
+      id: v.union([ArticleIdExistedSchema, ArticleIdNewSchema]),
       blogId: BlogIdExistedSchema,
       reviewerId: UserIdExistedSchema,
     }),
@@ -103,10 +104,10 @@ export type Article = Persisted<typeof article>;    // schema.persisted の出�
 ```
 
 - **`schema.input`。** 入力の値の形です。Valibot の `v.object` を使います。更新のときに、入力にある項目だけをその項目の schema で検証するため、ライブラリが項目ごとの schema(`entries`)を読む必要があるからです。項目をまたぐ条件(「著者とレビュアーは別の人」など)は、schema ではなく rule に書きます。
-- **`schema.persisted`。** 永続化の形です。DB とやり取りするときの型で、DB に保存する値と、DB から読んだ値の両方がこの型です。入力より強い型を持てます。この例では、`id`、`blogId`、`reviewerId` が、存在を確かめた id の型(`BlogIdExistedSchema` は `v.pipe(BlogIdSchema, v.brand("BlogIdExisted"))`)です。保存するには、すべての項目がこの型になっている必要があります。ライブラリは、この schema で入力を検証しません。入力を通すと、確かめていない値に brand が付いてしまうからです。この schema は、永続化の型を決めることと、テストで DB から読んだ値を作ることに使います。
+- **`schema.persisted`。** 永続化の形です。DB とやり取りするときの型で、DB に保存する値と、DB から読んだ値の両方がこの型です。入力より強い型を持てます。この例では、`blogId` と `reviewerId` が、存在を確かめた id の型(`BlogIdExistedSchema` は `v.pipe(BlogIdSchema, v.brand("BlogIdExisted"))`)です。`id` は、DB から読んだ記事なら `ArticleIdExisted`、新しく作る記事なら `ArticleIdNew` です。保存するには、すべての項目がこの型になっている必要があります。ライブラリは、この schema で入力を検証しません。入力を通すと、確かめていない値に brand が付いてしまうからです。この schema は、永続化の型を決めることと、テストで DB から読んだ値を作ることに使います。
 - **作成時の既定値。** `schema.input` の `v.optional` の既定値に書きます。新規作成のときだけ使われます。
 
-model は2つの port を自動で宣言します。`article.load` は「id から既存の記事を取る」、`article.newId` は「新しい id を1つ作る」です。どちらも、schema の `id` の項目を id として扱います。どちらも実装は provider として後から注入します。`article.load` は `Article` を返すので、既存の値は最初から永続化の型です。ライブラリは load の結果を検証しません。port の実装が返す値は信用します。
+model は1つの port を自動で宣言します。`article.load` は「schema の `id` の項目の値で、既存の記事を取る」port です。実装は provider として後から注入します。新しい id を作るのは、ライブラリではなく rule です(「確かめた値で型を昇格する」を参照)。`article.load` は `Article` を返すので、既存の値は最初から永続化の型です。ライブラリは load の結果を検証しません。port の実装が返す値は信用します。
 
 ### 判定の種類と状態
 
@@ -159,6 +160,8 @@ export const findBlog = cached(
 export const findArticlesInBlog = cached(
   port("findArticlesInBlog").of<(blogId: BlogId) => readonly Article[], InfraError>(),
 );
+
+export const newArticleId = port("newArticleId").of<() => ArticleIdNew, InfraError>();
 ```
 
 port が何を返すかは、port ごとに違います。昇格した値、数、真偽値、データのどれでもかまいません。呼ぶかどうか、どの引数で呼ぶかは、check が決めます。
@@ -354,6 +357,32 @@ export const blogAcceptsPosts = rule(article.save.with<{ next: { blogId: BlogIdE
 
 `when` が当たらずに飛ばされる rule は、状態を変えません。そのため、昇格する rule に `always` 以外の `when` を書くと、後ろの step からは「昇格した型か、していない型」に見えます。昇格した型を要求する rule が後ろにあるか、永続化の型が揃わなければ、ルールの組を作るときに型エラーになります。
 
+記事の id も、同じように rule で昇格します。merge のあとの `next.id` は、入力の型の `ArticleId | undefined` です。
+
+```ts
+// DB から読んだ記事なら、その id は存在を確かめたもの
+export const existingArticleId = rule(article.save, {
+  name: "既存の記事の id",
+  when: always,
+  check: ({ pre }) => Result.succeed({ next: { id: pre ? pre.id : null } }),
+});
+
+export const articleIdAssigned = rule(
+  article.save.with<{ next: { id: ArticleIdExisted | null } }>(),
+  {
+    name: "新しい記事に id を付ける",
+    requires: { newArticleId },
+    when: always,
+    check: ({ next }, { newArticleId }) =>
+      next.id !== null
+        ? Result.succeed({ next: { id: next.id } })
+        : Result.pipe(newArticleId(), Result.map((id) => ({ next: { id } }))),
+  },
+);
+```
+
+`existingArticleId` は `next.id` を `ArticleIdExisted | null` にし、`articleIdAssigned` は `ArticleIdExisted | ArticleIdNew` にします。`articleIdAssigned` は `when: onCreate` ではなく `always` で、check の中で分けています。`when` で飛ばすと、更新の経路でも `next.id` の型に `null` が残るからです。2つの rule は、並びの最後に置きます。先に置くと、後ろの rule で失敗したときに、作った id が無駄になるからです。
+
 actor も同じように昇格できます。
 
 ```ts
@@ -395,6 +424,8 @@ export const articleRules = entityRules(article, {
     slugLockedAfterPublish,
     publishedIsApproved,
     blogAcceptsPosts,
+    existingArticleId,
+    articleIdAssigned,
   ],
   delete: [memberCanDelete, onlyDraftIsDeletable],
 });
@@ -406,7 +437,7 @@ export const articleRules = entityRules(article, {
 ルールの組を作るとき、並びを先頭から順にたどって、状態の型を確かめます。
 
 - **前提の型。** `blogAcceptsPosts` は `next.blogId` が `BlogIdExisted` であることを前提にしています。`blogExists` より前に並べると型エラーになります。
-- **永続化の型。** 並びの最後の状態で、`next` が model の `schema.persisted` の型にならなければ型エラーになります。`reviewerExists` を並べ忘れると、`next.reviewerId` が `UserId` のままなので型エラーになります。
+- **永続化の型。** 並びの最後の状態で、`next` が model の `schema.persisted` の型にならなければ型エラーになります。`reviewerExists` を並べ忘れると、`next.reviewerId` が `UserId` のままなので型エラーになります。`articleIdAssigned` を並べ忘れると、`next.id` に `null` が残るので型エラーになります。
 
 認証済みの actor は呼び出し側が渡します。操作を許可しない場合、認可の rule が失敗を返します。
 
@@ -481,15 +512,15 @@ export const previewArticleRules = actionRules(previewArticle, {
 
 ### provider を定義して束ねる
 
-provider は port の実装です。check から呼ぶ port、model の port(`load` と `newId`)、時計のどれでも、同じ `provide` で渡します。ドメインの外で定義します。
+provider は port の実装です。check から呼ぶ port、model の port(`load`)、時計のどれでも、同じ `provide` で渡します。ドメインの外で定義します。
 
 ```ts
 import { provide, bind, clock } from "domain-rules";
-import { article, articleRules, findArticle, findArticlesInBlog, findBlog, previewArticleRules, requireExistingUser } from "@example/domain";
+import { article, articleRules, findArticle, findArticlesInBlog, findBlog, newArticleId, previewArticleRules, requireExistingUser } from "@example/domain";
 
 export const providers = [
   provide(article.load, (id) => articleRepository.findById(id)),
-  provide(article.newId, () => createArticleId()),
+  provide(newArticleId, () => createArticleId()),
   provide(requireExistingUser, (id) => userRepository.requireExisting(id)),
   provide(findBlog, (id) => blogRepository.findById(id)),
   provide(findArticlesInBlog, (blogId) => articleRepository.findByBlog(blogId)),
@@ -517,7 +548,7 @@ provider の一覧は、`as const` を付けた読み取り専用のタプルに
 const testDomain = bind([articleRules], {
   providers: [
     provide.value(article.load, existingArticle),
-    provide.value(article.newId, ArticleIdExistedSchema.parse("art_1")),
+    provide.value(newArticleId, ArticleIdNewSchema.parse("art_1")),
     provide.value(requireExistingUser, "usr_1" as UserIdExisted),
     provide.value(findBlog, openBlog),
     provide.value(findArticlesInBlog, []),
@@ -587,8 +618,7 @@ type Failure =
   | { step: "load"; error: "NOT_FOUND" | LoadError }           // 既存の値がないか、load の port が失敗した
   | { step: "著者とレビュアーは別の人"; error: "SAME_AUTHOR_AND_REVIEWER" }
   | { step: "レビュアーが存在する"; error: "USER_NOT_FOUND" | InfraError }
-  | ...                                                         // 並べた rule ごとに1つ
-  | { step: "seal"; error: NewIdError };                        // newId の port が失敗した
+  | ...;                                                        // 並べた rule ごとに1つ
 ```
 
 rule の失敗の値は、check が `Result.fail` に入れた値そのものです。conflict か、not found か、infra の失敗かは、利用者が失敗の値で表します。ライブラリは失敗に種類を付けません。check が呼んだ port の失敗をそのまま返すか、別の値に変えるかも、check が決めます。
@@ -603,12 +633,12 @@ rule の失敗の値は、check が `Result.fail` に入れた値そのもので
 | 2 | load | id から既存の値を取る | `NOT_FOUND`、load の port の失敗 |
 | 3 | merge | 既存の値に、検証済みの入力を重ねて next を作る | なし |
 | 4 | rule | ルールの組に並べた rule を、並べた順に1つずつ通る | その rule の check の失敗 |
-| 5 | seal または output | 保存では id を付けて封をする。action では `output` で値を組み立てて封をする | newId の port の失敗 |
+| 5 | seal または output | 保存では最後の状態に封をする。action では `output` で値を組み立てて封をする | なし |
 
 - **input。** 入力は、入力にある項目だけを、その項目の schema で検証します。schema にない項目が入っていたら失敗です。`create` では、入力全体を schema で検証し、既定値を入れます。この step の失敗の値には、schema の検証で見つかった問題がすべて入ります。
 - **merge。** 入力で `undefined` の項目は既存の値を残し、`null` の項目は `null` で上書きします。残した項目は、永続化の型のままです。DB から読んだ値は信用し、検証しません。
 - **rule。** rule ごとに、その時点の状態で `when` を評価します。当たらなければ、状態をそのまま次へ渡します。当たれば check を実行し、成功の値を状態に重ねて次へ渡します。失敗したら、そこで止まります。
-- **seal。** 更新なら既存の id、新規なら `model.newId` の provider で作った id を付けます。`newId` が失敗したら失敗です。
+- **seal。** 最後の状態の `next` に封をして `Persistable` を作ります。`next` が `schema.persisted` の型になっていることは、ルールの組を作るときに型で確かめてあります。
 
 メソッドによって、通らない step があります。
 
