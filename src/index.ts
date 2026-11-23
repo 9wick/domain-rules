@@ -18,8 +18,8 @@ export {
   type InputFailure,
   type LoadFailure,
   type ModelRules,
-  type PlannedRule,
 } from "./rules.ts";
+export { ruleset, type PlannedRule, type Ruleset } from "./ruleset.ts";
 export { bind, type Bound } from "./bind.ts";
 export { open, type Decision, type Deletable, type Persistable } from "./seal.ts";
 export {

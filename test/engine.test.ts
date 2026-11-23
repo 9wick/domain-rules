@@ -1,7 +1,20 @@
 import { Result } from "@praha/byethrow";
 import * as v from "valibot";
 import { expect, test } from "vite-plus/test";
-import { always, bind, cached, clock, model, modelRules, open, port, provide, rule } from "../src/index.ts";
+import {
+  always,
+  bind,
+  cached,
+  clock,
+  model,
+  modelRules,
+  open,
+  port,
+  provide,
+  plan,
+  rule,
+  ruleset,
+} from "../src/index.ts";
 
 const item = model({
   name: "item",
@@ -27,7 +40,7 @@ const twice = (name: string) =>
 
 test("cached の port は1回の呼び出しの中でだけ、同じ引数の結果を使い回す", async () => {
   const calls: string[] = [];
-  const domain = bind([modelRules(item, { save: [twice("a"), twice("b")] })], {
+  const domain = bind([modelRules(item, { save: ruleset(twice("a")).add(twice("b")) })], {
     providers: [
       provide(lookup, (n) => (calls.push(`lookup(${n})`), Result.succeed(n))),
       provide(uncachedLookup, (n) => (calls.push(`uncached(${n})`), Result.succeed(n))),
@@ -41,7 +54,7 @@ test("cached の port は1回の呼び出しの中でだけ、同じ引数の結
 });
 
 test("load がない model の rule の組は create だけを持つ", () => {
-  const domain = bind([modelRules(item, { save: [twice("a")] })], {
+  const domain = bind([modelRules(item, { save: ruleset(twice("a")) })], {
     providers: [provide.value(lookup, 1), provide.value(uncachedLookup, 1), provide.value(clock, 0)],
   });
   expect(Object.keys(domain.item)).toEqual(["create"]);
@@ -55,7 +68,7 @@ test("check が throw した例外は握りつぶさない", async () => {
       throw new Error("bug");
     },
   });
-  const domain = bind([modelRules(item, { save: [boom] })], { providers: [provide.value(clock, 0)] });
+  const domain = bind([modelRules(item, { save: ruleset(boom) })], { providers: [provide.value(clock, 0)] });
   await expect(
     domain.item.create({ input: { n: 1 }, actor: { id: "usr_1" as never, role: "MEMBER" } }),
   ).rejects.toThrow("bug");
@@ -72,7 +85,7 @@ test("check が port の失敗を catch して成功を返しても、port の�
       return Result.succeed({ next: { id: "i" } });
     },
   });
-  const domain = bind([modelRules(item, { save: [swallow] })], {
+  const domain = bind([modelRules(item, { save: ruleset(swallow) })], {
     providers: [provide(failing, () => Result.fail("DOWN" as const)), provide.value(clock, 0)],
   });
   const r = await domain.item.create({ input: { n: 1 }, actor: { id: "usr_1" as never, role: "MEMBER" } });
@@ -80,7 +93,7 @@ test("check が port の失敗を catch して成功を返しても、port の�
 });
 
 test("prototype の名前の項目も schema にない項目として失敗する", async () => {
-  const domain = bind([modelRules(item, { save: [twice("a")] })], {
+  const domain = bind([modelRules(item, { save: ruleset(twice("a")) })], {
     providers: [provide.value(lookup, 1), provide.value(uncachedLookup, 1), provide.value(clock, 0)],
   });
   const r = await domain.item.create({
@@ -107,7 +120,11 @@ const seenNow = rule(item.save, {
   when: always,
   check: ({ now }) => (now === 42 ? Result.succeed() : Result.fail("WRONG_NOW")),
 });
-const itemRules = modelRules(item, { load: findItem, save: [seenNow, assignId], delete: [] });
+const itemRules = modelRules(item, {
+  load: findItem,
+  save: ruleset(seenNow).add(assignId),
+  delete: ruleset.from(item.delete),
+});
 const itemDomain = (load: () => Result.Result<{ id: string; n: number } | null, "DB_DOWN">) =>
   bind([itemRules], { providers: [provide(findItem, load), provide.value(clock, 42)] }).item;
 
@@ -153,14 +170,16 @@ test("rule で昇格した actor が封をした値に入る", async () => {
     when: always,
     check: () => Result.succeed({ actor: promoted, next: { id: "x" } }),
   });
-  const domain = bind([modelRules(item, { save: [promote] })], { providers: [provide.value(clock, 0)] });
+  const domain = bind([modelRules(item, { save: ruleset(promote) })], { providers: [provide.value(clock, 0)] });
   expect(open(Result.unwrap(await domain.item.create({ input: { n: 1 }, actor: member }))).actor).toBe(promoted);
 });
 
 test("when が当たらない rule は check を呼ばず、状態を変えない", async () => {
   let called = false;
   const never = rule(item.save, { name: "never", when: () => false, check: () => ((called = true), Result.fail("X")) });
-  const domain = bind([modelRules(item, { save: [never, assignId] })], { providers: [provide.value(clock, 0)] });
+  const domain = bind([modelRules(item, { save: ruleset(never).add(assignId) })], {
+    providers: [provide.value(clock, 0)],
+  });
   expect(open(Result.unwrap(await domain.item.create({ input: { n: 1 }, actor: member }))).next).toEqual({
     id: "new",
     n: 1,
@@ -168,13 +187,10 @@ test("when が当たらない rule は check を呼ばず、状態を変えな�
   expect(called).toBe(false);
 });
 
-test("宣言後に元の配列を変更しても、検査済みの rule が実行される", async () => {
-  const save: [typeof assignId] = [assignId];
-  const set = modelRules(item, { save });
-  save.pop();
-  const domain = bind([set], { providers: [provide.value(clock, 0)] });
-  const result = await domain.item.create({ input: { n: 1 }, actor: member });
-  expect(open(Result.unwrap(result)).next).toEqual({ id: "new", n: 1 });
+test("add は元の ruleset を変えず、新しい ruleset を返す", () => {
+  const base = ruleset(assignId);
+  base.add(rule(item.save, { name: "other", when: always, check: () => Result.succeed() }));
+  expect(plan(modelRules(item, { save: base })).save?.map((r) => r.name)).toEqual(["id"]);
 });
 
 test("不正な入力は時計を呼ぶ前に input で失敗する", async () => {
@@ -192,7 +208,7 @@ test("不正な入力は時計を呼ぶ前に input で失敗する", async () =
 
 test("同名の別宣言の provider では port を満たせない", () => {
   const otherLookup = port("lookup").of<(n: number) => string>();
-  const set = modelRules(item, { save: [twice("a")] });
+  const set = modelRules(item, { save: ruleset(twice("a")) });
   expect(() =>
     bind([set], {
       providers: [provide.value(otherLookup, "wrong"), provide.value(uncachedLookup, 1), provide.value(clock, 0)],
@@ -209,7 +225,7 @@ test("cached は元の宣言の provider を使う", async () => {
     requires: { cachedRaw },
     check: async ({ next }, { cachedRaw }) => Result.succeed({ next: { id: String(await cachedRaw(next.n)) } }),
   });
-  const domain = bind([modelRules(item, { save: [read] })], {
+  const domain = bind([modelRules(item, { save: ruleset(read) })], {
     providers: [provide(raw, (n) => Result.succeed(n + 1)), provide.value(clock, 0)],
   });
   const result = await domain.item.create({ input: { n: 2 }, actor: member });
@@ -227,8 +243,8 @@ test("load は入力スキーマで変換された id を受け取る", async ()
   const load = port("loadTransformed").of<(id: number) => { id: number }>();
   const wrongLoad = port("wrongLoad").of<(id: string) => { id: number }>();
   // @ts-expect-error load に渡る id は変換済みの number
-  modelRules(transformed, { load: wrongLoad, delete: [] });
-  const domain = bind([modelRules(transformed, { load, delete: [] })], {
+  modelRules(transformed, { load: wrongLoad, delete: ruleset.from(transformed.delete) });
+  const domain = bind([modelRules(transformed, { load, delete: ruleset.from(transformed.delete) })], {
     providers: [provide(load, (id) => Result.succeed({ id })), provide.value(clock, 0)],
   });
   const result = await domain.transformed.delete({ input: { id: "42" }, actor: member });
@@ -248,11 +264,10 @@ test("save は更新で引き継いだ永続化済みの値と検証済みの入
   const stringOnly = rule(appointment.save.with<{ next: { date: string } }>(), {
     name: "stringOnly",
     when: always,
-    check: ({ next }) => Result.succeed({ next: { id: "new", date: new Date(next.date) } }),
+    check: () => Result.succeed(),
   });
   // @ts-expect-error 更新で date を省略すると、永続化済みの Date が渡る
-  modelRules(appointment, { load: find, save: [stringOnly] });
-  modelRules(appointment, { save: [stringOnly] });
+  modelRules(appointment, { load: find, save: ruleset(stringOnly) });
 
   const normalize = rule(appointment.save, {
     name: "normalize",
@@ -262,7 +277,7 @@ test("save は更新で引き継いだ永続化済みの値と検証済みの入
         next: { id: next.id ?? "new", date: typeof next.date === "string" ? new Date(next.date) : next.date },
       }),
   });
-  const domain = bind([modelRules(appointment, { load: find, save: [normalize] })], {
+  const domain = bind([modelRules(appointment, { load: find, save: ruleset(normalize) })], {
     providers: [provide(find, (id) => Result.succeed({ id, date })), provide.value(clock, 0)],
   });
   const created = await domain.appointment.create({ input: { date: "2026-11-24" }, actor: member });

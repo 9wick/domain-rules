@@ -1,7 +1,7 @@
 import { Result } from "@praha/byethrow";
 import * as v from "valibot";
 import { expect, test } from "vite-plus/test";
-import { action, actionRules, always, bind, clock, open, plan, provide, rule } from "../src/index.ts";
+import { action, actionRules, always, bind, clock, open, plan, provide, rule, ruleset } from "../src/index.ts";
 
 const download = action({ name: "download", input: v.object({ fileId: v.pipe(v.string(), v.minLength(1)) }) });
 const member = { id: "usr_1" as never, role: "MEMBER" } as const;
@@ -13,7 +13,7 @@ const allowed = rule(download.decide, {
     actor.role === "MEMBER" ? Result.succeed({ url: `/files/${input.fileId}` }) : Result.fail("FORBIDDEN"),
 });
 
-const domain = bind([actionRules(download, { rules: [allowed], output: ({ url }) => url })], {
+const domain = bind([actionRules(download, { rules: ruleset(allowed), output: ({ url }) => url })], {
   providers: [provide.value(clock, 0)],
 });
 
@@ -32,15 +32,8 @@ test("rule の失敗で止まる", async () => {
   expect(Result.unwrapError(r)).toEqual({ step: "メンバーだけ", error: "FORBIDDEN" });
 });
 
-test("output を省略すると value は undefined", async () => {
-  const bare = bind([actionRules(download, { rules: [allowed] })], { providers: [provide.value(clock, 0)] });
-  expect(
-    open(Result.unwrap(await bare.download.decide({ input: { fileId: "f1" }, actor: member }))).value,
-  ).toBeUndefined();
-});
-
 test("plan は action の線路も表示する", () => {
-  expect(plan(actionRules(download, { rules: [allowed] }))).toEqual({
+  expect(plan(actionRules(download, { rules: ruleset(allowed), output: () => undefined }))).toEqual({
     rules: [{ name: "メンバーだけ", when: { kind: "always" }, ports: [] }],
   });
 });

@@ -78,6 +78,8 @@ export default defineConfig({
           "typescript/no-unsafe-assignment": "off",
           // README の例と同じく、actor の絞り込みに型述語を使う
           "strict/no-type-predicate": "off",
+          // 封をした値を作り直しても open できないことを、spread で作り直して確かめる
+          "typescript/no-misused-spread": "off",
         },
       },
       {
@@ -97,14 +99,10 @@ export default defineConfig({
         rules: { "strict/no-throw": "off", "strict/no-try-catch": "off", "typescript/only-throw-error": "off" },
       },
       {
-        // 型の上の情報と実行時の値をつなぐ変換を集めた module。ここ以外では型 assertion を書かない
-        files: ["src/erased.ts"],
-        rules: {
-          "typescript/consistent-type-assertions": "off",
-          "typescript/no-unsafe-type-assertion": "off",
-          // 型引数は「どの型として扱い直すか」の指定で、引数からは推論しない
-          "typescript/no-unnecessary-type-parameters": "off",
-        },
+        // 入力と出力の型の対応が関数の型で決まっているのに、TypeScript が実装に型を付けられない変換だけを集めた module。
+        // 呼び出し側が変換先の型を選べる汎用の変換は置かない
+        files: ["src/unchecked.ts"],
+        rules: { "typescript/consistent-type-assertions": "off", "typescript/no-unsafe-type-assertion": "off" },
       },
     ],
     options: {

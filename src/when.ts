@@ -1,12 +1,17 @@
-import { callErased, type ErasedFn } from "./erased.ts";
 import type { Actor } from "./model.ts";
+import { allHold, anyHolds } from "./unchecked.ts";
 
 export type TrackKind = "save" | "delete" | "decide";
 
 export type WhenDescription =
   | { readonly kind: "always" }
   | { readonly kind: "onCreate" }
-  | { readonly kind: "changed"; readonly field: string; readonly pre?: unknown; readonly next?: unknown }
+  | {
+      readonly kind: "changed";
+      readonly field: string;
+      readonly pre?: Match | undefined;
+      readonly next?: Match | undefined;
+    }
   | { readonly kind: "next" }
   | { readonly kind: "pre" }
   | { readonly kind: "actor" }
@@ -27,11 +32,12 @@ export type WhenParam<K extends TrackKind, S> = ((s: S) => boolean) & {
   readonly [allowedTracks]?: (k: K) => void;
 };
 
-// 常に当たる when は description の kind で見分ける
+// 常に当たる when は description の kind で見分ける。線路は実行時にも同じ kind を見て rule を必ず当てる
 export type Always = When<TrackKind, unknown> & { readonly description: { readonly kind: "always" } };
 export type IsAlways<W> = W extends { readonly description: { readonly kind: "always" } } ? true : false;
+export const isAlways = (w: { readonly description?: WhenDescription }): boolean => w.description?.kind === "always";
 
-type AnyWhen = ErasedFn<boolean> & {
+export type AnyWhen = ((s: never) => boolean) & {
   readonly description?: WhenDescription;
   readonly [allowedTracks]?: (k: never) => void;
 };
@@ -45,10 +51,9 @@ type NeedOf<W> = W extends (s: infer N) => boolean ? N : never;
 type CombinedKinds<Ws, K = TrackKind> = Ws extends readonly [infer W, ...infer Rest]
   ? CombinedKinds<Rest, K & KindsOf<W>>
   : K & TrackKind;
-type CombinedNeed<Ws, N = unknown> = Ws extends readonly [infer W, ...infer Rest]
+export type CombinedNeed<Ws, N = unknown> = Ws extends readonly [infer W, ...infer Rest]
   ? CombinedNeed<Rest, N & NeedOf<W>>
   : N;
-type Combine<Ws> = When<CombinedKinds<Ws>, CombinedNeed<Ws>>;
 
 const when = <K extends TrackKind, Need>(description: WhenDescription, f: (s: Need) => boolean): When<K, Need> =>
   Object.freeze(Object.assign((s: Need) => f(s), { description }));
@@ -59,14 +64,14 @@ export const always: Always = Object.freeze(Object.assign(() => true, { descript
 
 export const onCreate = when<"save", { readonly pre: unknown }>({ kind: "onCreate" }, (s) => s.pre === null);
 
-// undefined は「条件なし」を表すので比べる値に含めない。関数は値ではなく述語として扱い、ほかの値は Object.is で比べる
-type Match = ErasedFn<boolean> | string | number | bigint | boolean | symbol | null;
-const matches = (m: Match, v: unknown) => (typeof m === "function" ? callErased(m, v) : Object.is(m, v));
+// undefined は「条件なし」を表すので比べる値に含めない。値は Object.is で比べる
+type Match = string | number | bigint | boolean | symbol | null;
 
 type Fields<F extends string> = { readonly [P in F]: unknown };
 type Changed<F extends string> = { readonly pre: Fields<F> | null; readonly next: Fields<F> };
 
 const fieldOf = <F extends string>(o: Fields<F>, field: F): unknown => o[field];
+const matches = (m: Match | undefined, v: unknown) => m === undefined || Object.is(m, v);
 
 export const changed = <const F extends string>(
   field: F,
@@ -74,11 +79,9 @@ export const changed = <const F extends string>(
 ): When<"save", Changed<F>> =>
   when({ kind: "changed", field, ...values }, (s: Changed<F>) => {
     const after = fieldOf(s.next, field);
-    const nextMatches = values.next === undefined || matches(values.next, after);
-    if (s.pre === null) return values.pre === undefined && nextMatches;
+    if (s.pre === null) return values.pre === undefined && matches(values.next, after);
     const before = fieldOf(s.pre, field);
-    if (Object.is(before, after)) return false;
-    return (values.pre === undefined || matches(values.pre, before)) && nextMatches;
+    return !Object.is(before, after) && matches(values.pre, before) && matches(values.next, after);
   });
 
 export const next = <V>(predicate: (v: V) => boolean): When<"save", { readonly next: V }> =>
@@ -92,14 +95,14 @@ export const actor = <A = Actor, S = unknown>(
 ): When<TrackKind, { readonly actor: A } & S> =>
   when({ kind: "actor" }, (s: { readonly actor: A } & S) => predicate(s.actor, s));
 
-export const and = <const Ws extends readonly AnyWhen[]>(...ws: Ws): Combine<Ws> =>
-  when({ kind: "and", conditions: ws.map(descriptionOf) }, (s: unknown) => ws.every((w) => callErased(w, s)));
+export const and = <const Ws extends readonly AnyWhen[]>(...ws: Ws): When<CombinedKinds<Ws>, CombinedNeed<Ws>> =>
+  when({ kind: "and", conditions: ws.map(descriptionOf) }, (s: CombinedNeed<Ws>) => allHold(ws, s));
 
-export const or = <const Ws extends readonly AnyWhen[]>(...ws: Ws): Combine<Ws> =>
-  when({ kind: "or", conditions: ws.map(descriptionOf) }, (s: unknown) => ws.some((w) => callErased(w, s)));
+export const or = <const Ws extends readonly AnyWhen[]>(...ws: Ws): When<CombinedKinds<Ws>, CombinedNeed<Ws>> =>
+  when({ kind: "or", conditions: ws.map(descriptionOf) }, (s: CombinedNeed<Ws>) => anyHolds(ws, s));
 
-export const not = <W extends AnyWhen>(w: W): When<KindsOf<W>, NeedOf<W>> =>
-  when({ kind: "not", condition: descriptionOf(w) }, (s: unknown) => !callErased(w, s));
+export const not = <K extends TrackKind, N>(w: When<K, N>): When<K, N> =>
+  when({ kind: "not", condition: descriptionOf(w) }, (s: N) => !w(s));
 
 export const describe = <S>(description: string, f: (s: S) => boolean): When<TrackKind, S> =>
   when({ kind: "custom", description }, f);

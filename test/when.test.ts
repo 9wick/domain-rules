@@ -50,14 +50,6 @@ group("changed", () => {
       ],
     ],
     [
-      "述語",
-      changed("status", { next: (v: string) => v !== "DRAFT" }),
-      [
-        ["DRAFT", "PUBLISHED", true],
-        ["PUBLISHED", "DRAFT", false],
-      ],
-    ],
-    [
       "undefined は条件なし",
       changed("status", { pre: undefined, next: undefined }),
       [

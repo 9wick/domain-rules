@@ -1,58 +1,67 @@
 import { Result } from "@praha/byethrow";
-import { callErased, withPhantom, type ErasedFn, type Phantom } from "./erased.ts";
+import { implFor, portFns } from "./unchecked.ts";
 
-type PortInfo<A, T, E> = { readonly args: A; readonly value: T; readonly error: E };
+declare const portTypes: unique symbol;
 
-export type Port<
+// port は宣言だけで、実装は provider であとから渡す。引数・値・失敗の型は宣言の型の上にだけある
+export class Port<
   N extends string = string,
   A extends readonly unknown[] = readonly unknown[],
   T = unknown,
   E = unknown,
-> = {
-  readonly kind: "port";
+> {
+  declare readonly [portTypes]: { readonly args: A; readonly value: T; readonly error: E };
+  readonly kind = "port";
   readonly name: N;
-  readonly cached: boolean;
   readonly token: symbol;
-} & Phantom<PortInfo<A, T, E>>;
+  readonly cached: boolean;
+
+  constructor(name: N, token: symbol, cached: boolean) {
+    this.name = name;
+    this.token = token;
+    this.cached = cached;
+    Object.freeze(this);
+  }
+}
 
 export type Clock = { readonly kind: "clock"; readonly name: "clock"; readonly token: symbol };
 
-type InfoOf<P> = P extends Phantom<infer I> ? I : never;
-export type PortArgs<P> = InfoOf<P> extends { readonly args: infer A extends readonly unknown[] } ? A : never;
-export type PortValue<P> = InfoOf<P> extends PortInfo<readonly unknown[], infer T, unknown> ? T : never;
-export type PortError<P> = InfoOf<P> extends PortInfo<readonly unknown[], unknown, infer E> ? E : never;
+export type PortArgs<P> = P extends Port<string, infer A> ? A : never;
+export type PortValue<P> = P extends Port<string, readonly unknown[], infer T> ? T : never;
+export type PortError<P> = P extends Port<string, readonly unknown[], unknown, infer E> ? E : never;
 
-export type Ports = Record<string, Port>;
+export type Ports = Readonly<Record<string, Port>>;
+export type NoPorts = Readonly<Record<never, Port>>;
 export type PortFns<P extends Ports> = {
   readonly [K in keyof P]: (...args: PortArgs<P[K]>) => Promise<PortValue<P[K]>>;
 };
 export type PortErrors<P extends Ports> = { [K in keyof P]: PortError<P[K]> }[keyof P];
+export type PortNames<P extends Ports> = { [K in keyof P]: P[K]["name"] }[keyof P];
 
 export const port = <const N extends string>(name: N) => ({
-  of: <F extends ErasedFn, E = never>(): Port<N, Parameters<F>, ReturnType<F>, E> =>
-    withPhantom<Port<N, Parameters<F>, ReturnType<F>, E>>(
-      Object.freeze({ kind: "port", name, token: Symbol(name), cached: false }),
-    ),
+  of: <F extends (...args: never) => unknown, E = never>() =>
+    new Port<N, Parameters<F>, ReturnType<F>, E>(name, Symbol(name), false),
 });
 
-export const cached = <P extends Port>(p: P): P => Object.freeze({ ...p, cached: true });
+export const cached = <N extends string, A extends readonly unknown[], T, E>(p: Port<N, A, T, E>): Port<N, A, T, E> =>
+  new Port<N, A, T, E>(p.name, p.token, true);
 
 export const clock: Clock = Object.freeze({ kind: "clock", name: "clock", token: Symbol("clock") });
 
-type Impl<P extends Port> = (
+export type Impl<P extends Port> = (
   ...args: PortArgs<P>
 ) => Result.Result<PortValue<P>, PortError<P>> | Result.ResultAsync<PortValue<P>, PortError<P>>;
 
-// port の provider は Result を、clock の provider は時刻の数を返す。どちらを返すかは provide の overload で型を確かめる
+// provider は port の宣言の token で引く。実装の型は provide の引数で port の型に合わせてある
 export type Provider<N extends string = string> = {
   readonly name: N;
   readonly token: symbol;
-  readonly impl: ErasedFn;
+  readonly impl: (...args: never) => unknown;
 };
 
 export function provide<P extends Port>(target: P, impl: Impl<P>): Provider<P["name"]>;
 export function provide(target: Clock, impl: () => number): Provider<"clock">;
-export function provide(target: Port | Clock, impl: ErasedFn): Provider {
+export function provide(target: Port | Clock, impl: (...args: never) => unknown): Provider {
   return Object.freeze({ name: target.name, token: target.token, impl });
 }
 
@@ -64,62 +73,68 @@ function value(target: Port | Clock, v: unknown): Provider {
 }
 provide.value = value;
 
-export type PortCall = (p: Port, args: readonly unknown[]) => Promise<Result.Result<unknown, unknown>>;
+export type Impls = ReadonlyMap<symbol, (...args: never) => unknown>;
 
-export const portCaller = (impls: ReadonlyMap<symbol, ErasedFn>): PortCall => {
-  const cache = new Map<symbol, Map<string, Promise<Result.Result<unknown, unknown>>>>();
-  return (p, args) => {
-    const impl = impls.get(p.token);
-    const run = async (): Promise<Result.Result<unknown, unknown>> => {
-      if (impl === undefined) return Result.fail({ code: "PROVIDER_MISSING", port: p.name });
-      const r: unknown = await callErased(impl, ...args);
-      return Result.isResult<unknown, unknown>(r)
-        ? r
-        : Result.fail({ code: "PROVIDER_RETURNED_NON_RESULT", port: p.name });
-    };
-    if (!p.cached) return run();
-    const byArgs = cache.get(p.token) ?? new Map<string, Promise<Result.Result<unknown, unknown>>>();
-    cache.set(p.token, byArgs);
+export type PortCall = <P extends Port>(p: P, args: PortArgs<P>) => Promise<Result.Result<PortValue<P>, PortError<P>>>;
+
+const requireImpl = <P extends Port>(impls: Impls, p: P): Impl<P> => {
+  const impl = implFor(impls, p);
+  // bind が provider の不足を確かめてから呼ぶので、ここに来るのは壊れたときだけ
+  if (impl === undefined) throw new Error(`port "${p.name}" の provider がありません`);
+  return impl;
+};
+
+// 同じ引数の呼び出しを1回の呼び出しの中で使い回す
+const memoize = <P extends Port>(impl: Impl<P>): Impl<P> => {
+  const results = new Map<string, ReturnType<Impl<P>>>();
+  return (...args) => {
     const key = JSON.stringify(args);
-    const hit = byArgs.get(key);
+    const hit = results.get(key);
     if (hit !== undefined) return hit;
-    const pending = run();
-    byArgs.set(key, pending);
+    const pending = impl(...args);
+    results.set(key, pending);
     return pending;
   };
 };
 
-class PortFailed {
-  readonly error: unknown;
-  constructor(error: unknown) {
+export const portCaller = (impls: Impls): PortCall => {
+  const memos = new Map<symbol, (...args: never) => unknown>();
+  const memoFor = <P extends Port>(p: P): Impl<P> => {
+    const memo = implFor(memos, p);
+    if (memo !== undefined) return memo;
+    const created = memoize(requireImpl(impls, p));
+    memos.set(p.token, created);
+    return created;
+  };
+  return async (p, args) => (p.cached ? memoFor(p) : requireImpl(impls, p))(...args);
+};
+
+class PortFailed<E> {
+  readonly error: E;
+  constructor(error: E) {
     this.error = error;
   }
 }
 
-type PortFnsRuntime = Readonly<Record<string, (...args: readonly unknown[]) => Promise<unknown>>>;
-type CheckResult = Result.Result<unknown, unknown> | Promise<Result.Result<unknown, unknown>>;
+type PortErrorMap<P extends Ports> = { [K in keyof P]: PortError<P[K]> };
 
 // check の中では port の成功の値だけを見せたいので、失敗は throw で check を抜けさせる。
 // check が throw を握りつぶして成功を返しても線路を止められるよう、最初の失敗を別に覚えておく
-export const runWithPorts = async (
+export const runWithPorts = async <P extends Ports, T, E>(
   call: PortCall,
-  requires: Ports,
-  check: (fns: PortFnsRuntime) => CheckResult,
-): Promise<Result.Result<unknown, unknown>> => {
-  let failed: PortFailed | undefined;
-  const fns: PortFnsRuntime = Object.fromEntries(
-    Object.entries(requires).map(([key, p]) => [
-      key,
-      async (...args: readonly unknown[]) => {
-        const r = await call(p, args);
-        if (Result.isFailure(r)) {
-          failed ??= new PortFailed(r.error);
-          throw failed;
-        }
-        return r.value;
-      },
-    ]),
-  );
+  requires: P | undefined,
+  check: (fns: PortFns<P>) => Result.Result<T, E> | Promise<Result.Result<T, E>>,
+): Promise<Result.Result<T, E | PortErrors<P>>> => {
+  let failed: PortFailed<PortErrors<P>> | undefined;
+  const fns = portFns(requires, async <K extends keyof P>(p: P[K], args: PortArgs<P[K]>) => {
+    const r = await call(p, args);
+    if (Result.isFailure(r)) {
+      const error: PortErrorMap<P>[K] = r.error;
+      failed ??= new PortFailed<PortErrors<P>>(error);
+      throw failed;
+    }
+    return r.value;
+  });
   try {
     const result = await check(fns);
     return failed === undefined ? result : Result.fail(failed.error);

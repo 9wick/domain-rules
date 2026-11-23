@@ -11,6 +11,7 @@ import {
   port,
   provide,
   rule,
+  ruleset,
   type Persistable,
 } from "../src/index.ts";
 import {
@@ -28,6 +29,8 @@ import {
   onlyDraftIsDeletable,
   previewArticleRules,
   reviewerExists,
+  type Article,
+  type ArticleId,
   type ArticleIdExisted,
   type ArticleValue,
   type ArticleIdNew,
@@ -94,41 +97,38 @@ describe("型", () => {
   });
 
   test("前提の型が成り立たない並びは型エラー", () => {
-    modelRules(article, {
-      load: findArticleById,
+    ruleset(memberCanSave)
       // @ts-expect-error blogAcceptsPosts は blogExists のあとでなければならない
-      save: [memberCanSave, blogAcceptsPosts, blogExists, reviewerExists, existingArticleId, articleIdAssigned],
-    });
+      .add(blogAcceptsPosts);
+    ruleset(memberCanSave).add(blogExists).add(blogAcceptsPosts);
   });
 
   test("永続化の型にならない並びは型エラー", () => {
     modelRules(article, {
       load: findArticleById,
       // @ts-expect-error reviewerExists がないと next.reviewerId が UserId のまま
-      save: [blogExists, existingArticleId, articleIdAssigned],
+      save: ruleset(blogExists).add(existingArticleId).add(articleIdAssigned),
     });
     modelRules(article, {
       load: findArticleById,
       // @ts-expect-error articleIdAssigned がないと next.id に null が残る
-      save: [blogExists, reviewerExists, existingArticleId],
+      save: ruleset(blogExists).add(reviewerExists).add(existingArticleId),
     });
     modelRules(article, {
       load: findArticleById,
-      save: [blogExists, reviewerExists, existingArticleId, articleIdAssigned],
+      save: ruleset(blogExists).add(reviewerExists).add(existingArticleId).add(articleIdAssigned),
     });
   });
 
   test("線路の違う rule は並べられない", () => {
-    modelRules(article, {
-      load: findArticleById,
+    ruleset(memberCanSave)
       // @ts-expect-error 削除の rule を保存の並びに置いている
-      save: [onlyDraftIsDeletable, blogExists, reviewerExists, existingArticleId, articleIdAssigned],
-    });
+      .add(onlyDraftIsDeletable);
   });
 
   test("delete には load が要る", () => {
     // @ts-expect-error load がない
-    modelRules(article, { delete: [onlyDraftIsDeletable] });
+    modelRules(article, { delete: ruleset(onlyDraftIsDeletable) });
   });
 
   test("使えない線路の when は型エラー", () => {
@@ -155,14 +155,45 @@ describe("型", () => {
     modelRules(article, {
       load: findArticleById,
       // @ts-expect-error 当たらないときに reviewerId が UserId のまま残る
-      save: [blogExists, maybe, existingArticleId, articleIdAssigned],
+      save: ruleset(blogExists).add(maybe).add(existingArticleId).add(articleIdAssigned),
     });
+  });
+
+  test("load の型を前提にする線路は、その型から始める", () => {
+    const existingOnly = rule(article.save.with<{ pre: ExistingArticle | null }>(), {
+      name: "既存の記事だけ",
+      when: always,
+      check: ({ pre }) => {
+        expectTypeOf(pre?.id).toExtend<ArticleIdExisted | undefined>();
+        return Result.succeed();
+      },
+    });
+    const save = ruleset
+      .from(article.save.with<{ pre: ExistingArticle | null }>())
+      .add(existingOnly)
+      .add(blogExists)
+      .add(reviewerExists)
+      .add(existingArticleId)
+      .add(articleIdAssigned);
+    modelRules(article, { load: findArticleById, save });
+    // @ts-expect-error 永続化の型を返す load では、pre が ExistingArticle にならない
+    modelRules(article, { load: port("findAny").of<(id: ArticleId) => Article | null>(), save });
+  });
+
+  test("状態の項目を別の型に置き換える rule は足せない", () => {
+    const replace = rule(article.save, {
+      name: "置き換え",
+      when: always,
+      check: () => Result.succeed({ next: { publishAt: "now" } }),
+    });
+    // @ts-expect-error publishAt は number で、string に置き換えられない
+    ruleset(replace);
   });
 
   test("provider が足りなければ型エラー", () => {
     const set = modelRules(article, {
       load: findArticleById,
-      save: [blogExists, reviewerExists, existingArticleId, articleIdAssigned],
+      save: ruleset(blogExists).add(reviewerExists).add(existingArticleId).add(articleIdAssigned),
     });
     const run = () => {
       // @ts-expect-error findBlog などの provider がない

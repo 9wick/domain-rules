@@ -1,12 +1,27 @@
-import { opaque, type Phantom, type PhantomKey } from "./erased.ts";
 import type { Action, Actor, Model, Persisted } from "./model.ts";
+import { contentsOf } from "./unchecked.ts";
 
-type Sealed<Kind extends string, Target extends string, Op extends string, C> = Phantom<{
-  readonly kind: Kind;
-  readonly target: Target;
-  readonly op: Op;
-  readonly contents: C;
-}>;
+declare const sealedAs: unique symbol;
+
+// 線路を通ったことの証明。中身は private field に持ち、メソッドが作った値だけが open できる
+class Sealed<Kind extends string, Target extends string, Op extends string, C> {
+  declare readonly [sealedAs]: { readonly kind: Kind; readonly target: Target; readonly op: Op };
+  readonly #contents: C;
+
+  constructor(contents: C) {
+    this.#contents = Object.freeze(contents);
+    Object.setPrototypeOf(this, null);
+    Object.freeze(this);
+  }
+
+  static read(value: object): unknown {
+    if (!(#contents in value)) throw new Error("open: メソッドが作った封をした値ではありません");
+    return value.#contents;
+  }
+}
+
+export type AnySealed = Sealed<string, string, string, unknown>;
+export type ContentsOf<S> = S extends Sealed<string, string, string, infer C> ? C : never;
 
 export type Persistable<
   M extends Model,
@@ -41,25 +56,7 @@ export type Decision<Ac extends Action, T = void, A = Actor> = Sealed<
   { readonly value: T; readonly actor: A }
 >;
 
-type AnySealed = Sealed<string, string, string, unknown>;
+export const seal = <Kind extends string, Target extends string, Op extends string, C>(contents: C) =>
+  new Sealed<Kind, Target, Op, C>(contents);
 
-class Seal {
-  readonly #contents: unknown;
-
-  constructor(contents: unknown) {
-    this.#contents = Object.freeze(contents);
-    Object.setPrototypeOf(this, null);
-    Object.freeze(this);
-  }
-
-  static open(value: object): unknown {
-    if (!(#contents in value)) throw new Error("open: メソッドが作った封をした値ではありません");
-    return value.#contents;
-  }
-}
-
-type Contents<S extends AnySealed> = S[PhantomKey]["contents"];
-
-export const seal = <S extends AnySealed>(c: Contents<S>): S => opaque<S>(new Seal(c));
-
-export const open = <S extends AnySealed>(s: S): Contents<S> => Seal.open(s);
+export const open = <S extends AnySealed>(s: S): ContentsOf<S> => contentsOf(s, (value) => Sealed.read(value));

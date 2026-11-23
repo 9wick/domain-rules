@@ -1,5 +1,4 @@
 import type { StandardSchemaV1 } from "@standard-schema/spec";
-import { withPhantom, type Phantom } from "./erased.ts";
 import type { TrackKind } from "./when.ts";
 
 // アプリケーションが module augmentation で actor の型を登録する
@@ -8,33 +7,25 @@ export type Actor = Register extends { actor: infer A } ? A : unknown;
 
 export type Simplify<T> = { [K in keyof T]: T[K] };
 
-// check の成功の値を状態に重ねる。next だけは項目ごとに重ね、ほかの名前は置き換えるか足す
-export type Overlay<S, O> = S extends unknown
-  ? O extends unknown
-    ? [O] extends [void | undefined | null]
-      ? S
-      : Simplify<{
-          [K in keyof S | keyof O]: K extends keyof O
-            ? K extends "next"
-              ? K extends keyof S
-                ? Simplify<Omit<S[K], keyof O[K]> & O[K]>
-                : O[K]
-              : O[K]
-            : K extends keyof S
-              ? S[K]
-              : never;
-        }>
-    : never
-  : never;
+declare const trackState: unique symbol;
 
-export type Track<K extends TrackKind, T extends string, S> = {
+// rule をどの線路に置くかと、その線路で rule が受け取る状態の型を表す
+export class Track<K extends TrackKind, T extends string, S> {
+  declare readonly [trackState]: S;
   readonly kind: K;
   readonly target: T;
-  with<R>(): Track<K, T, Overlay<S, R>>;
-} & Phantom<S>;
 
-export const track = <K extends TrackKind, T extends string, S>(kind: K, target: T): Track<K, T, S> =>
-  withPhantom<Track<K, T, S>>(Object.freeze({ kind, target, with: <R>() => track<K, T, Overlay<S, R>>(kind, target) }));
+  constructor(kind: K, target: T) {
+    this.kind = kind;
+    this.target = target;
+    Object.freeze(this);
+  }
+
+  // 前の rule が昇格させた状態を前提にする
+  with<R>(): Track<K, T, S & R> {
+    return new Track<K, T, S & R>(this.kind, this.target);
+  }
+}
 
 export type ObjectSchema = StandardSchemaV1 & { readonly entries: Readonly<Record<string, StandardSchemaV1>> };
 
@@ -85,11 +76,11 @@ export const model = <const N extends string, I extends ObjectSchema, P extends 
     kind: "model",
     name: def.name,
     schema: def.schema,
-    save: track<"save", N, SaveStates<StandardSchemaV1.InferOutput<P>, StandardSchemaV1.InferOutput<I>>>(
+    save: new Track<"save", N, SaveStates<StandardSchemaV1.InferOutput<P>, StandardSchemaV1.InferOutput<I>>>(
       "save",
       def.name,
     ),
-    delete: track<"delete", N, DeleteState<StandardSchemaV1.InferOutput<P>>>("delete", def.name),
+    delete: new Track<"delete", N, DeleteState<StandardSchemaV1.InferOutput<P>>>("delete", def.name),
   });
 
 export type Action<N extends string = string, I extends StandardSchemaV1 = StandardSchemaV1> = {
@@ -109,5 +100,5 @@ export const action = <const N extends string, I extends StandardSchemaV1>(def: 
     kind: "action",
     name: def.name,
     input: def.input,
-    decide: track<"decide", N, DecideState<StandardSchemaV1.InferOutput<I>>>("decide", def.name),
+    decide: new Track<"decide", N, DecideState<StandardSchemaV1.InferOutput<I>>>("decide", def.name),
   });

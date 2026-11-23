@@ -242,6 +242,7 @@ describe("封をした値", () => {
   test("作り直した値は open できない", async () => {
     const { domain } = setup();
     const p = Result.unwrap(await domain.article.create({ input: newArticle, actor: author }));
+    // @ts-expect-error 作り直した値は封をした値の型にならない
     expect(() => open({ ...p })).toThrow("open: メソッドが作った封をした値ではありません");
   });
 });

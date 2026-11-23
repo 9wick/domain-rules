@@ -1,11 +1,20 @@
 import { Result } from "@praha/byethrow";
 import type { StandardSchemaV1 } from "@standard-schema/spec";
-import { assembled, callErased, type ErasedFn } from "./erased.ts";
 import type { Action, Actor, InputOf, Model, ObjectSchema } from "./model.ts";
-import { clock, portCaller, runWithPorts, type Clock, type Port, type PortCall, type Provider } from "./port.ts";
-import type { Rule } from "./rule.ts";
-import type { ActionRules, InputFailure, ModelRules, RuleSet, RuleSetInfo } from "./rules.ts";
+import { clock, portCaller, type Impls, type Port, type PortCall, type Provider } from "./port.ts";
+import type {
+  ActionRules,
+  AnyRunnable,
+  Existing,
+  InputFailure,
+  LoadFailure,
+  ModelRules,
+  RuleSet,
+  RuleSetPorts,
+} from "./rules.ts";
+import type { RunnableRuleset } from "./ruleset.ts";
 import { seal, type Decision, type Deletable, type Persistable } from "./seal.ts";
+import { boundOf, clockFor, runErased } from "./unchecked.ts";
 
 type State = Readonly<Record<string, unknown>>;
 type Failure = { readonly step: string; readonly error: unknown };
@@ -13,53 +22,67 @@ type Failure = { readonly step: string; readonly error: unknown };
 type Id<M extends Model> = NonNullable<InputOf<M>["id" & keyof InputOf<M>]>;
 type Args<I> = { readonly input: I; readonly actor: Actor };
 
-type ModelMethods<M extends Model, I> = I extends {
-  existing: infer X;
-  saveActor: infer SA;
-  deleteActor: infer DA;
-  saveFailure: infer SF;
-  deleteFailure: infer DF;
-  loadFailure: infer LF;
-  methods: infer Ms;
-}
-  ? Pick<
-      {
-        create: (
-          args: Args<Omit<InputOf<M>, "id">>,
-        ) => Result.ResultAsync<Persistable<M, "create", X, SA>, InputFailure | SF>;
-        update: (
-          args: Args<InputOf<M> & { readonly id: Id<M> }>,
-        ) => Result.ResultAsync<Persistable<M, "update", X, SA>, InputFailure | LF | SF>;
-        upsert: (
-          args: Args<InputOf<M>>,
-        ) => Result.ResultAsync<
-          Persistable<M, "create", X, SA> | Persistable<M, "update", X, SA>,
-          InputFailure | LF | SF
-        >;
-        delete: (args: Args<{ readonly id: Id<M> }>) => Result.ResultAsync<Deletable<M, X, DA>, InputFailure | LF | DF>;
-      },
-      Ms & ("create" | "update" | "upsert" | "delete")
-    >
-  : never;
+type OutOf<R> = R extends RunnableRuleset<never, infer S, unknown, string> ? S : never;
+type ErrorOf<R> = R extends RunnableRuleset<never, unknown, infer E, string> ? E : never;
+type ActorOf<S> = S extends { readonly actor: infer A } ? A : never;
 
-type ActionMethods<A extends Action, I> = I extends { actor: infer Ac; failure: infer F; output: infer T }
-  ? {
-      decide: (
-        args: Args<StandardSchemaV1.InferInput<A["input"]>>,
-      ) => Result.ResultAsync<Decision<A, T, Ac>, InputFailure | F>;
-    }
-  : never;
+type SaveMethods<M extends Model, L, Save> = [Save] extends [undefined]
+  ? unknown
+  : {
+      readonly create: (
+        args: Args<Omit<InputOf<M>, "id">>,
+      ) => Result.ResultAsync<
+        Persistable<M, "create", Existing<L>, ActorOf<OutOf<Save>>>,
+        InputFailure | ErrorOf<Save>
+      >;
+    } & ([L] extends [never]
+      ? unknown
+      : {
+          readonly update: (
+            args: Args<InputOf<M> & { readonly id: Id<M> }>,
+          ) => Result.ResultAsync<
+            Persistable<M, "update", Existing<L>, ActorOf<OutOf<Save>>>,
+            InputFailure | LoadFailure<L> | ErrorOf<Save>
+          >;
+          readonly upsert: (
+            args: Args<InputOf<M>>,
+          ) => Result.ResultAsync<
+            | Persistable<M, "create", Existing<L>, ActorOf<OutOf<Save>>>
+            | Persistable<M, "update", Existing<L>, ActorOf<OutOf<Save>>>,
+            InputFailure | LoadFailure<L> | ErrorOf<Save>
+          >;
+        });
+
+type DeleteMethods<M extends Model, L, Del> = [Del] extends [undefined]
+  ? unknown
+  : [L] extends [never]
+    ? unknown
+    : {
+        readonly delete: (
+          args: Args<{ readonly id: Id<M> }>,
+        ) => Result.ResultAsync<
+          Deletable<M, Existing<L>, ActorOf<OutOf<Del>>>,
+          InputFailure | LoadFailure<L> | ErrorOf<Del>
+        >;
+      };
 
 type MethodsOf<S> =
-  S extends ModelRules<infer M>
-    ? ModelMethods<M, RuleSetInfo<S>>
-    : S extends ActionRules<infer A>
-      ? ActionMethods<A, RuleSetInfo<S>>
+  S extends ModelRules<infer M, infer L, infer Save, infer Del>
+    ? SaveMethods<M, L, Save> & DeleteMethods<M, L, Del>
+    : S extends ActionRules<infer A, infer Rs>
+      ? {
+          readonly decide: (
+            args: Args<StandardSchemaV1.InferInput<A["input"]>>,
+          ) => Result.ResultAsync<
+            Decision<A, OutOf<Rs> extends { readonly value: infer T } ? T : never, ActorOf<OutOf<Rs>>>,
+            InputFailure | ErrorOf<Rs>
+          >;
+        }
       : never;
 
 export type Bound<Sets extends readonly RuleSet[]> = { readonly [S in Sets[number] as S["name"]]: MethodsOf<S> };
 
-type RequiredPorts<Sets extends readonly RuleSet[]> = RuleSetInfo<Sets[number]>["ports"] | "clock";
+type RequiredPorts<Sets extends readonly RuleSet[]> = RuleSetPorts<Sets[number]> | "clock";
 type MissingProviders<Sets extends readonly RuleSet[], Ps extends readonly Provider[]> = Exclude<
   RequiredPorts<Sets>,
   Ps[number]["name"]
@@ -71,12 +94,12 @@ export function bind<const Sets extends readonly RuleSet[], const Ps extends rea
     ? unknown
     : { readonly "provider が足りない port": MissingProviders<Sets, Ps> }),
 ): Bound<Sets> {
-  const impls = new Map<symbol, ErasedFn>();
+  const impls = new Map<symbol, (...args: never) => unknown>();
   for (const p of options.providers) {
     if (impls.has(p.token)) throw new Error(`bind: port "${p.name}" の provider が重複しています`);
     impls.set(p.token, p.impl);
   }
-  const bound: Record<string, unknown> = {};
+  const bound: Record<string, object> = {};
   for (const set of sets) {
     if (Object.hasOwn(bound, set.name)) throw new Error(`bind: "${set.name}" の rule の組が重複しています`);
     const missing = requiredPorts(set)
@@ -85,22 +108,21 @@ export function bind<const Sets extends readonly RuleSet[], const Ps extends rea
     if (missing.length > 0) throw new Error(`bind: provider が足りない port: ${missing.join(", ")}`);
     bound[set.name] = set.kind === "modelRules" ? modelMethods(set, impls) : actionMethods(set, impls);
   }
-  return assembled<Bound<Sets>>(bound);
+  return boundOf(sets, bound);
 }
 
-const requiredPorts = (set: RuleSet): (Port | Clock)[] => {
-  const rules = set.kind === "modelRules" ? [...(set.save ?? []), ...(set.delete ?? [])] : set.rules;
-  const load = set.kind === "modelRules" && set.load ? [set.load] : [];
-  return [clock, ...load, ...rules.flatMap((r) => Object.values<Port>(r.requires))];
+const requiredPorts = (set: RuleSet): readonly { readonly name: string; readonly token: symbol }[] => {
+  const rulesets = set.kind === "modelRules" ? [set.save, set.delete] : [set.rules];
+  const load = set.kind === "modelRules" && set.load !== undefined ? [set.load] : [];
+  return [clock, ...load, ...rulesets.flatMap((r) => r?.ports ?? [])];
 };
 
 type Invocation = { readonly call: PortCall; readonly now: number };
 
-const invocation = (impls: ReadonlyMap<symbol, ErasedFn>): Invocation => {
-  const clockImpl = impls.get(clock.token);
-  const now = clockImpl === undefined ? undefined : callErased(clockImpl);
-  // bind が clock の provider を確かめ、provide の型が数を返すことを確かめているので、ここに来るのは壊れたときだけ
-  if (typeof now !== "number") throw new Error("bind: clock の provider が時刻の数を返しませんでした");
+const invocation = (impls: Impls): Invocation => {
+  const now = clockFor(impls)?.();
+  // bind が clock の provider を確かめてから呼ぶので、ここに来るのは壊れたときだけ
+  if (now === undefined) throw new Error("bind: clock の provider がありません");
   return { call: portCaller(impls), now };
 };
 
@@ -152,71 +174,48 @@ const requireId = (input: State): Result.Result<unknown, Failure> =>
     ? Result.fail(inputFailure([{ message: "id は必須です", path: ["id"] }]))
     : Result.succeed(input["id"]);
 
-const load = async (inv: Invocation, port: Port, id: unknown): Promise<Result.Result<State, Failure>> => {
+const load = async (
+  inv: Invocation,
+  port: Port<string, readonly [unknown]>,
+  id: unknown,
+): Promise<Result.Result<State, Failure>> => {
   const r = await inv.call(port, [id]);
   if (Result.isFailure(r)) return Result.fail({ step: "load", error: r.error });
   const existing = toState(r.value);
   return existing === undefined ? Result.fail({ step: "load", error: "NOT_FOUND" }) : Result.succeed(existing);
 };
 
-const overlay = (state: State, value: unknown): State => {
-  const v = toState(value);
-  if (v === undefined) return state;
-  const current = toState(state["next"]);
-  const added = toState(v["next"]);
-  return current !== undefined && added !== undefined
-    ? { ...state, ...v, next: { ...current, ...added } }
-    : { ...state, ...v };
-};
-
-const runRules = async (
-  inv: Invocation,
-  rules: readonly Rule[],
-  start: State,
-): Promise<Result.Result<State, Failure>> => {
-  let state = start;
-  for (const r of rules) {
-    if (!callErased(r.when, state)) continue;
-    const s = state;
-    const result = await runWithPorts(inv.call, r.requires, (fns) => callErased(r.check, s, fns));
-    if (Result.isFailure(result)) return Result.fail({ step: r.name, error: result.error });
-    state = overlay(state, result.value);
-  }
-  return Result.succeed(state);
-};
-
-const freezeState = (value: unknown): State | null => {
-  const state = toState(value);
-  return state === undefined ? null : Object.freeze(state);
-};
-
-const sealSave = (state: State) =>
-  seal({
-    pre: freezeState(state["pre"]),
-    next: Object.freeze(toState(state["next"]) ?? {}),
-    actor: state["actor"],
-  });
-
-const saveWith =
-  (rules: readonly Rule[]) => async (inv: Invocation, pre: State | null, next: State, actor: unknown) => {
-    const r = await runRules(inv, rules, { pre, next, actor, now: inv.now });
-    return Result.isFailure(r) ? r : Result.succeed(sealSave(r.value));
-  };
+const frozen = (value: unknown): State => Object.freeze(toState(value) ?? {});
 
 type Run = (args: Args<State>) => Promise<Result.Result<unknown, unknown>>;
 
-const modelMethods = (set: ModelRules, impls: ReadonlyMap<symbol, ErasedFn>) => {
+const saveWith =
+  (rules: AnyRunnable) =>
+  async (inv: Invocation, pre: State | null, next: State, actor: unknown, op: "create" | "update") => {
+    const r = await runErased(rules)({ pre, next, actor, now: inv.now }, inv.call);
+    if (Result.isFailure(r)) return r;
+    const end = toState(r.value) ?? {};
+    return Result.succeed(
+      seal<"persistable", string, typeof op, unknown>({
+        pre: pre === null ? null : Object.freeze({ ...pre }),
+        next: frozen(end["next"]),
+        actor: end["actor"],
+      }),
+    );
+  };
+
+const modelMethods = (set: ModelRules, impls: Impls) => {
   const { save, delete: del, load: loadPort, model } = set;
   const schema = model.schema.input;
 
   const create =
-    (rules: readonly Rule[]): Run =>
+    (rules: AnyRunnable): Run =>
     async ({ input, actor }) => {
       const next = await validateWhole(schema, input);
-      return Result.isFailure(next) ? next : saveWith(rules)(invocation(impls), null, next.value, actor);
+      return Result.isFailure(next) ? next : saveWith(rules)(invocation(impls), null, next.value, actor, "create");
     };
 
-  const loadExisting = (loader: Port) => async (input: State) => {
+  const loadExisting = (loader: Port<string, readonly [unknown]>) => async (input: State) => {
     const validated = await validatePartial(schema, input);
     if (Result.isFailure(validated)) return validated;
     const id = requireId(validated.value);
@@ -228,29 +227,29 @@ const modelMethods = (set: ModelRules, impls: ReadonlyMap<symbol, ErasedFn>) => 
   };
 
   const update =
-    (rules: readonly Rule[], loader: Port): Run =>
+    (rules: AnyRunnable, loader: Port<string, readonly [unknown]>): Run =>
     async ({ input, actor }) => {
       const existing = await loadExisting(loader)(input);
       if (Result.isFailure(existing)) return existing;
       const { inv, pre, validated } = existing.value;
-      return saveWith(rules)(inv, pre, { ...pre, ...validated }, actor);
+      return saveWith(rules)(inv, pre, { ...pre, ...validated }, actor, "update");
     };
 
   const upsert =
-    (rules: readonly Rule[], loader: Port): Run =>
+    (rules: AnyRunnable, loader: Port<string, readonly [unknown]>): Run =>
     (args) =>
       args.input["id"] === undefined ? create(rules)(args) : update(rules, loader)(args);
 
   const remove =
-    (rules: readonly Rule[], loader: Port): Run =>
+    (rules: AnyRunnable, loader: Port<string, readonly [unknown]>): Run =>
     async ({ input, actor }) => {
       const existing = await loadExisting(loader)(input);
       if (Result.isFailure(existing)) return existing;
       const { inv, pre } = existing.value;
-      const r = await runRules(inv, rules, { pre, next: null, actor, now: inv.now });
-      return Result.isFailure(r)
-        ? r
-        : Result.succeed(seal({ pre: Object.freeze(toState(r.value["pre"]) ?? {}), actor: r.value["actor"] }));
+      const r = await runErased(rules)({ pre, next: null, actor, now: inv.now }, inv.call);
+      if (Result.isFailure(r)) return r;
+      const end = toState(r.value) ?? {};
+      return Result.succeed(seal<"deletable", string, "delete", unknown>({ pre: frozen(pre), actor: end["actor"] }));
     };
 
   return Object.freeze({
@@ -261,16 +260,16 @@ const modelMethods = (set: ModelRules, impls: ReadonlyMap<symbol, ErasedFn>) => 
   });
 };
 
-const actionMethods = (set: ActionRules, impls: ReadonlyMap<symbol, ErasedFn>) => {
+const actionMethods = (set: ActionRules, impls: Impls) => {
   const decide = async ({ input, actor }: Args<unknown>) => {
     const validated = await validate(set.action.input, input);
     if (Result.isFailure(validated)) return Result.fail(inputFailure(validated.error));
     const inv = invocation(impls);
-    const r = await runRules(inv, set.rules, { input: validated.value, actor, now: inv.now });
+    const r = await runErased(set.rules)({ input: validated.value, actor, now: inv.now }, inv.call);
     if (Result.isFailure(r)) return r;
-    return Result.succeed(
-      seal({ value: set.output === undefined ? undefined : callErased(set.output, r.value), actor: r.value["actor"] }),
-    );
+    return Result.succeed(seal<"decision", string, "decide", unknown>(r.value));
   };
   return Object.freeze({ decide });
 };
+
+export type { Action };
