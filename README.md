@@ -51,7 +51,9 @@
 
 成功と失敗は [@praha/byethrow](https://github.com/praha-inc/byethrow) の `Result` で表します。port の実装と、束ねたあとのメソッドは `ResultAsync`(byethrow の型で、`Promise<Result>`)を返します。check は、port を呼ばなければ `Result`、呼ぶなら `ResultAsync` を返します。
 
-### 定義する場所
+### 定義する場所(推奨)
+
+ライブラリは、どこで定義するかを強制しません。次の分け方を勧めます。
 
 | 段階 | 場所 | やること |
 |---|---|---|
@@ -59,11 +61,11 @@
 | 束ねる | アプリケーションの組み立て部分(DI の設定) | ルールの組の一覧に provider を渡す |
 | 実行する | usecase | 束ねた結果の、対象ごとのメソッドを呼ぶ |
 
-ドメインのパッケージは repository や DB を一切知りません。副作用はすべて port として宣言され、provider として外から注入されます。
+この分け方なら、ドメインのパッケージは repository や DB を知らずに済みます。副作用を port として宣言し、provider として外から注入するからです。
 
 ## 使用例(構想)
 
-ブログ記事を題材にします。記事はブログに属し、ブログの id と記事の id の組で取り出します。
+ブログ記事を題材にします。記事はブログに属します。例に出てくる名前、brand の付け方、エラーの値、rule の分け方と並べ方は、どれもこの例での選び方です。ライブラリが求める形は、「ライブラリの制約」の節にまとめています。
 
 ### model を定義する
 
@@ -103,11 +105,11 @@ export type ArticleValue = Value<typeof article>;   // schema.input の出力の
 export type Article = Persisted<typeof article>;    // schema.persisted の出力の型
 ```
 
-- **`schema.input`。** 入力の値の形です。Valibot の `v.object` を使います。更新のときに、入力にある項目だけをその項目の schema で検証するため、ライブラリが項目ごとの schema(`entries`)を読む必要があるからです。項目をまたぐ条件(「著者とレビュアーは別の人」など)は、schema ではなく rule に書きます。
-- **`schema.persisted`。** 永続化の形です。DB とやり取りするときの型で、DB に保存する値と、DB から読んだ値の両方がこの型です。入力より強い型を持てます。この例では、`blogId` と `reviewerId` が、存在を確かめた id の型(`BlogIdExistedSchema` は `v.pipe(BlogIdSchema, v.brand("BlogIdExisted"))`)です。`id` は、DB から読んだ記事なら `ArticleIdExisted`、新しく作る記事なら `ArticleIdNew` です。保存するには、すべての項目がこの型になっている必要があります。ライブラリは、この schema で入力を検証しません。入力を通すと、確かめていない値に brand が付いてしまうからです。この schema は、永続化の型を決めることと、テストで DB から読んだ値を作ることに使います。
+- **`schema.input`。** 入力の値の形です。Valibot の `v.object` でなければなりません。更新のときに、入力にある項目だけをその項目の schema で検証するため、ライブラリが項目ごとの schema(`entries`)を読むからです。そのため、object 全体に付けた検証は使われません。項目をまたぐ条件(「著者とレビュアーは別の人」など)は rule に書きます。
+- **`schema.persisted`。** 永続化の形です。DB とやり取りするときの型で、DB に保存する値と、DB から読んだ値の両方がこの型です。入力より強い型を持てます。どの項目をどの型にするかは利用者が決めます。この例では、`blogId` と `reviewerId` を存在を確かめた id の型(`BlogIdExistedSchema` は `v.pipe(BlogIdSchema, v.brand("BlogIdExisted"))`)にしています。`id` は、DB から読んだ記事なら `ArticleIdExisted`、新しく作る記事なら `ArticleIdNew` としています。保存するには、すべての項目がこの型になっている必要があります。ライブラリは、この schema で入力も DB から読んだ値も検証しません。入力を通すと、確かめていない値に brand が付いてしまうからです。ライブラリはこの schema を、永続化の型を決めるためにだけ使います。テストで DB から読んだ値を作るのに使うのは、利用者の自由です。
 - **作成時の既定値。** `schema.input` の `v.optional` の既定値に書きます。新規作成のときだけ使われます。
 
-model は1つの port を自動で宣言します。`article.load` は「schema の `id` の項目の値で、既存の記事を取る」port です。実装は provider として後から注入します。新しい id を作るのは、ライブラリではなく rule です(「確かめた値で型を昇格する」を参照)。どう作るかは rule の書き方次第で、この README の例では port を呼んでいます。`article.load` は `Article` を返すので、既存の値は最初から永続化の型です。ライブラリは load の結果を検証しません。port の実装が返す値は信用します。
+model は1つの port を自動で宣言します。`article.load` は「schema の `id` の項目の値で、既存の記事を取る」port です。実装は provider として後から注入します。ライブラリは新しい id を作りません。id の昇格も、ほかの項目と同じく rule で行います(「確かめた値で型を昇格する」を参照)。どう作るかは rule の書き方次第で、この例では port を呼んでいます。`article.load` は `Article` を返すので、既存の値は最初から永続化の型です。ライブラリは load の結果を検証しません。port の実装が返す値は信用します。
 
 ### 判定の種類と状態
 
@@ -133,7 +135,7 @@ article.save.with<{ next: { reviewerId: UserIdExisted } }>()
 
 この rule をルールの組に並べるとき、前の step までにその型になっていなければ、型エラーになります。
 
-ライブラリは「状態遷移」という概念を持ちません。「下書き」「承認済み」のような判断は、値についての述語としてドメインの側に書きます。述語はただの関数で、ライブラリに登録する必要はありません。
+ライブラリは「状態遷移」という概念を持ちません。「下書き」「承認済み」のような判断は、利用者が書きます。この例では、値についての述語として書いています。述語はただの関数で、ライブラリに登録する必要はありません。
 
 ```ts
 export const isDraft = (a: ArticleValue) => a.status === "DRAFT";
@@ -262,7 +264,7 @@ export const onlyDraftIsDeletable = rule(article.delete, {
 });
 ```
 
-よく使う形の rule は、rule を返す関数として用意します。
+ライブラリは、よく使う形の rule を返す関数をいくつか用意します。同じように、自分で rule を返す関数を作ってもかまいません。
 
 ```ts
 import { immutable } from "domain-rules";
@@ -293,7 +295,7 @@ export const articleImmutableFields = immutable(article.save, ["blogId", "author
 
 `changed` の `pre` と `next` には、その項目の値か、その項目の値を受け取る述語を渡します。どちらも、値が変わったときだけ当たります。1つの項目の変化は `changed` で書き、複数の項目にまたがる条件は `pre(述語)` と `next(述語)` を `and` などで組み合わせて書きます。
 
-actor を when に書くか check に書くかは、次のように分けます。
+actor を when に書くか check に書くかは、利用者が決めます。次の分け方を勧めます。
 
 - **rule を当てるかどうかが、操作した人で変わる。** when に書きます。例えば「管理者以外が公開後に slug を変えたら違反」は、管理者のときには rule 自体が当たりません。
 - **操作した人が条件を満たすかどうかが、rule の中身そのもの。** check に書きます。例えば「公開できるのは今のレビュアーだけ」は、公開という変化のときに当たり、レビュアーでなければ違反にします。
@@ -381,7 +383,7 @@ export const articleIdAssigned = rule(
 );
 ```
 
-`existingArticleId` は `next.id` を `ArticleIdExisted | null` にし、`articleIdAssigned` は `ArticleIdExisted | ArticleIdNew` にします。`articleIdAssigned` は `when: onCreate` ではなく `always` で、check の中で分けています。`when` で飛ばすと、更新の経路でも `next.id` の型に `null` が残るからです。この例では、2つの rule を並びの最後に置いています。後ろの rule で失敗したときに、作った id が無駄にならないようにするためです。どこに置くかは、ルールの組を作る人が決めます。
+`existingArticleId` は `next.id` を `ArticleIdExisted | null` にし、`articleIdAssigned` は `ArticleIdExisted | ArticleIdNew` にします。2つに分けたのは、この例での選び方です。1つの rule にしてもかまいません。`articleIdAssigned` は `when: onCreate` ではなく `always` で、check の中で分けています。`when` で飛ばした rule のあとの型は、飛ばした場合と当てた場合の和になるので、更新の経路でも `next.id` の型に `null` が残るからです。この例では、2つの rule を並びの最後に置いています。後ろの rule で失敗したときに、作った id が無駄にならないようにするためです。どこに置くかは、ルールの組を作る人が決めます。
 
 actor も同じように昇格できます。
 
@@ -439,7 +441,7 @@ export const articleRules = entityRules(article, {
 - **前提の型。** `blogAcceptsPosts` は `next.blogId` が `BlogIdExisted` であることを前提にしています。`blogExists` より前に並べると型エラーになります。
 - **永続化の型。** 並びの最後の状態で、`next` が model の `schema.persisted` の型にならなければ型エラーになります。`reviewerExists` を並べ忘れると、`next.reviewerId` が `UserId` のままなので型エラーになります。`articleIdAssigned` を並べ忘れると、`next.id` に `null` が残るので型エラーになります。
 
-認証済みの actor は呼び出し側が渡します。操作を許可しない場合、認可の rule が失敗を返します。
+認証済みの actor は呼び出し側が渡します。ライブラリは認証も認可もしません。この例では、認可を rule で書いています。
 
 actor の型そのものは、アプリケーションが1回だけ登録します。
 
@@ -512,7 +514,7 @@ export const previewArticleRules = actionRules(previewArticle, {
 
 ### provider を定義して束ねる
 
-provider は port の実装です。check から呼ぶ port、model の port(`load`)、時計のどれでも、同じ `provide` で渡します。ドメインの外で定義します。
+provider は port の実装です。check から呼ぶ port、model の port(`load`)、時計のどれでも、同じ `provide` で渡します。ドメインの外で定義することを勧めます。
 
 ```ts
 import { provide, bind, clock } from "domain-rules";
@@ -535,14 +537,14 @@ export const domain = bind([articleRules, previewArticleRules], { providers });
 // }
 ```
 
-provider の一覧は、`as const` を付けた読み取り専用のタプルにします。普通の配列だと、要素を1つ消しても配列の型が変わらず、provider の不足を型で検出できないからです。
+provider の不足を型で検出するには、provider の一覧を `as const` を付けた読み取り専用のタプルにする必要があります。普通の配列だと、要素を1つ消しても配列の型が変わらないからです。
 
-`bind` は起動時に1回だけ呼びます。provider の確認は2段階で行います。
+`bind` は、起動時に1回だけ呼ぶことを勧めます。`bind` は provider の確認を2段階で行います。
 
 - **型での確認。** ルールの組の rule が `requires` に書いた port と model の port のうち、provider の一覧にないものがあれば型エラーにします。
 - **起動時の確認。** provider の不足と、同じ port の重複を確かめ、見つかればエラーにします。
 
-テストでは、固定の値を返す provider で束ねるだけで済みます。repository の mock はいりません。
+テストでは、固定の値を返す provider で束ねれば済みます。repository の mock はいりません。
 
 ```ts
 const testDomain = bind([articleRules], {
@@ -559,7 +561,7 @@ const testDomain = bind([articleRules], {
 
 ### 実行する(usecase)
 
-usecase は、束ねた結果の、対象ごとのメソッドを呼ぶだけです。rule も provider も知りません。
+この例の usecase は、束ねた結果の、対象ごとのメソッドを呼ぶだけです。rule も provider も知りません。
 
 ```ts
 const saved = await Result.pipe(
@@ -655,32 +657,57 @@ plan(articleRules);
 
 ## データ取得の方針
 
-- **重複除去。** `cached` を付けた port は、1回の実行の中で、同じ引数の2回目から cache を返します。
-- **取得の順序。** 取得は、check が port を呼んだときに起きます。ライブラリが先回りして取得することはありません。
 - **batch。** 同じ種類で引数だけ違う取得をまとめる機能は、将来の課題です。
-- **リクエストをまたぐキャッシュ。** 行いません。rule は最新のデータで判定する前提なので、古い値で判定が通ると不正なデータが保存されます。
 
-## 設計原則
+## ライブラリの制約
+
+ライブラリが型か実行時に強制することです。
 
 - **1本の線路。** すべての step は `Result` を返し、最初の失敗で止まります。順序は並べた順で、ライブラリは組み替えません。
-- **ルールの組は対象と1対1。** 操作ごとにルールの組を作りません。どのルールが当たるかは `when` が値の変化から決めます。一覧に並べた rule は、操作ごとに並べ直す必要がありません。
-- **小さな単位で定義する。** model、action、port、rule は1つずつ独立した値です。
-- **型の昇格は状態の型の変化。** 確かめた step が、確かめた値で状態を置き換えます。確かめたと宣言するだけで型を強くする手段は持ちません。
-- **DB とやり取りする値は永続化の型。** 保存する値も DB から読んだ値も、永続化の型です。DB から読んだ値は確かめて保存したものなので、マージでもその型のまま引き継ぎます。
-- **境界で受け取り、中では信じる。** id と入力は最初の step で検証します。actor は呼び出し側で認証し、操作の認可は rule で判定します。
-- **副作用はすべて port。** check から呼ぶ port、既存の値の取得、id の生成、時計の実装は、`provide` で注入します。
-- **値の形は schema、項目をまたぐ条件は rule。** schema は項目ごとの形を表し、更新では入力にある項目だけを検証します。項目をまたぐ条件は rule に書くので、更新のたびに値の全体を検証し直す必要はありません。
-- **マージの規則は1つにする。** `undefined` は「変えない」、`null` は「空にする」です。
-- **判定の種類を値で渡す。** rule は、`article.save` のような値で判定の種類を受け取ります。種類の違うものを組み合わせると型エラーになり、型引数を明示しなくても型が推論されます。
-- **ライブラリは状態遷移を知らない。** rule が見るのは pre と next の値の変化だけです。
-- **`when` は同期の純関数にする。** check は、`requires` に宣言した port だけを呼べます。
-- **失敗の値は利用者が決める。** ライブラリは、どの step で失敗したかだけを付けます。
-- **返り値は封をした値。** 証明は、メソッドが作った値そのものに結び付きます。別の値や別の操作に付け替えることはできません。
+- **組み込みの step の位置。** input と load と merge は線路の先頭に、seal と output は末尾に、ライブラリが置きます。
+- **ルールの組は model ごとに1つ。** 同じ model のルールの組を2つ束ねると、`bind` がエラーにします。`save` や `delete` を書かなければ、そのメソッドは作られません。
+- **`schema.input` は Valibot の `v.object`。** ライブラリは項目ごとの schema だけを使います。action の入力の schema は、Standard Schema を実装したものなら何でも使えます。
+- **id は schema の `id` の項目。** `article.load` は、この項目の値で既存の値を取ります。
+- **検証するのは input の step だけ。** `schema.persisted` で入力を検証することはありません。DB から読んだ値も、port の実装が返す値も検証しません。
+- **マージの規則は1つ。** `undefined` は「変えない」、`null` は「空にする」です。重ねるのは1段目の項目だけです。
+- **判定の種類を値で渡す。** rule は `article.save` のような値で判定の種類を受け取ります。種類の違う `when` を書くと型エラーになります。
+- **`when` は同期の `(s: 状態) => boolean`。** その rule に来た時点の状態で評価します。当たらなければ、状態をそのまま次へ渡します。
+- **check の成功の値は状態に重なる。** `next` の項目と `actor` は置き換わり、ほかの名前の値は足されます。
+- **並べ方と永続化の型は型で確かめる。** `with` で書いた前提の型が前の step までに揃わないとき、また最後の状態の `next` が `schema.persisted` の型にならないとき、ルールの組を作る段階で型エラーになります。`when` で飛ばせる rule のあとの型は、飛ばした場合と当てた場合の和です。
+- **`cached` は1回の実行の中で、引数ごとに cache する。** 引数は JSON にした文字列で比べ、cache は実行ごとに捨てます。cache するかどうかは、port を宣言するときに決まります。
+- **ライブラリは先回りして取得しない。** 取得は check が port を呼んだときに起きます。
+- **失敗は1つで、`{ step, error }`。** `error` は、その step の失敗の値そのものです。ライブラリは失敗に種類を付けません。
+- **返り値は封をした値。** `open` だけが中身を取り出せます。作り直した値は受け付けません。
+- **ライブラリは状態遷移、認証、認可、永続化を持たない。**
+
+## 推奨
+
+ライブラリは強制しませんが、勧めることです。
+
+- **副作用は port にする。** check の中で repository を直接呼ばず、`requires` に宣言した port を呼びます。こうすると、テストで固定の値を返す provider を渡すだけで済みます。
+- **型はキャストせずに昇格させる。** 確かめた step が、port の返り値や DB から読んだ値を使って状態を置き換えます。ライブラリはキャストを防げないので、これは利用者の規律です。
+- **DB から読んだ値は、確かめて保存したものとして扱う。** 変わっていない項目は、照会し直さずに `pre` の値を使えます。
+- **1回の実行の中で同じ値を見るべきデータには `cached` を付ける。** 判定の途中で値が変わると、判定が食い違うからです。
+- **リクエストをまたいで cache しない。** 古い値で判定が通ると、不正なデータが保存されます。provider の中で cache することはライブラリでは防げません。
+- **ドメインのパッケージと組み立ての部分を分ける。** 「定義する場所」の表のとおりです。
+- **`bind` は起動時に1回だけ呼ぶ。**
+- **actor の扱いは、rule を当てるかどうかなら `when`、rule の中身なら check に書く。**
+
+## 例でそうしているだけのこと
+
+この README の例での選び方です。利用者が自由に決められます。
+
+- **名前、brand、エラーの値。** `ArticleIdExisted` や `ArticleIdNew` という brand、`"DUPLICATED_SLUG"` のようなエラーの値は、例のための選び方です。
+- **どの項目を昇格させるか。** `blogId`、`reviewerId`、`id` を存在を確かめた型にしているのは、この例の都合です。
+- **id の作り方と昇格の rule の分け方。** port を呼んで id を作ること、昇格を2つの rule に分けること、それを並びの最後に置くことは、どれもこの例での選び方です。
+- **状態を述語で書くこと。** `isDraft` などは、ただの関数です。
+- **認可を rule で書くこと。** `memberCanSave` のように、actor の昇格を兼ねる書き方もこの例の選び方です。
+- **check の中で port の失敗をそのまま返すこと。** 別の値に変えてもかまいません。
 
 ## スコープ外
 
 - **永続化。** `Persistable` や `Deletable` を受け取って保存・削除するのは利用する側の責務です。
-- **並行実行での整合性(TOCTOU)。** 一意性などは DB の制約と併用してください。
+- **並行実行での整合性(TOCTOU)。** 一意性などは、DB の制約と併用することを勧めます。
 - **複数の値をまとめて変更する操作。** 1回の呼び出しで扱うのは1つの値です。同じ操作の中で複数の値の入れ替えを判定する、といった使い方は扱いません。
 - **API ごとの入力の形。** 「この API からは status しか受け取らない」のような制限は、usecase が受け取る型を狭めて行います。「status を変えられるのはレビュアーだけ」のようなドメインの制限は、rule として書きます。
 - **通信の形からの変換。** GraphQL や HTTP の型を、メソッドの引数に詰め替えるのは利用する側の責務です。
