@@ -240,9 +240,9 @@ export const articleImmutableFields = immutable<Article>(["blogId", "authorId"])
 操作ごとに、model と守るべき rule をまとめて公開します。ruleSet は、中の rule が必要とする relation の一覧を型として持ちます。
 
 ```ts
-import { saveRuleSet } from "domain-rules";
+import { upsertRuleSet } from "domain-rules";
 
-export const saveArticleRules = saveRuleSet(article, [
+export const saveArticleRules = upsertRuleSet(article, [
   statusChangesAreAllowed,
   articleImmutableFields,
   authorIsNotReviewer,
@@ -268,30 +268,44 @@ export const articleOperations = {
 
 ### 操作の種類を選ぶ(ドメインのパッケージ)
 
-ruleSet には3種類あり、それぞれ別の関数で作ります。`ruleSet` という1つの関数で種類を切り替えることはしません。種類ごとに受け取るオプションが違い(`fields` と `mode` は保存だけ、`decide` は判定だけで必須)、関数を分けると、間違ったオプションを渡したときの型エラーが「この関数にはこのオプションがない」と素直に出るからです。rule も同じく、種類ごとに別の関数で作ります。
+ruleSet は、操作の種類ごとに別の関数で作ります。`ruleSet` という1つの関数に文字列やオプションを渡して種類を切り替えることはしません。種類によって Command の型と受け取るオプションが違うので、関数を分けたほうが、間違えたときの型エラーが「この関数にはこのオプションがない」と素直に出るからです。rule も同じく、種類ごとに別の関数で作ります。
 
-relation、provider、`bind` の仕組みは3種類で共通です。違うのは Snapshot の形と、checker が返すものだけです。
+relation、provider、`bind` の仕組みはすべての種類で共通です。違うのは Snapshot の形と、checker が返すものだけです。
 
 | 種類 | ruleSet の作り方 | rule の作り方 | Snapshot | checker が返すもの |
 |---|---|---|---|---|
-| 保存 | `saveRuleSet(model, rules, options?)` | `saveRule` | `{ pre: S \| null, next, actor, now }` | `Persistable<S>` |
+| 新規作成 | `createRuleSet(model, rules, options?)` | `saveRule` | `{ pre: null, next, actor, now }` | `Persistable<S>` |
+| 更新 | `updateRuleSet(model, rules, options?)` | `saveRule` | `{ pre: S, next, actor, now }` | `Persistable<S>`(`pre` は必ずある) |
+| 新規作成か更新 | `upsertRuleSet(model, rules, options?)` | `saveRule` | `{ pre: S \| null, next, actor, now }` | `Persistable<S>` |
 | 削除 | `deleteRuleSet(model, rules, options?)` | `deleteRule` | `{ pre: S, next: null, actor, now }` | `Deletable<S>` |
 | 判定 | `decideRuleSet(action, rules, { decide })` | `decideRule` | `{ input, actor, now }` | `Decision<T>` |
 
-#### 保存する項目を操作ごとに絞る
+新規作成、更新、新規作成か更新の3つは、Command の `id` の扱いだけが違います。
 
-保存の ruleSet は、既定では schema のすべての項目を入力として受け取り、新規作成と更新の両方を受け付けます。操作ごとに、受け取る項目と、新規作成か更新かを絞れます。
+| ruleSet | Command の `id` | pre がないとき |
+|---|---|---|
+| `createRuleSet` | 受け取らない | (常にない) |
+| `updateRuleSet` | 必須 | `notFound` を返す |
+| `upsertRuleSet` | あってもなくてもよい | `id` があれば `notFound`、なければ新規作成 |
+
+`saveRule` で作った rule は、この3つのどれにも入れられます。`saveRule` の Snapshot の pre は `S | null` で、3つの Snapshot のどれでも受け取れるからです。
+
+#### 操作で変えてよい項目を決める(`editableKeys`)
+
+`editableKeys` は、新規作成、更新、新規作成か更新の ruleSet が受け取るオプションです。この操作で、Command の `input` から受け取り、値を変えてよい model の項目名を並べます。
 
 ```ts
-// 公開の操作。status と publishAt だけを受け取り、既存の記事の更新だけを受け付ける
-export const publishArticleRules = saveRuleSet(article, [statusChangesAreAllowed, onlyReviewerPublishes], {
-  fields: ["status", "publishAt"],
-  mode: "update",
+// 記事を公開する操作。既存の記事だけが対象で、変えてよいのは status と publishAt だけ
+export const publishArticleRules = updateRuleSet(article, [statusChangesAreAllowed, onlyReviewerPublishes], {
+  editableKeys: ["status", "publishAt"],
 });
-// Command の型は { id: string; input: Partial<Pick<..., "status" | "publishAt">>; actor }
+// Command の型は { id: string; input: Partial<Pick<記事の入力, "status" | "publishAt">>; actor }
 ```
 
-`mode` は `"create"`、`"update"`、`"upsert"`(既定)のどれかです。`"update"` では `id` が必須になり、`"create"` では `id` を受け取りません。
+- **型。** 項目名は model の schema の項目名に限られます。Command の `input` は、並べた項目だけを持つ型になります。並べていない項目を渡すと型エラーになります。
+- **実行時。** 型を通り抜けて、並べていない項目が `input` に入ってきたら、`invalid` を返します。黙って捨てると、呼び出す側のバグが隠れるからです。
+- **並べていない項目の値。** 更新では pre の値がそのまま残ります。新規作成では schema の既定値が入ります。既定値がない必須の項目を並べ忘れると、新規作成は必ず `invalid` になるので、`createRuleSet` と `upsertRuleSet` ではこれを型エラーにします。
+- **省略したとき。** schema のすべての項目を受け取ります。
 
 #### 削除する
 
@@ -379,7 +393,7 @@ ruleSet の `actor` に型ガードを渡すと、ほかの段階より先に ac
 ```ts
 const isMember = (a: AppActor): a is MemberActor => a.role === "MEMBER" || a.role === "ADMIN";
 
-export const saveArticleRules = saveRuleSet(article, [...], { actor: isMember });
+export const saveArticleRules = upsertRuleSet(article, [...], { actor: isMember });
 ```
 
 この ruleSet の中では、Snapshot の `actor` は `MemberActor` 型になります。rule は、自分が必要とする actor の型を `saveRule<Article, MemberActor>` のように宣言できます。`MemberActor` を必要とする rule を、`actor` で絞っていない ruleSet に入れると型エラーになります。provider に渡る Snapshot の `actor` も同じ型に絞られるので、provider は `actor.organizationId` のような、絞った型にだけある項目を使えます。
