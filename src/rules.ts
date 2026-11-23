@@ -1,10 +1,9 @@
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 import type { Action, Actor, DecideState, DeleteState, Model, Overlay, Persisted, SaveStates, Value } from "./model.ts";
+import { withPhantom, type ErasedFn, type Phantom } from "./erased.ts";
 import type { Port, PortArgs, PortError, PortValue } from "./port.ts";
 import type { Rule } from "./rule.ts";
 import { describeWhen, type TrackKind, type WhenDescription } from "./when.ts";
-
-declare const ruleSetTypes: unique symbol;
 
 type RuleInfo<R> =
   R extends Rule<infer K, infer T, infer N, infer S, infer Out, infer E, infer P, infer A>
@@ -62,7 +61,7 @@ type PortNamesOfRules<Rs> = Rs extends readonly (infer R)[]
     : never
   : never;
 
-type AnyLoad = Port<string, readonly [unknown], unknown, unknown>;
+type AnyLoad = Port<string, readonly [unknown]>;
 type Existing<L> = [L] extends [never] ? never : Exclude<PortValue<L>, null>;
 type LoadId<M extends Model> = "id" extends keyof Value<M> ? Exclude<Value<M>["id"], undefined> : never;
 type LoadIdMismatch<M extends Model, L> = [LoadId<M>] extends [never]
@@ -104,19 +103,29 @@ export type ModelRulesInfo = {
   readonly methods: "create" | "update" | "upsert" | "delete";
 };
 
-export type ModelRules<M extends Model = Model, I extends ModelRulesInfo = any> = {
+export type ModelRules<M extends Model = Model, I extends ModelRulesInfo = ModelRulesInfo> = {
   readonly kind: "modelRules";
   readonly name: M["name"];
   readonly model: M;
   readonly load: Port | undefined;
   readonly save: readonly Rule[] | undefined;
   readonly delete: readonly Rule[] | undefined;
-  readonly [ruleSetTypes]: I;
-};
+} & Phantom<I>;
 
 type Methods<L, Save, Del> =
   | ([Save] extends [never] ? never : "create" | ([L] extends [never] ? never : "update" | "upsert"))
   | ([Del] extends [never] ? never : "delete");
+
+type ModelRulesInfoOf<M extends Model, L extends AnyLoad, Save, Del> = {
+  existing: Existing<L>;
+  saveActor: ActorOf<SaveWalk<M, L, Save>["state"]>;
+  deleteActor: ActorOf<DeleteWalk<M, L, Del>["state"]>;
+  saveFailure: RuleFailure<Save>;
+  deleteFailure: RuleFailure<Del>;
+  loadFailure: LoadFailure<L>;
+  ports: PortNamesOfRules<Save> | PortNamesOfRules<Del> | ([L] extends [never] ? never : L["name"]);
+  methods: Methods<L, Save, Del>;
+};
 
 export function modelRules<
   M extends Model,
@@ -132,27 +141,17 @@ export function modelRules<
       DeleteWalk<M, L, Del>["rules"] &
       ([L] extends [never] ? { readonly "delete には load が要る": true } : unknown);
   },
-): ModelRules<
-  M,
-  {
-    existing: Existing<L>;
-    saveActor: ActorOf<SaveWalk<M, L, Save>["state"]>;
-    deleteActor: ActorOf<DeleteWalk<M, L, Del>["state"]>;
-    saveFailure: RuleFailure<Save>;
-    deleteFailure: RuleFailure<Del>;
-    loadFailure: LoadFailure<L>;
-    ports: PortNamesOfRules<Save> | PortNamesOfRules<Del> | ([L] extends [never] ? never : L["name"]);
-    methods: Methods<L, Save, Del>;
-  }
-> {
-  return Object.freeze({
-    kind: "modelRules",
-    name: m.name,
-    model: m,
-    load: def.load,
-    save: def.save && Object.freeze([...def.save]),
-    delete: def.delete && Object.freeze([...def.delete]),
-  }) as unknown as ModelRules<M, any>;
+): ModelRules<M, ModelRulesInfoOf<M, L, Save, Del>> {
+  return withPhantom<ModelRules<M, ModelRulesInfoOf<M, L, Save, Del>>>(
+    Object.freeze({
+      kind: "modelRules",
+      name: m.name,
+      model: m,
+      load: def.load,
+      save: def.save && Object.freeze([...def.save]),
+      delete: def.delete && Object.freeze([...def.delete]),
+    }),
+  );
 }
 
 export type ActionRulesInfo = {
@@ -162,14 +161,13 @@ export type ActionRulesInfo = {
   readonly output: unknown;
 };
 
-export type ActionRules<A extends Action = Action, I extends ActionRulesInfo = any> = {
+export type ActionRules<A extends Action = Action, I extends ActionRulesInfo = ActionRulesInfo> = {
   readonly kind: "actionRules";
   readonly name: A["name"];
   readonly action: A;
   readonly rules: readonly Rule[];
-  readonly output: ((s: any) => unknown) | undefined;
-  readonly [ruleSetTypes]: I;
-};
+  readonly output: ErasedFn | undefined;
+} & Phantom<I>;
 
 type DecideWalk<A extends Action, Rs> = Walk<
   DecideState<StandardSchemaV1.InferOutput<A["input"]>>,
@@ -178,27 +176,33 @@ type DecideWalk<A extends Action, Rs> = Walk<
   A["name"]
 >;
 
+type ActionRulesInfoOf<A extends Action, Rs, T> = {
+  actor: ActorOf<DecideWalk<A, Rs>["state"]>;
+  failure: RuleFailure<Rs>;
+  ports: PortNamesOfRules<Rs>;
+  output: T;
+};
+
 export function actionRules<A extends Action, const Rs extends readonly Rule[], T = void>(
   a: A,
   def: {
     readonly rules: Rs & DecideWalk<A, Rs>["rules"];
     readonly output?: (s: DecideWalk<A, Rs>["state"]) => T;
   },
-): ActionRules<
-  A,
-  { actor: ActorOf<DecideWalk<A, Rs>["state"]>; failure: RuleFailure<Rs>; ports: PortNamesOfRules<Rs>; output: T }
-> {
-  return Object.freeze({
-    kind: "actionRules",
-    name: a.name,
-    action: a,
-    rules: Object.freeze([...def.rules]),
-    output: def.output,
-  }) as unknown as ActionRules<A, any>;
+): ActionRules<A, ActionRulesInfoOf<A, Rs, T>> {
+  return withPhantom<ActionRules<A, ActionRulesInfoOf<A, Rs, T>>>(
+    Object.freeze({
+      kind: "actionRules",
+      name: a.name,
+      action: a,
+      rules: Object.freeze([...def.rules]),
+      output: def.output,
+    }),
+  );
 }
 
 export type RuleSet = ModelRules | ActionRules;
-export type RuleSetInfo<S> = S extends { readonly [ruleSetTypes]: infer I } ? I : never;
+export type RuleSetInfo<S> = S extends Phantom<infer I> ? I : never;
 
 export type PlannedRule = { readonly name: string; readonly when: WhenDescription; readonly ports: readonly string[] };
 
@@ -206,7 +210,7 @@ const planRules = (rules: readonly Rule[]): readonly PlannedRule[] =>
   rules.map((r) => ({
     name: r.name,
     when: describeWhen(r.when),
-    ports: Object.values(r.requires).map((p) => (p as Port).name),
+    ports: Object.values(r.requires).map((p) => p.name),
   }));
 
 export function plan(set: ModelRules): {

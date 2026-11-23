@@ -10,8 +10,8 @@ const item = model({
     persisted: v.object({ id: v.string(), n: v.number() }),
   },
 });
-const lookup = cached(port("lookup").of<(n: number) => number, never>());
-const uncachedLookup = port("uncachedLookup").of<(n: number) => number, never>();
+const lookup = cached(port("lookup").of<(n: number) => number>());
+const uncachedLookup = port("uncachedLookup").of<(n: number) => number>();
 
 const twice = (name: string) =>
   rule(item.save, {

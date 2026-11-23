@@ -73,8 +73,9 @@ group("changed", () => {
   }
 });
 
+const isDraft = (v: { status: string }) => v.status === "DRAFT";
+
 group("ほかの when", () => {
-  const isDraft = (v: { status: string }) => v.status === "DRAFT";
   test.each([
     ["always", always, state("DRAFT", "DRAFT"), true],
     ["onCreate は新規作成", onCreate, state(null, "DRAFT"), true],

@@ -197,7 +197,7 @@ export const blogAcceptsPosts = rule(article.save.with<{ next: { blogId: BlogIdE
   when: changed("status", { next: "PUBLISHED" }),
   check: async ({ next }, { findBlog }) => {
     const blog = await findBlog(next.blogId);
-    return blog?.acceptsPosts ? Result.succeed() : Result.fail("BLOG_CLOSED");
+    return blog?.acceptsPosts === true ? Result.succeed() : Result.fail("BLOG_CLOSED");
   },
 });
 
