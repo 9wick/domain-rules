@@ -58,5 +58,4 @@ class Seal {
 
 export const seal = <S extends AnySealed>(c: S[typeof sealed]["contents"]): S => new Seal(c) as unknown as S;
 
-export const open = <S extends AnySealed>(s: S): S[typeof sealed]["contents"] =>
-  Seal.open(s) as S[typeof sealed]["contents"];
+export const open = <S extends AnySealed>(s: S): S[typeof sealed]["contents"] => Seal.open(s);

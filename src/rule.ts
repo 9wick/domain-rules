@@ -76,12 +76,12 @@ export const immutable = <
     !Object.is((s.pre as Record<string, unknown>)[f], (s.next as Record<string, unknown>)[f]);
   return rule(track, {
     name: `作成後に変えられない項目: ${fields.join(", ")}` as `作成後に変えられない項目: ${Join<F>}`,
-    when: and(not(onCreate), or(...fields.map((f) => changed(f)))) as WhenParam<"save", S>,
+    when: and(not(onCreate), or(...fields.map((f) => changed(f)))),
     check: (s) => {
       const field = fields.find((f) => isChanged(s, f));
       return field === undefined
         ? Result.succeed()
-        : Result.fail({ code: "IMMUTABLE_FIELD_CHANGED" as const, field: field as F[number] });
+        : Result.fail({ code: "IMMUTABLE_FIELD_CHANGED" as const, field: field });
     },
   });
 };

@@ -12,8 +12,8 @@ export type Port<N extends string = string, A extends readonly unknown[] = any, 
 
 export type Clock = { readonly kind: "clock"; readonly name: "clock"; readonly token: symbol };
 
-export type PortArgs<P> = P extends Port<string, infer A, any, any> ? A : never;
-export type PortValue<P> = P extends Port<string, any, infer T, any> ? T : never;
+export type PortArgs<P> = P extends Port<string, infer A, any> ? A : never;
+export type PortValue<P> = P extends Port<string, any, infer T> ? T : never;
 export type PortError<P> = P extends Port<string, any, any, infer E> ? E : never;
 
 export type Ports = Record<string, Port>;
@@ -78,7 +78,10 @@ export const portCaller = (impls: ReadonlyMap<symbol, (...args: any[]) => unknow
 };
 
 class PortFailed {
-  constructor(readonly error: unknown) {}
+  readonly error: unknown;
+  constructor(error: unknown) {
+    this.error = error;
+  }
 }
 
 // check の中では port の成功の値だけを見せたいので、失敗は throw で check を抜けさせる。

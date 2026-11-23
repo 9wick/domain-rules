@@ -152,7 +152,7 @@ export function modelRules<
     load: def.load,
     save: def.save && Object.freeze([...def.save]),
     delete: def.delete && Object.freeze([...def.delete]),
-  }) as unknown as ModelRules<M, any>;
+  }) as unknown as ModelRules<M>;
 }
 
 export type ActionRulesInfo = {
@@ -194,7 +194,7 @@ export function actionRules<A extends Action, const Rs extends readonly Rule[], 
     action: a,
     rules: Object.freeze([...def.rules]),
     output: def.output,
-  }) as unknown as ActionRules<A, any>;
+  }) as unknown as ActionRules<A>;
 }
 
 export type RuleSet = ModelRules | ActionRules;

@@ -142,9 +142,9 @@ const validatePartial = async (schema: ObjectSchema, input: State): Promise<Resu
 };
 
 const requireId = (input: State): Result.Result<unknown, Failure> =>
-  input.id === undefined
+  input["id"] === undefined
     ? Result.fail(inputFailure([{ message: "id は必須です", path: ["id"] }]))
-    : Result.succeed(input.id);
+    : Result.succeed(input["id"]);
 
 const load = async (inv: Invocation, port: Port, id: unknown): Promise<Result.Result<State, Failure>> => {
   const r = await inv.call(port, [id]);
@@ -157,8 +157,8 @@ const load = async (inv: Invocation, port: Port, id: unknown): Promise<Result.Re
 const overlay = (state: State, value: unknown): State => {
   if (value === undefined || value === null) return state;
   const v = value as State;
-  return "next" in v && typeof state.next === "object" && state.next !== null
-    ? { ...state, ...v, next: { ...state.next, ...(v.next as State) } }
+  return "next" in v && typeof state["next"] === "object" && state["next"] !== null
+    ? { ...state, ...v, next: { ...state["next"], ...(v["next"] as State) } }
     : { ...state, ...v };
 };
 
@@ -180,14 +180,14 @@ const runRules = async (
 
 const sealSave = (state: State) =>
   seal({
-    pre: state.pre === null ? null : Object.freeze(state.pre as State),
-    next: Object.freeze(state.next as State),
-    actor: state.actor,
-  } as never);
+    pre: state["pre"] === null ? null : Object.freeze(state["pre"] as State),
+    next: Object.freeze(state["next"] as State),
+    actor: state["actor"],
+  });
 
 const modelMethods = (set: ModelRules, impls: ReadonlyMap<symbol, (...args: any[]) => unknown>) => {
   const { save, delete: del, load: loadPort, model } = set;
-  const schema = model.schema.input as ObjectSchema;
+  const schema = model.schema.input;
 
   const saveWith = async (inv: Invocation, pre: State | null, next: State, actor: unknown) => {
     const r = await runRules(inv, save!, { pre, next, actor, now: inv.now });
@@ -217,7 +217,7 @@ const modelMethods = (set: ModelRules, impls: ReadonlyMap<symbol, (...args: any[
     return saveWith(inv, pre, { ...pre, ...validated }, actor);
   };
 
-  const upsert = (args: Args<State>) => (args.input.id === undefined ? create(args) : update(args));
+  const upsert = (args: Args<State>) => (args.input["id"] === undefined ? create(args) : update(args));
 
   const remove = async ({ input, actor }: Args<State>) => {
     const existing = await loadExisting(input);
@@ -226,7 +226,7 @@ const modelMethods = (set: ModelRules, impls: ReadonlyMap<symbol, (...args: any[
     const r = await runRules(inv, del!, { pre, next: null, actor, now: inv.now });
     return Result.isFailure(r)
       ? r
-      : Result.succeed(seal({ pre: Object.freeze(r.value.pre as State), actor: r.value.actor } as never));
+      : Result.succeed(seal({ pre: Object.freeze(r.value["pre"] as State), actor: r.value["actor"] }));
   };
 
   return Object.freeze({
@@ -243,7 +243,7 @@ const actionMethods = (set: ActionRules, impls: ReadonlyMap<symbol, (...args: an
     const inv = invocation(impls);
     const r = await runRules(inv, set.rules, { input: validated.value, actor, now: inv.now });
     if (Result.isFailure(r)) return r;
-    return Result.succeed(seal({ value: set.output?.(r.value), actor: r.value.actor } as never));
+    return Result.succeed(seal({ value: set.output?.(r.value), actor: r.value["actor"] }));
   };
   return Object.freeze({ decide });
 };

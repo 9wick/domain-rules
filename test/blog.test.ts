@@ -242,7 +242,7 @@ describe("封をした値", () => {
   test("作り直した値は open できない", async () => {
     const { domain } = setup();
     const p = Result.unwrap(await domain.article.create({ input: newArticle, actor: author }));
-    expect(() => open({ ...p })).toThrow();
+    expect(() => open({ ...p })).toThrow("open: メソッドが作った封をした値ではありません");
   });
 });
 
@@ -257,7 +257,7 @@ describe("bind", () => {
   ];
 
   test("provider の不足と重複、rule の組の重複は起動時にエラー", () => {
-    expect(() => bind([articleRules], { providers: base.slice(1) } as never)).toThrow(/findArticleById/);
+    expect(() => bind([articleRules], { providers: base.slice(1) })).toThrow(/findArticleById/);
     expect(() => bind([articleRules], { providers: [...base, provide.value(clock, 0)] })).toThrow(/clock/);
     expect(() => bind([articleRules, articleRules], { providers: base })).toThrow(/article/);
   });
