@@ -39,7 +39,7 @@
 
 | 部品 | 責務 | 持つもの |
 |---|---|---|
-| model | エンティティの形と、取り出し方 | 値の schema、保存済みの値の型、id の schema、取得のキーの schema、model の port(キーから取る、新しい id を作る) |
+| model | エンティティの形と、取り出し方 | 値の schema、保存済みの値の型、id の schema、model の port(id から取る、新しい id を作る) |
 | action | 保存を伴わない操作の入力の形 | 入力の schema |
 | rule | 線路の1つの step | 名前、`requires`、`when`、`check` |
 | port | check から呼ぶ外の機能の宣言 | 名前、引数と結果と失敗の型 |
@@ -88,7 +88,6 @@ type ArticleSchemaOutput = v.InferOutput<typeof articleSchema>;
 export const article = model({
   name: "article",
   id: ArticleIdSchema,
-  key: v.object({ blogId: BlogIdSchema, id: ArticleIdSchema }),
   schema: articleSchema,
   stored: stored<
     Omit<ArticleSchemaOutput, "blogId" | "reviewerId"> & {
@@ -106,10 +105,9 @@ export type Article = Entity<typeof article>;       // { id: ArticleId } と Sto
 - **`schema`。** 入力の値の形です。Valibot の `v.object` を使います。更新のときに、入力にある項目だけをその項目の schema で検証するため、ライブラリが項目ごとの schema(`entries`)を読む必要があるからです。項目をまたぐ条件(「著者とレビュアーは別の人」など)は、schema ではなく rule に書きます。
 - **`stored`。** 保存済みの値の型です。schema の出力の型より強い型を持てます。この例では、`blogId` と `reviewerId` が、存在を確かめた id の型です。保存するには、すべての項目がこの型になっている必要があります。
 - **`id`。** 新しく作る id の形です。
-- **`key`。** 既存の値を取り出すときに受け取るキーの形です。省略すると `{ id }` になります。
 - **作成時の既定値。** schema の `v.optional` の既定値に書きます。新規作成のときだけ使われます。
 
-model は2つの port を自動で宣言します。`article.load` は「キーから既存の記事を取る」、`article.newId` は「新しい id を1つ作る」です。どちらも実装は provider として後から注入します。`article.load` は `Article` を返すので、既存の値は最初から保存済みの値の型です。
+model は2つの port を自動で宣言します。`article.load` は「id から既存の記事を取る」、`article.newId` は「新しい id を1つ作る」です。どちらも実装は provider として後から注入します。`article.load` は `Article` を返すので、既存の値は最初から保存済みの値の型です。
 
 ### 判定の種類と状態
 
@@ -491,7 +489,7 @@ import { provide, bind, clock } from "domain-rules";
 import { article, articleRules, findArticle, findArticlesInBlog, findBlog, previewArticleRules, requireExistingUser } from "@example/domain";
 
 export const providers = [
-  provide(article.load, (key) => articleRepository.find(key.blogId, key.id)),
+  provide(article.load, (id) => articleRepository.findById(id)),
   provide(article.newId, () => createArticleId()),
   provide(requireExistingUser, (id) => userRepository.requireExisting(id)),
   provide(findBlog, (id) => blogRepository.findById(id)),
@@ -535,7 +533,7 @@ usecase は、束ねた結果の、対象ごとのメソッドを呼ぶだけで
 
 ```ts
 const saved = await Result.pipe(
-  domain.article.update({ key: { blogId, id: articleId }, input: { status: "PUBLISHED" }, actor }),
+  domain.article.update({ input: { id: articleId, status: "PUBLISHED" }, actor }),
   Result.andThen((persistable) => repository.save(persistable)), // save は Persistable しか受け取らない
 );
 ```
@@ -543,12 +541,12 @@ const saved = await Result.pipe(
 | メソッド | 受け取るもの | 返すもの |
 |---|---|---|
 | `create` | `{ input, actor }` | `Persistable<M, "create">` |
-| `update` | `{ key, input, actor }` | `Persistable<M, "update">` |
-| `upsert` | `{ key?, input, actor }` | `Persistable<M, "create"> \| Persistable<M, "update">` |
-| `delete` | `{ key, actor }` | `Deletable<M>` |
+| `update` | `{ input, actor }`。`input.id` は必須 | `Persistable<M, "update">` |
+| `upsert` | `{ input, actor }` | `Persistable<M, "create"> \| Persistable<M, "update">` |
+| `delete` | `{ id, actor }` | `Deletable<M>` |
 | `decide` | `{ input, actor }` | `Decision<A, T>` |
 
-`input` は、schema の入力の型を `Partial` にしたものです。`upsert` は、`key` がなければ新規作成、`key` があって既存の値が見つかれば更新、`key` があって見つからなければ load の step で失敗します。呼び出す側が id を決めて新規作成する使い方は、まだ扱いません(未決定の論点を参照)。
+`input` は、schema の入力の型を `Partial` にし、`id` を足したものです。`create` の `input` は `id` を持ちません。`upsert` は、`input.id` がなければ新規作成、あって既存の値が見つかれば更新、あって見つからなければ load の step で失敗します。呼び出す側が id を決めて新規作成する使い方は、まだ扱いません(未決定の論点を参照)。
 
 ### 返り値は封をした値
 
@@ -586,7 +584,7 @@ const save = (p: Persistable<typeof article, "create" | "update">) => {
 
 ```ts
 type Failure =
-  | { step: "input"; error: { issues: SchemaIssue[] } }       // キーか入力が schema を満たさない
+  | { step: "input"; error: { issues: SchemaIssue[] } }       // id か入力が schema を満たさない
   | { step: "load"; error: "NOT_FOUND" | LoadError }           // 既存の値がないか、load の port が失敗した
   | { step: "著者とレビュアーは別の人"; error: "SAME_AUTHOR_AND_REVIEWER" }
   | { step: "レビュアーが存在する"; error: "USER_NOT_FOUND" | InfraError }
@@ -602,8 +600,8 @@ rule の失敗の値は、check が `Result.fail` に入れた値そのもので
 
 | 順 | step | やること | 失敗 |
 |---|---|---|---|
-| 1 | input | キーと入力を schema で検証する | 検証で見つかった問題 |
-| 2 | load | キーから既存の値を取る | `NOT_FOUND`、load の port の失敗 |
+| 1 | input | id と入力を schema で検証する | 検証で見つかった問題 |
+| 2 | load | id から既存の値を取る | `NOT_FOUND`、load の port の失敗 |
 | 3 | merge | 既存の値に、検証済みの入力を重ねて next を作る | なし |
 | 4 | rule | ルールの組に並べた rule を、並べた順に1つずつ通る | その rule の check の失敗 |
 | 5 | seal または output | 保存では id を付けて封をする。action では `output` で値を組み立てて封をする | newId の port の失敗 |
@@ -640,7 +638,7 @@ plan(articleRules);
 - **小さな単位で定義する。** model、action、port、rule は1つずつ独立した値です。
 - **型の昇格は状態の型の変化。** 確かめた step が、確かめた値で状態を置き換えます。確かめたと宣言するだけで型を強くする手段は持ちません。
 - **保存済みの値は確かめ済み。** 既存の値は保存済みの値の型で読み込み、マージでもその型のまま引き継ぎます。
-- **境界で受け取り、中では信じる。** キーと入力は最初の step で検証します。actor は呼び出し側で認証し、操作の認可は rule で判定します。
+- **境界で受け取り、中では信じる。** id と入力は最初の step で検証します。actor は呼び出し側で認証し、操作の認可は rule で判定します。
 - **副作用はすべて port。** check から呼ぶ port、既存の値の取得、id の生成、時計の実装は、`provide` で注入します。
 - **値の形は schema、項目をまたぐ条件は rule。** schema は項目ごとの形を表し、更新では入力にある項目だけを検証します。項目をまたぐ条件は rule に書くので、更新のたびに値の全体を検証し直す必要はありません。
 - **マージの規則は1つにする。** `undefined` は「変えない」、`null` は「空にする」です。
@@ -674,7 +672,7 @@ plan(articleRules);
 - **型での provider の確認がどこまで成り立つか。** ルールの組の並びと provider のタプルから、必要な port の不足を推論できるかは、まだ試していません。
 - **`cached` の引数の比べ方。** 今は JSON にした文字列で比べます。JSON にできない値を引数に取る port をどう扱うかは決めていません。
 - **同じ項目を2つの rule が昇格したときの扱い。** 後ろの rule の値で置き換えるのか、型エラーにするのかを決めていません。
-- **呼び出す側が決めた id での新規作成。** `upsert` で、指定したキーが見つからないときに、そのキーで作成する使い方は扱っていません。
+- **呼び出す側が決めた id での新規作成。** `upsert` で、指定した id が見つからないときに、その id で作成する使い方は扱っていません。
 - **入れ子の値のマージ。** 今の規則は1段目の項目だけを重ねます。
 - **actor の型の登録方法。** 今は `Register` への型の登録(module augmentation)で、アプリケーション全体で1つの actor の型を使う想定です。
 
