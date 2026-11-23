@@ -1,6 +1,6 @@
 # domain-rules
 
-ドメインの rule を小さな単位で定義し、1本の線路に並べて検証し、検証済みであることを型で証明する TypeScript ライブラリです。
+ドメインの rule を小さな単位で定義し、必要なデータだけを取得して検証し、検証済みであることを型で証明する TypeScript ライブラリです。
 
 > **Status**: 設計段階です。この README の API は構想であり、まだ実装していません。
 
@@ -9,7 +9,7 @@
 値を保存する前の処理を手で書くと、次の問題が起きます。
 
 - **rule の当たる条件が `if` の中に埋もれる。** 「新規作成のときだけ」「下書きから公開に変わるときだけ」といった条件が、本体のコードを読まないと分かりません。
-- **取得の重複を自分で管理する。** 複数の rule が同じデータを使うとき、取得を1回にまとめる処理を手で書くことになります。
+- **取得の工程を手で書く必要がある。** どの rule が何を使うかを意識しながら取得処理を書き、順序や重複を自分で管理することになります。
 - **既存の値とのマージを毎回書く。** 更新のたびに「入力がなければ既存の値を使う」という処理を、項目ごとに書くことになります。
 - **rule が repository に直接依存する。** rule の中で repository を呼ぶと、テストに mock が必要になります。
 - **「検証済み」が保証されない。** 検証を通さずに保存する値を組み立てても、型では防げません。
@@ -49,7 +49,7 @@ rule は、操作ごとではなく対象ごとに1組だけ持ちます。あ�
 | provider | port の実装 | check から呼ぶ port、model の port、時計の実装 |
 | bind | rule の組と provider を束ね、呼び出せるメソッドを作る | なし |
 
-成功と失敗は [@praha/byethrow](https://github.com/praha-inc/byethrow) の `Result` で表します。provider と、束ねたあとのメソッドは `ResultAsync`(byethrow の型で、`Promise<Result>`)を返します。時計の provider だけは、時刻の数を返します。check は、port を呼ばなければ `Result`、呼ぶなら `ResultAsync` を返します。
+成功と失敗は [@praha/byethrow](https://github.com/praha-inc/byethrow) の `Result` で表します。provider と、束ねたあとのメソッドは `ResultAsync`(byethrow の型で、`Promise<Result>`)を返します。時計の provider だけは、時刻の数を返します。check は `Result` を返します。port を呼ぶ check は async の関数にして、`Promise<Result>` を返します。
 
 ### 定義する場所
 
@@ -160,6 +160,10 @@ export const newArticleId = port("newArticleId").of<() => ArticleIdNew, InfraErr
 
 port が何を返すかは、port ごとに違います。昇格した値、数、真偽値、データのどれでもかまいません。呼ぶかどうか、どの引数で呼ぶかは、check が決めます。
 
+check の中で呼ぶ port は、`Result` ではなく成功の値を返します。例えば `await findBlog(id)` は `Blog | null` です。port が失敗したら、ライブラリはそこで線路を止め、port の失敗の値を、その rule の失敗の値にします。check の中で `Result` を組み合わせる必要はありません。
+
+port は線路の種類に属しません。引数を受け取るので、保存の rule からも削除の rule からも action の rule からも呼べます。
+
 `cached` を付けた port は、1回の呼び出しの中で、同じ引数で2回目に呼ばれると、port を呼ばずに1回目の結果を返します。引数は JSON にした文字列で比べます。複数の rule が同じデータを使うとき、取得は1回で済みます。cache は呼び出しごとに捨てます。cache するかどうかは、port を宣言するドメインのパッケージで決めます。1回の呼び出しの中で同じ値を見るかどうかは、check の結果の正しさに関わるからです。
 
 ### rule を定義する
@@ -185,15 +189,12 @@ export const uniqueSlugInBlog = rule(article.save, {
   name: "slug はブログ内で一意",
   requires: { findArticlesInBlog },
   when: changed("slug"),
-  check: (s, { findArticlesInBlog }) =>
-    Result.pipe(
-      findArticlesInBlog(s.next.blogId),
-      Result.andThen((articles) =>
-        articles.some((a) => a.slug === s.next.slug && a.id !== s.pre?.id)
-          ? Result.fail("DUPLICATED_SLUG")
-          : Result.succeed(),
-      ),
-    ),
+  check: async (s, { findArticlesInBlog }) => {
+    const articles = await findArticlesInBlog(s.next.blogId);
+    return articles.some((a) => a.slug === s.next.slug && a.id !== s.pre?.id)
+      ? Result.fail("DUPLICATED_SLUG")
+      : Result.succeed();
+  },
 });
 
 export const publishAtInFuture = rule(article.save, {
@@ -316,10 +317,8 @@ export const reviewerExists = rule(article.save, {
     if (pre && pre.reviewerId === next.reviewerId) {
       return Result.succeed({ next: { reviewerId: pre.reviewerId } });
     }
-    return Result.pipe(
-      requireExistingUser(next.reviewerId),
-      Result.map((reviewerId) => ({ next: { reviewerId } })),
-    );
+    const reviewerId = await requireExistingUser(next.reviewerId);
+    return Result.succeed({ next: { reviewerId } });
   },
 });
 
@@ -332,12 +331,10 @@ export const blogExists = rule(article.save, {
     if (pre && pre.blogId === next.blogId) {
       return Result.succeed({ next: { blogId: pre.blogId } });
     }
-    return Result.pipe(
-      findBlog(next.blogId),
-      Result.andThen((blog) =>
-        blog ? Result.succeed({ next: { blogId: blog.id } }) : Result.fail("BLOG_NOT_FOUND"),
-      ),
-    );
+    const blog = await findBlog(next.blogId);
+    return blog
+      ? Result.succeed({ next: { blogId: blog.id } })
+      : Result.fail("BLOG_NOT_FOUND");
   },
 });
 
@@ -346,17 +343,14 @@ export const blogAcceptsPosts = rule(article.save.with<{ next: { blogId: BlogIdE
   name: "投稿を受け付けているブログ",
   requires: { findBlog },
   when: changed("status", { next: "PUBLISHED" }),
-  check: ({ next }, { findBlog }) =>
-    Result.pipe(
-      findBlog(next.blogId),
-      Result.andThen((blog) =>
-        blog?.acceptsPosts ? Result.succeed() : Result.fail("BLOG_CLOSED"),
-      ),
-    ),
+  check: async ({ next }, { findBlog }) => {
+    const blog = await findBlog(next.blogId);
+    return blog?.acceptsPosts ? Result.succeed() : Result.fail("BLOG_CLOSED");
+  },
 });
 ```
 
-`reviewerExists` を通ったあとの状態では、`next.reviewerId` は `UserIdExisted` です。`requireExistingUser` は、ユーザーが存在すれば同じ id を `UserIdExisted` として返します。同じ id のままの更新では、既存の値を引き継ぎます。既存の値は最初から `UserIdExisted` なので、どちらの経路でもキャストは要りません。
+`reviewerExists` を通ったあとの状態では、`next.reviewerId` は `UserIdExisted` です。`requireExistingUser` は、ユーザーが存在すれば同じ id を `UserIdExisted` として返し、存在しなければ `USER_NOT_FOUND` で失敗します。その失敗は、そのまま `reviewerExists` の失敗になります。同じ id のままの更新では、既存の値を引き継ぎます。既存の値は最初から `UserIdExisted` なので、どちらの経路でもキャストは要りません。
 
 `when` が当たらずに飛ばされる rule は、状態を変えません。そのため、昇格する rule に `always` 以外の `when` を書くと、その rule のあとの型は「昇格した型か、していない型」の和になります。昇格した型を要求する rule が後ろにあるか、永続化の型が揃わなければ、rule の組を作るときに型エラーになります。
 
@@ -376,10 +370,8 @@ export const articleIdAssigned = rule(
     name: "新しい記事に id を付ける",
     requires: { newArticleId },
     when: always,
-    check: ({ next }, { newArticleId }) =>
-      next.id !== null
-        ? Result.succeed({ next: { id: next.id } })
-        : Result.pipe(newArticleId(), Result.map((id) => ({ next: { id } }))),
+    check: async ({ next }, { newArticleId }) =>
+      Result.succeed({ next: { id: next.id ?? (await newArticleId()) } }),
   },
 );
 ```
@@ -476,13 +468,10 @@ export const targetArticleExists = rule(previewArticle.decide, {
   name: "対象の記事が存在する",
   requires: { findArticle },
   when: always,
-  check: ({ input }, { findArticle }) =>
-    Result.pipe(
-      findArticle(input.blogId, input.articleId),
-      Result.andThen((article) =>
-        article ? Result.succeed({ article }) : Result.fail("ARTICLE_NOT_FOUND"),
-      ),
-    ),
+  check: async ({ input }, { findArticle }) => {
+    const article = await findArticle(input.blogId, input.articleId);
+    return article ? Result.succeed({ article }) : Result.fail("ARTICLE_NOT_FOUND");
+  },
 });
 
 export const notArchived = rule(previewArticle.decide.with<{ article: Article }>(), {
@@ -544,6 +533,8 @@ provider の不足を型で検出するには、provider の一覧を `as const`
 
 - **型での確認。** rule の組の rule が `requires` に書いた port と model の port のうち、provider の一覧にないものがあれば型エラーにします。
 - **起動時の確認。** provider の不足と、同じ port の重複を確かめ、見つかればエラーにします。
+
+provider の実装が、別の repository や別の取得を使うのは自由です。どう取るかは provider の中の都合なので、ライブラリは provider 同士の依存を扱いません。
 
 テストでは、固定の値を返す provider で束ねるだけで済みます。repository の mock はいりません。
 
@@ -624,7 +615,7 @@ type Failure =
   | ...;                                                        // 並べた rule ごとに1つ
 ```
 
-rule の失敗の値は、check が `Result.fail` に入れた値そのものです。conflict か、not found か、infra の失敗かは、利用者が失敗の値で表します。ライブラリは失敗に種類を付けません。check が呼んだ port の失敗をそのまま返すか、別の値に変えるかも、check が決めます。
+rule の失敗の値は、check が `Result.fail` に入れた値そのものです。conflict か、not found か、infra の失敗かは、利用者が失敗の値で表します。ライブラリは失敗に種類を付けません。check の中で呼んだ port が失敗したときは、port の失敗の値が、そのまま rule の失敗の値になります。port の失敗を別の値にしたいときは、port の側で、失敗ではなく値として返します(例えば、見つからないことを `null` で返す)。
 
 ## 実行モデル
 
