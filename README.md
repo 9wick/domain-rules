@@ -37,17 +37,18 @@ rule は、操作ごとではなく対象ごとに1組だけ持ちます。あ�
 
 ### 部品と責務
 
-| 部品        | 責務                                                  | 持つもの                                                    |
-| ----------- | ----------------------------------------------------- | ----------------------------------------------------------- |
-| model       | 値の形                                                | 入力の schema と永続化の schema                             |
-| action      | 保存を伴わない操作の入力の形                          | 入力の schema                                               |
-| rule        | 線路の1つの step                                      | 名前、`requires`、`when`、`check`                           |
-| port        | check から呼ぶ外の機能の宣言                          | 名前、引数と結果と失敗の型                                  |
-| cached      | port に、1回の呼び出しの中での cache を付ける         | 元の port                                                   |
-| modelRules  | model の rule の組                                    | 既存の値を取る port、保存の rule の並び、削除の rule の並び |
-| actionRules | action の rule の組                                   | rule の並び、`output`                                       |
-| provider    | port の実装                                           | check から呼ぶ port、既存の値を取る port、時計の実装        |
-| bind        | rule の組と provider を束ね、呼び出せるメソッドを作る | なし                                                        |
+| 部品        | 責務                                                  | 持つもの                                             |
+| ----------- | ----------------------------------------------------- | ---------------------------------------------------- |
+| model       | 値の形                                                | 入力の schema と永続化の schema                      |
+| action      | 保存を伴わない操作の入力の形                          | 入力の schema                                        |
+| rule        | 線路の1つの step                                      | 名前、`requires`、`when`、`check`                    |
+| ruleset     | rule を足した順に通る線路                             | rule の並び                                          |
+| port        | check から呼ぶ外の機能の宣言                          | 名前、引数と結果と失敗の型                           |
+| cached      | port に、1回の呼び出しの中での cache を付ける         | 元の port                                            |
+| modelRules  | model の rule の組                                    | 既存の値を取る port、保存の線路、削除の線路          |
+| actionRules | action の rule の組                                   | 線路、`output`                                       |
+| provider    | port の実装                                           | check から呼ぶ port、既存の値を取る port、時計の実装 |
+| bind        | rule の組と provider を束ね、呼び出せるメソッドを作る | なし                                                 |
 
 成功と失敗は [@praha/byethrow](https://github.com/praha-inc/byethrow) の `Result` で表します。provider と、束ねたあとのメソッドは `ResultAsync`(byethrow の型で、`Promise<Result>`)を返します。時計の provider だけは、時刻の数を返します。check は `Result` を返します。port を呼ぶ check は async の関数にして、`Promise<Result>` を返します。
 
@@ -294,7 +295,7 @@ export const isApproved = (a: ArticleValue) => a.approvedAt !== null;
 
 `when` は、その rule に来た時点の状態で評価します。当たらなければ、rule は状態をそのまま次へ渡します。
 
-`changed` の `pre` と `next` には、その項目の値か、その項目の値を受け取る述語を渡します。どちらも、値が変わったときだけ当たります。値が変わったかどうかは `Object.is` で比べます。配列やオブジェクトの項目は、中身が同じでも別の値を渡せば変わったと判定します。1つの項目の変化は `changed` で書き、複数の項目にまたがる条件は `pre(述語)` と `next(述語)` を `and` などで組み合わせて書きます。
+`changed` の `pre` と `next` には、その項目の値(文字列、数、真偽値、`null` など)を渡します。どちらも、値が変わったときだけ当たります。値が変わったかどうかは `Object.is` で比べます。配列やオブジェクトの項目は、中身が同じでも別の値を渡せば変わったと判定します。1つの項目の変化は `changed` で書き、複数の項目にまたがる条件は `pre(述語)` と `next(述語)` を `and` などで組み合わせて書きます。
 
 actor を when に書くか check に書くかは、次のように分けると読みやすくなります。
 
@@ -307,7 +308,7 @@ when の正体は `(s: 状態) => boolean` という関数で、`changed` や `n
 
 check の成功の値は、状態に重なります。`next` の項目や `actor` を、確かめた値で置き換えられます。状態にない名前の値を足すこともできます。値をどう確かめるかは check が決めます。port が返した値を使うこともあれば、既存の値を使うこともあります。
 
-置き換える値は、状態の同じ項目より狭い型でなければなりません。`UserId` を `UserIdExisted` にする、`ArticleId | undefined` を `ArticleIdExisted | undefined` にする、といった変化です。重ねたあとの状態の型は、重ねる前の型と成功の値の型の交差型になるので、別の型に置き換えると型と実際の値がずれます。そのため、別の型に置き換える rule は線路に足すときに型エラーになります。値の形を変えたいときは、入力の schema で変換します。
+置き換える値は、状態の同じ項目より狭い型でなければなりません。`UserId` を `UserIdExisted` にする、`ArticleId | undefined` を `ArticleIdExisted | undefined` にする、といった変化です。重ねたあとの状態の型は、重ねる前の型と成功の値の型の交差型になるので、別の型に置き換えると型と実際の値がずれます。そのため、別の型に置き換える rule は線路に足すときに型エラーになります。値の形を変えたいときは、入力の schema で変換します。一度狭めた項目を、狭めた範囲の外の値で埋めることもできません。例えば `id` を `ArticleIdExisted | undefined` に狭めたあとで、`undefined` を `ArticleIdNew` で埋める rule は足せません。狭めるときは、後ろの rule が入れる値も含む型にとどめます。
 
 ```ts
 export const reviewerExists = rule(article.save, {
