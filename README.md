@@ -107,7 +107,7 @@ export type Article = Persisted<typeof article>;    // schema.persisted の出�
 - **`schema.persisted`。** 永続化の形です。DB とやり取りするときの型で、DB に保存する値と、DB から読んだ値の両方がこの型です。入力より強い型を持てます。この例では、`blogId` と `reviewerId` が、存在を確かめた id の型(`BlogIdExistedSchema` は `v.pipe(BlogIdSchema, v.brand("BlogIdExisted"))`)です。`id` は、DB から読んだ記事なら `ArticleIdExisted`、新しく作る記事なら `ArticleIdNew` です。保存するには、すべての項目がこの型になっている必要があります。ライブラリは、この schema で入力を検証しません。入力を通すと、確かめていない値に brand が付いてしまうからです。この schema は、永続化の型を決めることと、テストで DB から読んだ値を作ることに使います。
 - **作成時の既定値。** `schema.input` の `v.optional` の既定値に書きます。新規作成のときだけ使われます。
 
-model は1つの port を自動で宣言します。`article.load` は「schema の `id` の項目の値で、既存の記事を取る」port です。実装は provider として後から注入します。新しい id を作るのは、ライブラリではなく rule です(「確かめた値で型を昇格する」を参照)。`article.load` は `Article` を返すので、既存の値は最初から永続化の型です。ライブラリは load の結果を検証しません。port の実装が返す値は信用します。
+model は1つの port を自動で宣言します。`article.load` は「schema の `id` の項目の値で、既存の記事を取る」port です。実装は provider として後から注入します。新しい id を作るのは、ライブラリではなく rule です(「確かめた値で型を昇格する」を参照)。どう作るかは rule の書き方次第で、この README の例では port を呼んでいます。`article.load` は `Article` を返すので、既存の値は最初から永続化の型です。ライブラリは load の結果を検証しません。port の実装が返す値は信用します。
 
 ### 判定の種類と状態
 
@@ -381,7 +381,7 @@ export const articleIdAssigned = rule(
 );
 ```
 
-`existingArticleId` は `next.id` を `ArticleIdExisted | null` にし、`articleIdAssigned` は `ArticleIdExisted | ArticleIdNew` にします。`articleIdAssigned` は `when: onCreate` ではなく `always` で、check の中で分けています。`when` で飛ばすと、更新の経路でも `next.id` の型に `null` が残るからです。2つの rule は、並びの最後に置きます。先に置くと、後ろの rule で失敗したときに、作った id が無駄になるからです。
+`existingArticleId` は `next.id` を `ArticleIdExisted | null` にし、`articleIdAssigned` は `ArticleIdExisted | ArticleIdNew` にします。`articleIdAssigned` は `when: onCreate` ではなく `always` で、check の中で分けています。`when` で飛ばすと、更新の経路でも `next.id` の型に `null` が残るからです(未決定の論点の「`when` で絞った型」を参照)。この例では、2つの rule を並びの最後に置いています。後ろの rule で失敗したときに、作った id が無駄にならないようにするためです。どこに置くかは、ルールの組を作る人が決めます。
 
 actor も同じように昇格できます。
 
@@ -698,6 +698,7 @@ plan(articleRules);
 ## 未決定の論点
 
 - **線路をたどる型の計算が成り立つか。** 並べたタプルを先頭から順にたどり、状態の型を step ごとに変えながら、各 rule の前提の型と照合し、最後に永続化の型と照合します。この計算が型で成り立つか、rule の数が増えても実用的な速さで終わるかは、まだ試していません。
+- **`when` で絞った型。** 本来は、`when` が当たった経路では状態の型を `when` の条件で絞り、その経路で昇格した型だけを後ろへ渡したいところです。例えば `when: onCreate` の rule は `pre` が `null` の経路だけを受け取り、昇格した `next.id` は、その経路でだけ新しい型になります。TypeScript でこれを表すのは難しいと見込んでいるので、今は `when` で飛ばした経路の型を和として扱い、経路で分けたい昇格は check の中の分岐で書きます。経路ごとに型を持てるかは、試作で確かめます。
 - **型での provider の確認がどこまで成り立つか。** ルールの組の並びと provider のタプルから、必要な port の不足を推論できるかは、まだ試していません。
 - **`cached` の引数の比べ方。** 今は JSON にした文字列で比べます。JSON にできない値を引数に取る port をどう扱うかは決めていません。
 - **同じ項目を2つの rule が昇格したときの扱い。** 後ろの rule の値で置き換えるのか、型エラーにするのかを決めていません。
