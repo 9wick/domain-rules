@@ -381,7 +381,7 @@ export const articleIdAssigned = rule(
 );
 ```
 
-`existingArticleId` は `next.id` を `ArticleIdExisted | null` にし、`articleIdAssigned` は `ArticleIdExisted | ArticleIdNew` にします。`articleIdAssigned` は `when: onCreate` ではなく `always` で、check の中で分けています。`when` で飛ばすと、更新の経路でも `next.id` の型に `null` が残るからです(未決定の論点の「`when` で絞った型」を参照)。この例では、2つの rule を並びの最後に置いています。後ろの rule で失敗したときに、作った id が無駄にならないようにするためです。どこに置くかは、ルールの組を作る人が決めます。
+`existingArticleId` は `next.id` を `ArticleIdExisted | null` にし、`articleIdAssigned` は `ArticleIdExisted | ArticleIdNew` にします。`articleIdAssigned` は `when: onCreate` ではなく `always` で、check の中で分けています。`when` で飛ばすと、更新の経路でも `next.id` の型に `null` が残るからです。この例では、2つの rule を並びの最後に置いています。後ろの rule で失敗したときに、作った id が無駄にならないようにするためです。どこに置くかは、ルールの組を作る人が決めます。
 
 actor も同じように昇格できます。
 
@@ -698,7 +698,6 @@ plan(articleRules);
 ## 未決定の論点
 
 - **線路をたどる型の計算が成り立つか。** 並べたタプルを先頭から順にたどり、状態の型を step ごとに変えながら、各 rule の前提の型と照合し、最後に永続化の型と照合します。この計算が型で成り立つか、rule の数が増えても実用的な速さで終わるかは、まだ試していません。
-- **`when` で絞った型。** 本来は、`when` が当たった経路では状態の型を `when` の条件で絞り、その経路で昇格した型だけを後ろへ渡したいところです。例えば `when: onCreate` の rule は `pre` が `null` の経路だけを受け取り、昇格した `next.id` は、その経路でだけ新しい型になります。TypeScript でこれを表すのは難しいと見込んでいるので、今は `when` で飛ばした経路の型を和として扱い、経路で分けたい昇格は check の中の分岐で書きます。経路ごとに型を持てるかは、試作で確かめます。
 - **型での provider の確認がどこまで成り立つか。** ルールの組の並びと provider のタプルから、必要な port の不足を推論できるかは、まだ試していません。
 - **`cached` の引数の比べ方。** 今は JSON にした文字列で比べます。JSON にできない値を引数に取る port をどう扱うかは決めていません。
 - **同じ項目を2つの rule が昇格したときの扱い。** 後ろの rule の値で置き換えるのか、型エラーにするのかを決めていません。
