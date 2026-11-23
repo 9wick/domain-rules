@@ -59,6 +59,8 @@ export default defineConfig({
 
       // check の第2引数は requires の port と同じ名前で受け取るのが README の書き方で、外側の宣言と名前が重なる
       "eslint/no-shadow": "off",
+      // 型を組み立てる途中の汎用の型は、型引数を決める前に {} へ解決されて誤検出になる
+      "typescript/no-generated-empty-object-type": "off",
       "vitest/expect-expect": ["error", { assertFunctionNames: ["expect", "expectTypeOf"] }],
     },
     overrides: [
@@ -85,7 +87,7 @@ export default defineConfig({
       },
       // ── 実装の例外:そのファイルが何であるかによって、ルールが守る性質が別の形で保たれるもの ──
       {
-        // 復帰できない異常(provider の重複・不足、偽造された値)は throw で止める
+        // 復帰できない異常(provider の重複・不足、時刻を返さない clock、偽造された値)は throw で止める
         files: ["src/bind.ts", "src/seal.ts"],
         rules: { "strict/no-throw": "off" },
       },
@@ -94,78 +96,14 @@ export default defineConfig({
         files: ["src/port.ts"],
         rules: { "strict/no-throw": "off", "strict/no-try-catch": "off", "typescript/only-throw-error": "off" },
       },
-      // ── 負債:実装を直して消すもの。直したら該当のルールをここから消す ──
-      // 実行時の線路は値を unknown のまま扱い、型の上の API とは any と型 assertion でつないでいる。
-      // 返済:実行時の状態に型引数を通すか、避けられない変換を名前の付いた1つの module に集めて、ほかのファイルから assertion をなくす
       {
-        files: ["src/bind.ts"],
+        // 型の上の情報と実行時の値をつなぐ変換を集めた module。ここ以外では型 assertion を書かない
+        files: ["src/erased.ts"],
         rules: {
-          "strict/no-in-operator": "off",
           "typescript/consistent-type-assertions": "off",
-          "typescript/no-explicit-any": "off",
-          "typescript/no-generated-empty-object-type": "off",
-          "typescript/no-non-null-assertion": "off",
-          "typescript/no-unsafe-argument": "off",
-          "typescript/no-unsafe-assignment": "off",
           "typescript/no-unsafe-type-assertion": "off",
-        },
-      },
-      {
-        files: ["src/model.ts"],
-        rules: {
-          "typescript/consistent-type-assertions": "off",
-          "typescript/no-generated-empty-object-type": "off",
-          "typescript/no-unsafe-type-assertion": "off",
-        },
-      },
-      {
-        files: ["src/port.ts"],
-        rules: {
-          "typescript/consistent-type-assertions": "off",
-          "typescript/no-explicit-any": "off",
-          "typescript/no-non-null-assertion": "off",
-          "typescript/no-unnecessary-type-arguments": "off",
-          "typescript/no-unsafe-argument": "off",
-          "typescript/no-unsafe-assignment": "off",
-          "typescript/no-unsafe-return": "off",
-          "typescript/no-unsafe-type-assertion": "off",
-          "typescript/strict-boolean-expressions": "off",
-        },
-      },
-      {
-        files: ["src/rule.ts"],
-        rules: {
-          "typescript/consistent-type-assertions": "off",
-          "typescript/no-explicit-any": "off",
-          "typescript/no-unsafe-type-assertion": "off",
-        },
-      },
-      {
-        files: ["src/rules.ts"],
-        rules: {
-          "typescript/consistent-type-assertions": "off",
-          "typescript/no-explicit-any": "off",
-          "typescript/no-unsafe-argument": "off",
-          "typescript/no-unsafe-assignment": "off",
-          "typescript/no-unsafe-type-assertion": "off",
-        },
-      },
-      {
-        files: ["src/seal.ts"],
-        rules: { "typescript/consistent-type-assertions": "off", "typescript/no-unsafe-type-assertion": "off" },
-      },
-      {
-        files: ["src/when.ts"],
-        rules: {
-          "typescript/consistent-type-assertions": "off",
-          "typescript/no-explicit-any": "off",
+          // 型引数は「どの型として扱い直すか」の指定で、引数からは推論しない
           "typescript/no-unnecessary-type-parameters": "off",
-          "typescript/no-unsafe-argument": "off",
-          "typescript/no-unsafe-assignment": "off",
-          "typescript/no-unsafe-member-access": "off",
-          "typescript/no-unsafe-return": "off",
-          "typescript/no-unsafe-type-assertion": "off",
-          "typescript/strict-boolean-expressions": "off",
         },
       },
     ],

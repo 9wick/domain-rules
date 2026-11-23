@@ -1,10 +1,12 @@
+import { opaque, type Phantom, type PhantomKey } from "./erased.ts";
 import type { Action, Actor, Model, Persisted } from "./model.ts";
 
-declare const sealed: unique symbol;
-
-type Sealed<Kind extends string, Target extends string, Op extends string, C> = {
-  readonly [sealed]: { readonly kind: Kind; readonly target: Target; readonly op: Op; readonly contents: C };
-};
+type Sealed<Kind extends string, Target extends string, Op extends string, C> = Phantom<{
+  readonly kind: Kind;
+  readonly target: Target;
+  readonly op: Op;
+  readonly contents: C;
+}>;
 
 export type Persistable<
   M extends Model,
@@ -56,6 +58,8 @@ class Seal {
   }
 }
 
-export const seal = <S extends AnySealed>(c: S[typeof sealed]["contents"]): S => new Seal(c) as unknown as S;
+type Contents<S extends AnySealed> = S[PhantomKey]["contents"];
 
-export const open = <S extends AnySealed>(s: S): S[typeof sealed]["contents"] => Seal.open(s);
+export const seal = <S extends AnySealed>(c: Contents<S>): S => opaque<S>(new Seal(c));
+
+export const open = <S extends AnySealed>(s: S): Contents<S> => Seal.open(s);
