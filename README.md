@@ -484,14 +484,18 @@ export const notArchived = rule(previewArticle.decide.with<{ article: Article }>
 export const canPreview = rule(previewArticle.decide.with<{ article: Article }>(), {
   name: "プレビューできるのはメンバーの著者かレビュアーだけ",
   when: always,
-  check: ({ actor, article }) =>
-    !isMember(actor)
-      ? Result.fail("NOT_ALLOWED")
-      : actor.id === article.authorId
-        ? Result.succeed({ viewerRole: "author" as const })
-        : actor.id === article.reviewerId
-          ? Result.succeed({ viewerRole: "reviewer" as const })
-          : Result.fail("NOT_ALLOWED"),
+  check: ({ actor, article }) => {
+    if (!isMember(actor)) {
+      return Result.fail("NOT_ALLOWED");
+    }
+    if (actor.id === article.authorId) {
+      return Result.succeed({ viewerRole: "author" as const });
+    }
+    if (actor.id === article.reviewerId) {
+      return Result.succeed({ viewerRole: "reviewer" as const });
+    }
+    return Result.fail("NOT_ALLOWED");
+  },
 });
 
 export const previewArticleRules = actionRules(previewArticle, {
