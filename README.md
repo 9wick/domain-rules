@@ -39,7 +39,7 @@
 
 | 部品 | 責務 | 持つもの |
 |---|---|---|
-| model | エンティティの形と、取り出し方 | 入力の schema と永続化の schema、id の schema、model の port(id から取る、新しい id を作る) |
+| model | エンティティの形と、取り出し方 | 入力の schema と永続化の schema、model の port(id から取る、新しい id を作る) |
 | action | 保存を伴わない操作の入力の形 | 入力の schema |
 | rule | 線路の1つの step | 名前、`requires`、`when`、`check` |
 | port | check から呼ぶ外の機能の宣言 | 名前、引数と結果と失敗の型 |
@@ -69,11 +69,12 @@
 
 ```ts
 import * as v from "valibot";
-import { model, type Entity, type Persisted, type Value } from "domain-rules";
+import { model, type Persisted, type Value } from "domain-rules";
 
 export const ArticleIdSchema = v.pipe(v.string(), v.startsWith("art_"), v.brand("ArticleId"));
 
 const articleInput = v.object({
+  id: v.optional(ArticleIdSchema),
   blogId: BlogIdSchema,
   status: v.optional(v.picklist(["DRAFT", "PUBLISHED", "ARCHIVED"]), "DRAFT"),
   authorId: UserIdSchema,
@@ -85,28 +86,26 @@ const articleInput = v.object({
 
 export const article = model({
   name: "article",
-  id: ArticleIdSchema,
   schema: {
     input: articleInput,
     persisted: v.object({
       ...articleInput.entries,
+      id: ArticleIdSchema,
       blogId: BlogIdExistedSchema,
       reviewerId: UserIdExistedSchema,
     }),
   },
 });
 
-export type ArticleValue = Value<typeof article>;         // schema.input の出力の型
-export type PersistedArticle = Persisted<typeof article>; // schema.persisted の出力の型
-export type Article = Entity<typeof article>;             // { id: ArticleId } と PersistedArticle を合わせたもの
+export type ArticleValue = Value<typeof article>;   // schema.input の出力の型
+export type Article = Persisted<typeof article>;    // schema.persisted の出力の型
 ```
 
 - **`schema.input`。** 入力の値の形です。Valibot の `v.object` を使います。更新のときに、入力にある項目だけをその項目の schema で検証するため、ライブラリが項目ごとの schema(`entries`)を読む必要があるからです。項目をまたぐ条件(「著者とレビュアーは別の人」など)は、schema ではなく rule に書きます。
 - **`schema.persisted`。** 永続化の形です。DB とやり取りするときの型で、DB に保存する値と、DB から読んだ値の両方がこの型です。入力より強い型を持てます。この例では、`blogId` と `reviewerId` が、存在を確かめた id の型(`BlogIdExistedSchema` は `v.pipe(BlogIdSchema, v.brand("BlogIdExisted"))`)です。保存するには、すべての項目がこの型になっている必要があります。ライブラリは、この schema で入力を検証しません。入力を通すと、確かめていない値に brand が付いてしまうからです。この schema は、永続化の型を決めることと、テストで DB から読んだ値を作ることに使います。
-- **`id`。** 新しく作る id の形です。
 - **作成時の既定値。** `schema.input` の `v.optional` の既定値に書きます。新規作成のときだけ使われます。
 
-model は2つの port を自動で宣言します。`article.load` は「id から既存の記事を取る」、`article.newId` は「新しい id を1つ作る」です。どちらも実装は provider として後から注入します。`article.load` は `Article` を返すので、既存の値は最初から永続化の型です。
+model は2つの port を自動で宣言します。`article.load` は「id から既存の記事を取る」、`article.newId` は「新しい id を1つ作る」です。どちらも、schema の `id` の項目を id として扱います。どちらも実装は provider として後から注入します。`article.load` は `Article` を返すので、既存の値は最初から永続化の型です。ライブラリは load の結果を検証しません。port の実装が返す値は信用します。
 
 ### 判定の種類と状態
 
@@ -545,7 +544,7 @@ const saved = await Result.pipe(
 | `delete` | `{ id, actor }` | `Deletable<M>` |
 | `decide` | `{ input, actor }` | `Decision<A, T>` |
 
-`input` は、`schema.input` の入力の型を `Partial` にし、`id` を足したものです。`create` の `input` は `id` を持ちません。`upsert` は、`input.id` がなければ新規作成、あって既存の値が見つかれば更新、あって見つからなければ load の step で失敗します。呼び出す側が id を決めて新規作成する使い方は、まだ扱いません(未決定の論点を参照)。
+`input` は、`schema.input` の入力の型を `Partial` にしたものです。`create` の `input` は `id` を持ちません。`upsert` は、`input.id` がなければ新規作成、あって既存の値が見つかれば更新、あって見つからなければ load の step で失敗します。呼び出す側が id を決めて新規作成する使い方は、まだ扱いません(未決定の論点を参照)。
 
 ### 返り値は封をした値
 
@@ -606,9 +605,9 @@ rule の失敗の値は、check が `Result.fail` に入れた値そのもので
 | 5 | seal または output | 保存では id を付けて封をする。action では `output` で値を組み立てて封をする | newId の port の失敗 |
 
 - **input。** 入力は、入力にある項目だけを、その項目の schema で検証します。schema にない項目が入っていたら失敗です。`create` では、入力全体を schema で検証し、既定値を入れます。この step の失敗の値には、schema の検証で見つかった問題がすべて入ります。
-- **merge。** 入力で `undefined` の項目は既存の値を残し、`null` の項目は `null` で上書きします。残した項目は、永続化の型のままです。既存の値は、provider が正しい形で返す前提で、もう一度は検証しません。
+- **merge。** 入力で `undefined` の項目は既存の値を残し、`null` の項目は `null` で上書きします。残した項目は、永続化の型のままです。DB から読んだ値は信用し、検証しません。
 - **rule。** rule ごとに、その時点の状態で `when` を評価します。当たらなければ、状態をそのまま次へ渡します。当たれば check を実行し、成功の値を状態に重ねて次へ渡します。失敗したら、そこで止まります。
-- **seal。** 更新なら既存の id、新規なら `model.newId` の provider で作った id を付けます。`newId` が失敗するか、id の schema を満たさない値を返したら失敗です。
+- **seal。** 更新なら既存の id、新規なら `model.newId` の provider で作った id を付けます。`newId` が失敗したら失敗です。
 
 メソッドによって、通らない step があります。
 
