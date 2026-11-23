@@ -39,7 +39,7 @@
 
 | 部品 | 責務 | 持つもの |
 |---|---|---|
-| model | エンティティの形と、取り出し方 | 入力と保存済みの値の schema、id の schema、model の port(id から取る、新しい id を作る) |
+| model | エンティティの形と、取り出し方 | 入力の schema と永続化の schema、id の schema、model の port(id から取る、新しい id を作る) |
 | action | 保存を伴わない操作の入力の形 | 入力の schema |
 | rule | 線路の1つの step | 名前、`requires`、`when`、`check` |
 | port | check から呼ぶ外の機能の宣言 | 名前、引数と結果と失敗の型 |
@@ -102,11 +102,11 @@ export type Article = Entity<typeof article>;             // { id: ArticleId } �
 ```
 
 - **`schema.input`。** 入力の値の形です。Valibot の `v.object` を使います。更新のときに、入力にある項目だけをその項目の schema で検証するため、ライブラリが項目ごとの schema(`entries`)を読む必要があるからです。項目をまたぐ条件(「著者とレビュアーは別の人」など)は、schema ではなく rule に書きます。
-- **`schema.persisted`。** 保存済みの値の形です。入力より強い型を持てます。この例では、`blogId` と `reviewerId` が、存在を確かめた id の型(`BlogIdExistedSchema` は `v.pipe(BlogIdSchema, v.brand("BlogIdExisted"))`)です。保存するには、すべての項目がこの型になっている必要があります。ライブラリは、この schema で入力を検証しません。入力を通すと、確かめていない値に brand が付いてしまうからです。この schema は、保存済みの値の型を決めることと、テストで保存済みの値を作ることに使います。
+- **`schema.persisted`。** 永続化の形です。DB とやり取りするときの型で、DB に保存する値と、DB から読んだ値の両方がこの型です。入力より強い型を持てます。この例では、`blogId` と `reviewerId` が、存在を確かめた id の型(`BlogIdExistedSchema` は `v.pipe(BlogIdSchema, v.brand("BlogIdExisted"))`)です。保存するには、すべての項目がこの型になっている必要があります。ライブラリは、この schema で入力を検証しません。入力を通すと、確かめていない値に brand が付いてしまうからです。この schema は、永続化の型を決めることと、テストで DB から読んだ値を作ることに使います。
 - **`id`。** 新しく作る id の形です。
 - **作成時の既定値。** `schema.input` の `v.optional` の既定値に書きます。新規作成のときだけ使われます。
 
-model は2つの port を自動で宣言します。`article.load` は「id から既存の記事を取る」、`article.newId` は「新しい id を1つ作る」です。どちらも実装は provider として後から注入します。`article.load` は `Article` を返すので、既存の値は最初から保存済みの値の型です。
+model は2つの port を自動で宣言します。`article.load` は「id から既存の記事を取る」、`article.newId` は「新しい id を1つ作る」です。どちらも実装は provider として後から注入します。`article.load` は `Article` を返すので、既存の値は最初から永続化の型です。
 
 ### 判定の種類と状態
 
@@ -119,7 +119,7 @@ rule は、どの判定に属するかを値で受け取ります。判定は3�
 | action の判定 | `previewArticle.decide` | `{ input, actor, now }` |
 
 - `pre` は変更前の値です。新規作成のときは `null` です。
-- `next` は変更後の値です。既存の値に入力を重ねたものです。型は `ArticleValue` ですが、入力にない項目には、保存済みの値がそのまま入っています。
+- `next` は変更後の値です。既存の値に入力を重ねたものです。型は `ArticleValue` ですが、入力にない項目には、DB から読んだ値がそのまま入っています。
 - `now` は呼び出された時刻で、1回の実行の中では同じ値です。
 
 判定の種類を値で渡すのは、TypeScript が型引数の一部だけを明示して残りを推論することができないからです。rule の型引数に状態の型を明示すると、`requires` から `check` の引数の型を推論できなくなります。値で渡せば、状態の型も `requires` の型も、すべて引数から推論されます。
@@ -299,7 +299,7 @@ when の正体は `(s: 状態) => boolean` という関数で、`changed` や `n
 
 ### 確かめた値で型を昇格する
 
-check の成功の値は、状態に重なります。`next` の項目や `actor` を、確かめた値で置き換えられます。状態にない名前の値を足すこともできます。値をどう確かめるかは check が決めます。port が返した値を使うこともあれば、保存済みの値を使うこともあります。
+check の成功の値は、状態に重なります。`next` の項目や `actor` を、確かめた値で置き換えられます。状態にない名前の値を足すこともできます。値をどう確かめるかは check が決めます。port が返した値を使うこともあれば、DB から読んだ値を使うこともあります。
 
 ```ts
 export const reviewerExists = rule(article.save, {
@@ -307,7 +307,7 @@ export const reviewerExists = rule(article.save, {
   requires: { requireExistingUser },
   when: always,
   check: async ({ pre, next }, { requireExistingUser }) => {
-    // 保存済みの値は確かめ済みなので、変わっていなければ照会しない
+    // DB から読んだ値は確かめて保存したものなので、変わっていなければ照会しない
     if (pre && pre.reviewerId === next.reviewerId) {
       return Result.succeed({ next: { reviewerId: pre.reviewerId } });
     }
@@ -350,9 +350,9 @@ export const blogAcceptsPosts = rule(article.save.with<{ next: { blogId: BlogIdE
 });
 ```
 
-`reviewerExists` を通ったあとの状態では、`next.reviewerId` は `UserIdExisted` です。`requireExistingUser` は、ユーザーが存在すれば同じ id を `UserIdExisted` として返します。同じ id のままの更新では、保存済みの値を引き継ぎます。保存済みの値は最初から `UserIdExisted` なので、どちらの経路でもキャストは要りません。
+`reviewerExists` を通ったあとの状態では、`next.reviewerId` は `UserIdExisted` です。`requireExistingUser` は、ユーザーが存在すれば同じ id を `UserIdExisted` として返します。同じ id のままの更新では、DB から読んだ値を引き継ぎます。DB から読んだ値は最初から `UserIdExisted` なので、どちらの経路でもキャストは要りません。
 
-`when` が当たらずに飛ばされる rule は、状態を変えません。そのため、昇格する rule に `always` 以外の `when` を書くと、後ろの step からは「昇格した型か、していない型」に見えます。昇格した型を要求する rule が後ろにあるか、保存済みの値の型が揃わなければ、ルールの組を作るときに型エラーになります。
+`when` が当たらずに飛ばされる rule は、状態を変えません。そのため、昇格する rule に `always` 以外の `when` を書くと、後ろの step からは「昇格した型か、していない型」に見えます。昇格した型を要求する rule が後ろにあるか、永続化の型が揃わなければ、ルールの組を作るときに型エラーになります。
 
 actor も同じように昇格できます。
 
@@ -406,7 +406,7 @@ export const articleRules = entityRules(article, {
 ルールの組を作るとき、並びを先頭から順にたどって、状態の型を確かめます。
 
 - **前提の型。** `blogAcceptsPosts` は `next.blogId` が `BlogIdExisted` であることを前提にしています。`blogExists` より前に並べると型エラーになります。
-- **保存済みの値の型。** 並びの最後の状態で、`next` が model の `schema.persisted` の型にならなければ型エラーになります。`reviewerExists` を並べ忘れると、`next.reviewerId` が `UserId` のままなので型エラーになります。
+- **永続化の型。** 並びの最後の状態で、`next` が model の `schema.persisted` の型にならなければ型エラーになります。`reviewerExists` を並べ忘れると、`next.reviewerId` が `UserId` のままなので型エラーになります。
 
 認証済みの actor は呼び出し側が渡します。操作を許可しない場合、認可の rule が失敗を返します。
 
@@ -557,7 +557,7 @@ import { open } from "domain-rules";
 const save = (p: Persistable<typeof article, "create" | "update">) => {
   const { pre, next, actor } = open(p);
   // pre: Readonly<Article> | null。create なら null、update なら Readonly<Article>
-  // next: Readonly<Article>。保存済みの値の型
+  // next: Readonly<Article>。永続化の型
   ...
 };
 ```
@@ -606,7 +606,7 @@ rule の失敗の値は、check が `Result.fail` に入れた値そのもので
 | 5 | seal または output | 保存では id を付けて封をする。action では `output` で値を組み立てて封をする | newId の port の失敗 |
 
 - **input。** 入力は、入力にある項目だけを、その項目の schema で検証します。schema にない項目が入っていたら失敗です。`create` では、入力全体を schema で検証し、既定値を入れます。この step の失敗の値には、schema の検証で見つかった問題がすべて入ります。
-- **merge。** 入力で `undefined` の項目は既存の値を残し、`null` の項目は `null` で上書きします。残した項目は、保存済みの値の型のままです。既存の値は、provider が正しい形で返す前提で、もう一度は検証しません。
+- **merge。** 入力で `undefined` の項目は既存の値を残し、`null` の項目は `null` で上書きします。残した項目は、永続化の型のままです。既存の値は、provider が正しい形で返す前提で、もう一度は検証しません。
 - **rule。** rule ごとに、その時点の状態で `when` を評価します。当たらなければ、状態をそのまま次へ渡します。当たれば check を実行し、成功の値を状態に重ねて次へ渡します。失敗したら、そこで止まります。
 - **seal。** 更新なら既存の id、新規なら `model.newId` の provider で作った id を付けます。`newId` が失敗するか、id の schema を満たさない値を返したら失敗です。
 
@@ -636,7 +636,7 @@ plan(articleRules);
 - **ルールの組は対象と1対1。** 操作ごとにルールの組を作りません。どのルールが当たるかは `when` が値の変化から決めます。一覧に並べた rule は、操作ごとに並べ直す必要がありません。
 - **小さな単位で定義する。** model、action、port、rule は1つずつ独立した値です。
 - **型の昇格は状態の型の変化。** 確かめた step が、確かめた値で状態を置き換えます。確かめたと宣言するだけで型を強くする手段は持ちません。
-- **保存済みの値は確かめ済み。** 既存の値は保存済みの値の型で読み込み、マージでもその型のまま引き継ぎます。
+- **DB とやり取りする値は永続化の型。** 保存する値も DB から読んだ値も、永続化の型です。DB から読んだ値は確かめて保存したものなので、マージでもその型のまま引き継ぎます。
 - **境界で受け取り、中では信じる。** id と入力は最初の step で検証します。actor は呼び出し側で認証し、操作の認可は rule で判定します。
 - **副作用はすべて port。** check から呼ぶ port、既存の値の取得、id の生成、時計の実装は、`provide` で注入します。
 - **値の形は schema、項目をまたぐ条件は rule。** schema は項目ごとの形を表し、更新では入力にある項目だけを検証します。項目をまたぐ条件は rule に書くので、更新のたびに値の全体を検証し直す必要はありません。
@@ -667,7 +667,7 @@ plan(articleRules);
 
 ## 未決定の論点
 
-- **線路をたどる型の計算が成り立つか。** 並べたタプルを先頭から順にたどり、状態の型を step ごとに変えながら、各 rule の前提の型と照合し、最後に保存済みの値の型と照合します。この計算が型で成り立つか、rule の数が増えても実用的な速さで終わるかは、まだ試していません。
+- **線路をたどる型の計算が成り立つか。** 並べたタプルを先頭から順にたどり、状態の型を step ごとに変えながら、各 rule の前提の型と照合し、最後に永続化の型と照合します。この計算が型で成り立つか、rule の数が増えても実用的な速さで終わるかは、まだ試していません。
 - **型での provider の確認がどこまで成り立つか。** ルールの組の並びと provider のタプルから、必要な port の不足を推論できるかは、まだ試していません。
 - **`cached` の引数の比べ方。** 今は JSON にした文字列で比べます。JSON にできない値を引数に取る port をどう扱うかは決めていません。
 - **同じ項目を2つの rule が昇格したときの扱い。** 後ろの rule の値で置き換えるのか、型エラーにするのかを決めていません。
