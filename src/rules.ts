@@ -2,7 +2,7 @@ import { Result } from "@praha/byethrow";
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 import { actionMethods, modelMethods, type BuildMethods } from "./methods.ts";
 import type { Action, Actor, DecideState, DeleteState, Model, Persisted, SaveState, Value } from "./model.ts";
-import type { Port, PortArgs, PortError, PortValue } from "./port.ts";
+import type { AnyPort, Port, PortArgs, PortError, PortValue } from "./port.ts";
 import type { Decider, PlannedRule, RulesetOut, RunnableRuleset, RulesetPorts } from "./ruleset.ts";
 
 export type InputFailure = {
@@ -11,7 +11,7 @@ export type InputFailure = {
 };
 export type LoadFailure<L> = { readonly step: "load"; readonly error: "NOT_FOUND" | PortError<L> };
 
-type AnyLoad = Port<string, readonly [unknown]>;
+type AnyLoad = AnyPort;
 export type Existing<L> = [L] extends [never] ? never : Exclude<PortValue<L>, null>;
 type LoadId<M extends Model> = "id" extends keyof Value<M> ? Exclude<Value<M>["id"], undefined> : never;
 type LoadIdMismatch<M extends Model, L> = [LoadId<M>] extends [never]
@@ -67,16 +67,16 @@ export function modelRules<
   P,
   LA = unknown,
   Out extends { readonly id?: LA | undefined } = { readonly id?: LA | undefined },
-  Pre extends Out & P = never,
+  LT extends (Out & P) | null = never,
   LE = never,
-  L extends Port<string, readonly [LA], Pre | null, LE> = never,
-  Save extends RunnableRuleset<SaveState<NoInfer<Pre> | null, NoInfer<Out>>, unknown, unknown, string> | undefined =
+  L extends Port<string, [LA], LT, LE> = never,
+  Save extends RunnableRuleset<SaveState<NoInfer<LT & {}> | null, NoInfer<Out>>, unknown, unknown, string> | undefined =
     undefined,
-  Del extends RunnableRuleset<DeleteState<NoInfer<Pre>>, unknown, unknown, string> | undefined = undefined,
+  Del extends RunnableRuleset<DeleteState<NoInfer<LT & {}>>, unknown, unknown, string> | undefined = undefined,
 >(
   m: Model<N, In, Out, P>,
   def: {
-    readonly load?: L & Port<string, readonly [LA], Pre | null, LE> & LoadMismatch<Model<N, In, Out, P>, L>;
+    readonly load?: L & Port<string, [LA], LT, LE> & LoadMismatch<Model<N, In, Out, P>, L>;
     readonly save?: Save &
       PersistedGuard<Model<N, In, Out, P>, SaveEnd<Model<N, In, Out, P>, NoInfer<L>, NoInfer<Save>>>;
     readonly delete?: Del & ([L] extends [never] ? { readonly "delete には load が要る": true } : unknown);

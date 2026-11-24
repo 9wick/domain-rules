@@ -14,6 +14,7 @@ import {
   rule,
   ruleset,
   type Persistable,
+  type Port,
 } from "../src/index.ts";
 import {
   article,
@@ -222,6 +223,16 @@ describe("型", () => {
     provide(p, (n) => Result.succeed(String(n)));
     // @ts-expect-error 結果の型が違う
     provide(p, () => Result.succeed(1));
+  });
+
+  test("port を広い型に代入して、宣言と違う型の実装を登録することはできない", () => {
+    const p = port("p").of<(n: number) => string, "E">();
+    // @ts-expect-error 型引数が違う port の型には代入できない
+    const widened: Port<"p", [number], unknown, unknown> = p;
+    expectTypeOf(widened).not.toBeNever();
+    // @ts-expect-error 実装を広い型で受け取る provider の型にも代入できない
+    const providable: { readonly provider: (impl: (n: number) => Result.Result<unknown, unknown>) => unknown } = p;
+    expectTypeOf(providable).not.toBeNever();
   });
 
   test("with で前提を付けない rule の pre は永続化の型", () => {

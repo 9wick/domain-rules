@@ -1,5 +1,5 @@
 import { Result } from "@praha/byethrow";
-import { runWithPorts, type Port, type PortCall, type PortErrors, type PortNames, type Ports } from "./port.ts";
+import { runWithPorts, type AnyPort, type PortCall, type PortErrors, type PortNames, type Ports } from "./port.ts";
 import type { Rule } from "./rule.ts";
 import {
   describeWhen,
@@ -51,10 +51,10 @@ export class Ruleset<K extends TrackKind, T extends string, In extends {}, D, E,
   declare readonly [startState]: (s: In) => void;
   readonly kind = "ruleset";
   readonly plan: readonly PlannedRule[];
-  readonly ports: readonly Port[];
+  readonly ports: readonly AnyPort[];
   readonly run: RunState<In, D, E>;
 
-  constructor(plan: readonly PlannedRule[], ports: readonly Port[], run: RunState<In, D, E>) {
+  constructor(plan: readonly PlannedRule[], ports: readonly AnyPort[], run: RunState<In, D, E>) {
     this.plan = plan;
     this.ports = ports;
     this.run = run;
@@ -112,7 +112,7 @@ export type RunnableRuleset<In extends {}, D, E, PN extends string> = {
   readonly [startState]: (s: In) => void;
   readonly [rulesetTypes]: { readonly delta: D; readonly error: E };
   readonly plan: readonly PlannedRule[];
-  readonly ports: readonly Port[];
+  readonly ports: readonly AnyPort[];
   readonly run: RunState<In, D, E>;
 };
 export type RulesetOut<R> = R extends { readonly [rulesetTypes]: { readonly delta: infer D } } ? D : never;
@@ -123,6 +123,6 @@ export type RulesetPorts<R> = R extends { readonly [portNames]: infer PN } ? PN 
 export type Decider<In, Out, E, PN extends string> = {
   readonly [portNames]: PN;
   readonly plan: readonly PlannedRule[];
-  readonly ports: readonly Port[];
+  readonly ports: readonly AnyPort[];
   readonly run: (s: In, call: PortCall) => Promise<Result.Result<Out, E>>;
 };

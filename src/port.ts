@@ -4,14 +4,11 @@ import { implFor } from "./unchecked.ts";
 
 declare const portTypes: unique symbol;
 
-// port は宣言だけで、実装は provider であとから渡す。引数・値・失敗の型は宣言の型の上にだけある
-// port は宣言だけで、実装は provider であとから渡す。引数・値・失敗の型は宣言の型の上にだけある
-export class Port<
-  N extends string = string,
-  A extends readonly unknown[] = readonly unknown[],
-  T = unknown,
-  E = unknown,
-> {
+type ImplOf<A extends readonly unknown[], T, E> = (...args: A) => Result.Result<T, E> | Result.ResultAsync<T, E>;
+
+// port は宣言だけで、実装は provider であとから渡す。引数・値・失敗の型は宣言の型の上にだけある。
+// 型引数は不変にする。広い型の port として扱えると、宣言と違う型の実装を登録できてしまうため
+export class Port<N extends string, in out A extends readonly unknown[], in out T, in out E> {
   declare readonly [portTypes]: { readonly args: A; readonly value: T; readonly error: E };
   readonly kind = "port";
   readonly name: N;
@@ -25,15 +22,21 @@ export class Port<
     Object.freeze(this);
   }
 
-  // provide から呼ぶ。実装の型を port の型引数で受け取るので、呼び出す側の型で合っているかが決まる
-  provider(impl: (...args: A) => Result.Result<T, E> | Result.ResultAsync<T, E>): Provider<N> {
-    return Object.freeze({ kind: "port", name: this.name, token: this.token, impl });
-  }
+  // provide から呼ぶ。method ではなく関数の property にするのは、method の引数は広い型の object の型へ代入するときに
+  // 確かめられず、宣言と違う型の実装を渡せてしまうため
+  readonly provider = (impl: ImplOf<A, T, E>): Provider<N> =>
+    Object.freeze({ kind: "port", name: this.name, token: this.token, impl });
 
-  valued(v: T): Provider<N> {
-    return this.provider(() => Result.succeed(v));
-  }
+  readonly valued = (v: T): Provider<N> => this.provider(() => Result.succeed(v));
 }
+
+// 型引数を問わない port。型の上で port の一覧や record を持つためで、実装の登録には使えない
+export type AnyPort = {
+  readonly kind: "port";
+  readonly name: string;
+  readonly token: symbol;
+  readonly cached: boolean;
+};
 
 class Clock {
   readonly kind = "clock";
@@ -44,22 +47,20 @@ class Clock {
     Object.freeze(this);
   }
 
-  provider(now: () => number): Provider<"clock"> {
-    return Object.freeze({ kind: "clock", name: this.name, token: this.token, now });
-  }
+  readonly provider = (now: () => number): Provider<"clock"> =>
+    Object.freeze({ kind: "clock", name: this.name, token: this.token, now });
 
-  valued(v: number): Provider<"clock"> {
-    return this.provider(() => v);
-  }
+  readonly valued = (v: number): Provider<"clock"> => this.provider(() => v);
 }
 export type { Clock };
 
-export type PortArgs<P> = P extends Port<string, infer A> ? A : never;
-export type PortValue<P> = P extends Port<string, readonly unknown[], infer T> ? T : never;
-export type PortError<P> = P extends Port<string, readonly unknown[], unknown, infer E> ? E : never;
+type TypesOf<P> = P extends { readonly [portTypes]: infer X } ? X : never;
+export type PortArgs<P> = TypesOf<P> extends { readonly args: infer A extends readonly unknown[] } ? A : never;
+export type PortValue<P> = TypesOf<P> extends { readonly value: infer T } ? T : never;
+export type PortError<P> = TypesOf<P> extends { readonly error: infer E } ? E : never;
 
-export type Ports = Readonly<Record<string, Port>>;
-export type NoPorts = Readonly<Record<never, Port>>;
+export type Ports = Readonly<Record<string, AnyPort>>;
+export type NoPorts = Readonly<Record<never, AnyPort>>;
 export type PortFns<P extends Ports> = {
   readonly [K in keyof P]: (...args: PortArgs<P[K]>) => Promise<PortValue<P[K]>>;
 };
@@ -76,7 +77,7 @@ export const cached = <N extends string, A extends readonly unknown[], T, E>(p: 
 
 export const clock: Clock = new Clock();
 
-export type Impl<P extends Port> = (
+export type Impl<P extends AnyPort> = (
   ...args: PortArgs<P>
 ) => Result.Result<PortValue<P>, PortError<P>> | Result.ResultAsync<PortValue<P>, PortError<P>>;
 
@@ -85,8 +86,8 @@ export type Provider<N extends string = string> =
   | { readonly kind: "port"; readonly name: N; readonly token: symbol; readonly impl: (...args: never) => unknown }
   | { readonly kind: "clock"; readonly name: N; readonly token: symbol; readonly now: () => number };
 
-type Providable<N extends string, I> = { provider(impl: I): Provider<N> };
-type Valuable<N extends string, V> = { valued(v: V): Provider<N> };
+type Providable<N extends string, I> = { readonly provider: (impl: I) => Provider<N> };
+type Valuable<N extends string, V> = { readonly valued: (v: V) => Provider<N> };
 
 export const provide = Object.assign(
   <N extends string, I>(target: Providable<N, I>, impl: NoInfer<I>): Provider<N> => target.provider(impl),
@@ -95,9 +96,12 @@ export const provide = Object.assign(
 
 export type Impls = ReadonlyMap<symbol, (...args: never) => unknown>;
 
-export type PortCall = <P extends Port>(p: P, args: PortArgs<P>) => Promise<Result.Result<PortValue<P>, PortError<P>>>;
+export type PortCall = <P extends AnyPort>(
+  p: P,
+  args: PortArgs<P>,
+) => Promise<Result.Result<PortValue<P>, PortError<P>>>;
 
-const requireImpl = <P extends Port>(impls: Impls, p: P): Impl<P> => {
+const requireImpl = <P extends AnyPort>(impls: Impls, p: P): Impl<P> => {
   const impl = implFor(impls, p);
   // bind が provider の不足を確かめてから呼ぶので、ここに来るのは壊れたときだけ
   if (impl === undefined) throw new Error(`port "${p.name}" の provider がありません`);
@@ -105,7 +109,7 @@ const requireImpl = <P extends Port>(impls: Impls, p: P): Impl<P> => {
 };
 
 // 同じ引数の呼び出しを1回の呼び出しの中で使い回す
-const memoize = <P extends Port>(impl: Impl<P>): Impl<P> => {
+const memoize = <P extends AnyPort>(impl: Impl<P>): Impl<P> => {
   const results = new Map<string, ReturnType<Impl<P>>>();
   return (...args) => {
     const key = JSON.stringify(args);
@@ -119,7 +123,7 @@ const memoize = <P extends Port>(impl: Impl<P>): Impl<P> => {
 
 export const portCaller = (impls: Impls): PortCall => {
   const memos = new Map<symbol, (...args: never) => unknown>();
-  const memoFor = <P extends Port>(p: P): Impl<P> => {
+  const memoFor = <P extends AnyPort>(p: P): Impl<P> => {
     const memo = implFor(memos, p);
     if (memo !== undefined) return memo;
     const created = memoize(requireImpl(impls, p));

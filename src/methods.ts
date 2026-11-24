@@ -68,12 +68,15 @@ const validatePartial = async <Out>(
 
 const load = async <A, V, E>(
   inv: Invocation,
-  port: Port<string, readonly [A], V | null, E>,
+  port: Port<string, [A], V, E>,
   id: A,
-): Promise<Result.Result<V, Failure>> => {
+): Promise<Result.Result<V & {}, Failure>> => {
   const r = await inv.call(port, [id]);
   if (Result.isFailure(r)) return Result.fail({ step: "load", error: r.error });
-  return r.value === null ? Result.fail({ step: "load", error: "NOT_FOUND" }) : Result.succeed(r.value);
+  const existing = r.value;
+  return existing === null || existing === undefined
+    ? Result.fail({ step: "load", error: "NOT_FOUND" })
+    : Result.succeed(existing);
 };
 
 type SaveRules<Pre, Out> = RunnableRuleset<SaveState<Pre | null, Out>, unknown, unknown, string>;
@@ -94,23 +97,23 @@ const saveWith = async <Pre, Out>(
 
 // 更新では、既存の値に入力を重ねて next にする。既存の値の型は入力の型に代入できるので、重ねた値も入力の型になる
 export const modelMethods =
-  <LA, Out extends { readonly id?: LA | undefined }, Pre extends Out, LE>(def: {
+  <LA, Out extends { readonly id?: LA | undefined }, LT extends Out | null, LE>(def: {
     readonly schema: ObjectSchema<unknown, Out>;
-    readonly load: Port<string, readonly [LA], Pre | null, LE> | undefined;
-    readonly save: SaveRules<Pre, Out> | undefined;
-    readonly delete: DeleteRules<Pre> | undefined;
+    readonly load: Port<string, [LA], LT, LE> | undefined;
+    readonly save: SaveRules<LT & {}, Out> | undefined;
+    readonly delete: DeleteRules<LT & {}> | undefined;
   }): BuildMethods =>
   (invocation) => {
     const { schema, load: loadPort, save, delete: del } = def;
 
     const create =
-      (rules: SaveRules<Pre, Out>): Method<State> =>
+      (rules: SaveRules<LT & {}, Out>): Method<State> =>
       async ({ input, actor }) => {
         const next = await validateWhole(schema, input);
         return Result.isFailure(next) ? next : saveWith(rules, invocation(), null, next.value, actor);
       };
 
-    const loadExisting = async (loader: Port<string, readonly [LA], Pre | null, LE>, input: State) => {
+    const loadExisting = async (loader: Port<string, [LA], LT, LE>, input: State) => {
       const validated = await validatePartial(schema.entries, input);
       if (Result.isFailure(validated)) return validated;
       const id = validated.value.id;
@@ -122,22 +125,23 @@ export const modelMethods =
     };
 
     const update =
-      (rules: SaveRules<Pre, Out>, loader: Port<string, readonly [LA], Pre | null, LE>): Method<State> =>
+      (rules: SaveRules<LT & {}, Out>, loader: Port<string, [LA], LT, LE>): Method<State> =>
       async ({ input, actor }) => {
         const existing = await loadExisting(loader, input);
         if (Result.isFailure(existing)) return existing;
         const { inv, pre, validated } = existing.value;
-        const next: Out = { ...pre, ...validated };
+        const base: Out = pre;
+        const next: Out = { ...base, ...validated };
         return saveWith(rules, inv, pre, next, actor);
       };
 
     const upsert =
-      (rules: SaveRules<Pre, Out>, loader: Port<string, readonly [LA], Pre | null, LE>): Method<State> =>
+      (rules: SaveRules<LT & {}, Out>, loader: Port<string, [LA], LT, LE>): Method<State> =>
       (args) =>
         args.input["id"] === undefined ? create(rules)(args) : update(rules, loader)(args);
 
     const remove =
-      (rules: DeleteRules<Pre>, loader: Port<string, readonly [LA], Pre | null, LE>): Method<State> =>
+      (rules: DeleteRules<LT & {}>, loader: Port<string, [LA], LT, LE>): Method<State> =>
       async ({ input, actor }) => {
         const existing = await loadExisting(loader, input);
         if (Result.isFailure(existing)) return existing;
