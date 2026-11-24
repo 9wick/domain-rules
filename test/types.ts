@@ -107,20 +107,17 @@ describe("型", () => {
   });
 
   test("永続化の型にならない並びは型エラー", () => {
-    modelRules(article, {
-      load: findArticleById,
+    modelRules(article)
+      .load(findArticleById)
       // @ts-expect-error reviewerExists がないと next.reviewerId が UserId のまま
-      save: ruleset(blogExists).add(existingArticleId).add(articleIdAssigned),
-    });
-    modelRules(article, {
-      load: findArticleById,
+      .save(ruleset(blogExists).add(existingArticleId).add(articleIdAssigned));
+    modelRules(article)
+      .load(findArticleById)
       // @ts-expect-error articleIdAssigned がないと next.id に null が残る
-      save: ruleset(blogExists).add(reviewerExists).add(existingArticleId),
-    });
-    modelRules(article, {
-      load: findArticleById,
-      save: ruleset(blogExists).add(reviewerExists).add(existingArticleId).add(articleIdAssigned),
-    });
+      .save(ruleset(blogExists).add(reviewerExists).add(existingArticleId));
+    modelRules(article)
+      .load(findArticleById)
+      .save(ruleset(blogExists).add(reviewerExists).add(existingArticleId).add(articleIdAssigned));
   });
 
   test("線路の違う rule は並べられない", () => {
@@ -130,15 +127,15 @@ describe("型", () => {
   });
 
   test("alwaysAllow だけの delete は、確かめずに削除できるメソッドを作る", () => {
-    const set = modelRules(article, { load: findArticleById, delete: ruleset(alwaysAllow) });
+    const set = modelRules(article).load(findArticleById).delete(ruleset(alwaysAllow));
     const bound = bind([set], { providers: [provide.value(clock, 0), provide.value(findArticleById, null)] });
     expectTypeOf(bound.article).toHaveProperty("delete");
     expectTypeOf(bound.article).not.toHaveProperty("create");
   });
 
   test("delete には load が要る", () => {
-    // @ts-expect-error load がない
-    modelRules(article, { delete: ruleset(onlyDraftIsDeletable) });
+    expectTypeOf(modelRules(article)).not.toHaveProperty("delete");
+    expectTypeOf(modelRules(article).load(findArticleById)).toHaveProperty("delete");
   });
 
   test("使えない線路の when は型エラー", () => {
@@ -162,11 +159,10 @@ describe("型", () => {
       when: changed("reviewerId"),
       check: ({ next }) => Result.succeed({ next: { reviewerId: next.reviewerId as UserIdExisted } }),
     });
-    modelRules(article, {
-      load: findArticleById,
+    modelRules(article)
+      .load(findArticleById)
       // @ts-expect-error 当たらないときに reviewerId が UserId のまま残る
-      save: ruleset(blogExists).add(maybe).add(existingArticleId).add(articleIdAssigned),
-    });
+      .save(ruleset(blogExists).add(maybe).add(existingArticleId).add(articleIdAssigned));
   });
 
   test("load の型を前提にする線路は、その型から始める", () => {
@@ -183,9 +179,11 @@ describe("型", () => {
       .add(reviewerExists)
       .add(existingArticleId)
       .add(articleIdAssigned);
-    modelRules(article, { load: findArticleById, save });
-    // @ts-expect-error 永続化の型を返す load では、pre が ExistingArticle にならない
-    modelRules(article, { load: port("findAny").of<(id: ArticleId) => Article | null>(), save });
+    modelRules(article).load(findArticleById).save(save);
+    modelRules(article)
+      .load(port("findAny").of<(id: ArticleId) => Article | null>())
+      // @ts-expect-error 永続化の型を返す load では、pre が ExistingArticle にならない
+      .save(save);
   });
 
   test("状態の項目を別の型に置き換える rule は足せない", () => {
@@ -199,10 +197,9 @@ describe("型", () => {
   });
 
   test("provider が足りなければ型エラー", () => {
-    const set = modelRules(article, {
-      load: findArticleById,
-      save: ruleset(blogExists).add(reviewerExists).add(existingArticleId).add(articleIdAssigned),
-    });
+    const set = modelRules(article)
+      .load(findArticleById)
+      .save(ruleset(blogExists).add(reviewerExists).add(existingArticleId).add(articleIdAssigned));
     const run = () => {
       // @ts-expect-error findBlog などの provider がない
       bind([set], { providers: [provide(clock, () => 0)] });

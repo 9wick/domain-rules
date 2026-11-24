@@ -99,15 +99,14 @@ export default defineConfig({
         rules: { "strict/no-throw": "off", "strict/no-try-catch": "off", "typescript/only-throw-error": "off" },
       },
       {
-        // 型の上では安全なのに TypeScript では型 assertion なしに書けない変換だけの module。あとで別のパッケージに切り出す。
-        // 置く条件は keyed.ts の先頭に書いてある
-        files: ["src/keyed.ts"],
-        rules: { "typescript/consistent-type-assertions": "off", "typescript/no-unsafe-type-assertion": "off" },
-      },
-      {
-        // まだ消せていない型 assertion。消す方法が決まるまでの一時的な置き場で、新しく足さない
-        files: ["src/unchecked.ts"],
-        rules: { "typescript/consistent-type-assertions": "off", "typescript/no-unsafe-type-assertion": "off" },
+        // 型の上では安全なのに TypeScript では型 assertion なしに書けない変換だけを置く、別のパッケージ
+        // 置く条件は packages/keyed/src/index.ts の先頭に書いてある。型の約束が値で破れるとき(name の重複)は throw で止める
+        files: ["packages/keyed/src/**/*.ts"],
+        rules: {
+          "typescript/consistent-type-assertions": "off",
+          "typescript/no-unsafe-type-assertion": "off",
+          "strict/no-throw": "off",
+        },
       },
     ],
     options: {

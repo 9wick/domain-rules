@@ -1,5 +1,5 @@
 import { Result } from "@praha/byethrow";
-import type { Resolved } from "./keyed.ts";
+import type { Resolved } from "keyed";
 
 declare const portTypes: unique symbol;
 

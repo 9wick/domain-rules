@@ -401,38 +401,40 @@ model ごとに、rule の組を1つ作ります。保存と削除の線路は `
 ```ts
 import { modelRules, ruleset } from "domain-rules";
 
-export const articleRules = modelRules(article, {
-  load: findArticleById,
-  save: ruleset(memberCanSave)
-    .add(statusChangesAreAllowed)
-    .add(articleImmutableFields)
-    .add(blogExists)
-    .add(reviewerExists)
-    .add(authorIsNotReviewer)
-    .add(uniqueSlugInBlog)
-    .add(publishAtInFuture)
-    .add(onlyReviewerPublishes)
-    .add(onlyAuthorChangesReviewer)
-    .add(slugLockedAfterPublish)
-    .add(publishedIsApproved)
-    .add(blogAcceptsPosts)
-    .add(existingArticleId)
-    .add(articleIdAssigned),
-  delete: ruleset(memberCanDelete).add(onlyDraftIsDeletable),
-});
+export const articleRules = modelRules(article)
+  .load(findArticleById)
+  .save(
+    ruleset(memberCanSave)
+      .add(statusChangesAreAllowed)
+      .add(articleImmutableFields)
+      .add(blogExists)
+      .add(reviewerExists)
+      .add(authorIsNotReviewer)
+      .add(uniqueSlugInBlog)
+      .add(publishAtInFuture)
+      .add(onlyReviewerPublishes)
+      .add(onlyAuthorChangesReviewer)
+      .add(slugLockedAfterPublish)
+      .add(publishedIsApproved)
+      .add(blogAcceptsPosts)
+      .add(existingArticleId)
+      .add(articleIdAssigned),
+  )
+  .delete(ruleset(memberCanDelete).add(onlyDraftIsDeletable));
 ```
 
-`ruleset(rule)` は、先頭の rule が受け取る状態から線路を始めます。`add` は元の線路を変えずに、rule を足した新しい線路を返します。条件なしで削除してよい model は、何も確かめずに通す `alwaysAllow` を使って `delete: ruleset(alwaysAllow)` と書きます。
+`ruleset(rule)` は、先頭の rule が受け取る状態から線路を始めます。`add` は元の線路を変えずに、rule を足した新しい線路を返します。条件なしで削除してよい model は、何も確かめずに通す `alwaysAllow` を使って `.delete(ruleset(alwaysAllow))` と書きます。
 
-- **`load`。** 既存の値を取る port です。ライブラリは `schema.input` で検証・変換した後の `id` でこの port を呼びます。load を宣言するには入力スキーマに `id` があり、port が変換後の型を受け取れる必要があります。戻り値が `null` なら load の step で失敗します。返り値の型は、model の `schema.persisted` の型と、`schema.input` の出力の型の両方に代入できなければなりません。更新では既存の値に入力を重ねて `next` にするので、入力にない項目には既存の値が入るからです。`save` で `update` や `upsert` を、または `delete` を使うときに要ります。
-- **`save`。** `article.save` の rule の線路です。`create`、`update`、`upsert` のどれで呼ばれても、この線路を順に通ります。
-- **`delete`。** `article.delete` の rule の線路です。`delete` を書かなければ、その model は削除できません。束ねたあとに `delete` のメソッドが作られないからです。`save` も同じです。
+- **`load(port)`。** 既存の値を取る port です。ライブラリは `schema.input` で検証・変換した後の `id` でこの port を呼びます。load を宣言するには入力スキーマに `id` があり、port が変換後の型を受け取れる必要があります。戻り値が `null` なら load の step で失敗します。返り値の型は、model の `schema.persisted` の型と、`schema.input` の出力の型の両方に代入できなければなりません。更新では既存の値に入力を重ねて `next` にするので、入力にない項目には既存の値が入るからです。`update`、`upsert`、`delete` を作るときに要ります。`save` と `delete` より前に書きます。
+- **`save(線路)`。** `article.save` の rule の線路です。`create` のメソッドを作ります。`load` のあとに書くと、`update` と `upsert` も作ります。どのメソッドで呼ばれても、この線路を順に通ります。
+- **`delete(線路)`。** `article.delete` の rule の線路です。`load` のあとにだけ書けます。`delete` を書かなければ、その model は削除できません。束ねたあとに `delete` のメソッドが作られないからです。`save` も同じです。
 
 状態の型は、次の場所で確かめます。
 
 - **前提の型(`add`)。** `add` は、その時点の状態を受け取れる rule だけを受け付けます。`blogAcceptsPosts` は `next.blogId` が `BlogIdExisted` であることを前提にしています。`blogExists` より前に足すと型エラーになります。線路の種類が違う rule も型エラーになります。
-- **開始の状態(`modelRules`)。** model と load から決まる開始の状態が、線路の先頭の rule の前提を満たさなければ型エラーになります。
-- **永続化の型(`modelRules`)。** 保存の線路の最後の状態で、`next` が model の `schema.persisted` の型にならなければ型エラーになります。`reviewerExists` を足し忘れると、`next.reviewerId` が `UserId` のままなので型エラーになります。`articleIdAssigned` を足し忘れると、`next.id` に `undefined` が残るので型エラーになります。
+- **開始の状態(`save` と `delete`)。** model と load から決まる開始の状態が、線路の先頭の rule の前提を満たさなければ型エラーになります。
+- **永続化の型(`save` と `delete`)。** 保存の線路の最後の状態で、`next` が model の `schema.persisted` の型にならなければ型エラーになります。`reviewerExists` を足し忘れると、`next.reviewerId` が `UserId` のままなので型エラーになります。`articleIdAssigned` を足し忘れると、`next.id` に `undefined` が残るので型エラーになります。
+- **書く順番。** 同じメソッドを2回書くこと、`load` を `save` よりあとに書くこと、`load` なしで `delete` を書くことは、型エラーになります。
 
 認証済みの actor は利用者が渡します。ライブラリは認証も認可もしません。この例では、認可を rule で書いています。
 

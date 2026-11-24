@@ -1,6 +1,6 @@
 import { Result } from "@praha/byethrow";
 import type { Track } from "./model.ts";
-import { resolveField, type Holder, type StrictRecord } from "./keyed.ts";
+import { resolveField, type Holder, type StrictRecord } from "keyed";
 import {
   runWithPorts,
   type AnyPort,

@@ -260,6 +260,7 @@ describe("bind", () => {
   test("provider の不足と重複、rule の組の重複は起動時にエラー", () => {
     expect(() => bind([articleRules], { providers: base.slice(1) })).toThrow(/findArticleById/);
     expect(() => bind([articleRules], { providers: [...base, provide.value(clock, 0)] })).toThrow(/clock/);
+    // @ts-expect-error 同じ名前の rule の組は型でも弾く
     expect(() => bind([articleRules, articleRules], { providers: base })).toThrow(/article/);
   });
 });

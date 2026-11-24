@@ -226,25 +226,26 @@ const memberOnly = {
 export const memberCanSave = rule(article.save, memberOnly);
 export const memberCanDelete = rule(article.delete, memberOnly);
 
-export const articleRules = modelRules(article, {
-  load: findArticleById,
-  save: ruleset(memberCanSave)
-    .add(statusChangesAreAllowed)
-    .add(articleImmutableFields)
-    .add(blogExists)
-    .add(reviewerExists)
-    .add(authorIsNotReviewer)
-    .add(uniqueSlugInBlog)
-    .add(publishAtInFuture)
-    .add(onlyReviewerPublishes)
-    .add(onlyAuthorChangesReviewer)
-    .add(slugLockedAfterPublish)
-    .add(publishedIsApproved)
-    .add(blogAcceptsPosts)
-    .add(existingArticleId)
-    .add(articleIdAssigned),
-  delete: ruleset(memberCanDelete).add(onlyDraftIsDeletable),
-});
+export const articleRules = modelRules(article)
+  .load(findArticleById)
+  .save(
+    ruleset(memberCanSave)
+      .add(statusChangesAreAllowed)
+      .add(articleImmutableFields)
+      .add(blogExists)
+      .add(reviewerExists)
+      .add(authorIsNotReviewer)
+      .add(uniqueSlugInBlog)
+      .add(publishAtInFuture)
+      .add(onlyReviewerPublishes)
+      .add(onlyAuthorChangesReviewer)
+      .add(slugLockedAfterPublish)
+      .add(publishedIsApproved)
+      .add(blogAcceptsPosts)
+      .add(existingArticleId)
+      .add(articleIdAssigned),
+  )
+  .delete(ruleset(memberCanDelete).add(onlyDraftIsDeletable));
 
 export const previewArticle = action({
   name: "previewArticle",
