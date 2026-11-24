@@ -8,8 +8,10 @@ import type {
   Existing,
   InputFailure,
   LoadFailure,
+  DeleteEnd,
   ModelRules,
   RuleSet,
+  SaveEnd,
   RuleSetPorts,
 } from "./rules.ts";
 import type { RunnableRuleset } from "./ruleset.ts";
@@ -32,7 +34,7 @@ type SaveMethods<M extends Model, L, Save> = [Save] extends [undefined]
       readonly create: (
         args: Args<Omit<InputOf<M>, "id">>,
       ) => Result.ResultAsync<
-        Persistable<M, "create", Existing<L>, ActorOf<OutOf<Save>>>,
+        Persistable<M, "create", Existing<L>, ActorOf<SaveEnd<M, L, Save>>>,
         InputFailure | ErrorOf<Save>
       >;
     } & ([L] extends [never]
@@ -41,14 +43,14 @@ type SaveMethods<M extends Model, L, Save> = [Save] extends [undefined]
           readonly update: (
             args: Args<InputOf<M> & { readonly id: Id<M> }>,
           ) => Result.ResultAsync<
-            Persistable<M, "update", Existing<L>, ActorOf<OutOf<Save>>>,
+            Persistable<M, "update", Existing<L>, ActorOf<SaveEnd<M, L, Save>>>,
             InputFailure | LoadFailure<L> | ErrorOf<Save>
           >;
           readonly upsert: (
             args: Args<InputOf<M>>,
           ) => Result.ResultAsync<
-            | Persistable<M, "create", Existing<L>, ActorOf<OutOf<Save>>>
-            | Persistable<M, "update", Existing<L>, ActorOf<OutOf<Save>>>,
+            | Persistable<M, "create", Existing<L>, ActorOf<SaveEnd<M, L, Save>>>
+            | Persistable<M, "update", Existing<L>, ActorOf<SaveEnd<M, L, Save>>>,
             InputFailure | LoadFailure<L> | ErrorOf<Save>
           >;
         });
@@ -61,7 +63,7 @@ type DeleteMethods<M extends Model, L, Del> = [Del] extends [undefined]
         readonly delete: (
           args: Args<{ readonly id: Id<M> }>,
         ) => Result.ResultAsync<
-          Deletable<M, Existing<L>, ActorOf<OutOf<Del>>>,
+          Deletable<M, Existing<L>, ActorOf<DeleteEnd<L, Del>>>,
           InputFailure | LoadFailure<L> | ErrorOf<Del>
         >;
       };

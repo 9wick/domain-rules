@@ -9,7 +9,7 @@ export {
   type Value,
 } from "./model.ts";
 export { cached, clock, port, provide, type Clock, type Port, type Provider } from "./port.ts";
-export { immutable, rule, type Rule } from "./rule.ts";
+export { alwaysAllow, immutable, rule, type Rule } from "./rule.ts";
 export {
   actionRules,
   modelRules,

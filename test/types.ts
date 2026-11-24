@@ -3,6 +3,7 @@ import { describe, expectTypeOf, test } from "vite-plus/test";
 import {
   actor,
   always,
+  alwaysAllow,
   bind,
   changed,
   clock,
@@ -126,6 +127,13 @@ describe("型", () => {
       .add(onlyDraftIsDeletable);
   });
 
+  test("alwaysAllow だけの delete は、確かめずに削除できるメソッドを作る", () => {
+    const set = modelRules(article, { load: findArticleById, delete: ruleset(alwaysAllow) });
+    const bound = bind([set], { providers: [provide.value(clock, 0), provide.value(findArticleById, null)] });
+    expectTypeOf(bound.article).toHaveProperty("delete");
+    expectTypeOf(bound.article).not.toHaveProperty("create");
+  });
+
   test("delete には load が要る", () => {
     // @ts-expect-error load がない
     modelRules(article, { delete: ruleset(onlyDraftIsDeletable) });
@@ -168,9 +176,7 @@ describe("型", () => {
         return Result.succeed();
       },
     });
-    const save = ruleset
-      .from(article.save.with<{ pre: ExistingArticle | null }>())
-      .add(existingOnly)
+    const save = ruleset(existingOnly)
       .add(blogExists)
       .add(reviewerExists)
       .add(existingArticleId)

@@ -16,7 +16,7 @@ import {
 } from "./port.ts";
 import type { CheckResult, FailureOf, Rule, SuccessOf } from "./rule.ts";
 import type { AnyRunnable, RuleSet } from "./rules.ts";
-import type { Advance } from "./ruleset.ts";
+import type { Advance, RunnableRuleset } from "./ruleset.ts";
 import type { AnySealed, ContentsOf } from "./seal.ts";
 import type { AnyWhen, CombinedNeed, TrackKind, WhenParam } from "./when.ts";
 
@@ -106,3 +106,10 @@ export const boundOf = <Sets extends readonly RuleSet[]>(
 // check の返り値は Result か、Result の Promise。await した値は成功と失敗の型を R から引ける
 export const checked = <R extends CheckResult>(r: Awaited<R>): Result.Result<SuccessOf<R>, FailureOf<R>> =>
   r as Result.Result<SuccessOf<R>, FailureOf<R>>;
+
+// 線路は受け取った状態に値を重ねるだけなので、先頭の rule の前提より多くを持つ状態で始めれば、最後の状態もそれを持つ
+export const runFrom = async <Start extends In, In, S, E, PN extends string>(
+  r: RunnableRuleset<In, S, E, PN>,
+  start: Start,
+  call: PortCall,
+): Promise<Result.Result<Start & S, E>> => (await r.run(start, call)) as Result.Result<Start & S, E>;

@@ -123,7 +123,7 @@ rule は、どの線路に属するかを値で受け取ります。線路は3�
 | model の削除 | `article.delete`        | `{ pre: Article, next: null, actor, now }`                 |
 | action       | `previewArticle.decide` | `{ input, actor, now }`                                    |
 
-- `pre` は既存の値です。DB から読んだ値で、新規作成のときは `null` です。実行時の値は、rule の組の `load` に渡した port が返したものです。rule の中での型は、model の永続化の型です。rule を定義する時点では、どの port が既存の値を取るかが決まっていないからです。port の返り値の型を前提にする rule は、`with` でその型を付け、線路を `ruleset.from(article.save.with<{ pre: ExistingArticle | null }>())` のように、その型から始めます。開始の状態がその型を満たすかは、`modelRules` が load の型で確かめます。
+- `pre` は既存の値です。DB から読んだ値で、新規作成のときは `null` です。実行時の値は、rule の組の `load` に渡した port が返したものです。rule の中での型は、model の永続化の型です。rule を定義する時点では、どの port が既存の値を取るかが決まっていないからです。port の返り値の型を前提にする rule は、`with` でその型を付けます。その rule を線路の先頭に置けば、開始の状態がその型を満たすかを、`modelRules` が load の型で確かめます。
 - `next` は変更後の値です。既存の値に入力を重ねたものです。型は `ArticleValue` ですが、入力にない項目には、既存の値がそのまま入っています。
 - `now` は呼び出された時刻です。`clock` の provider が返し、1回の呼び出しの中では同じ値です。
 
@@ -422,7 +422,7 @@ export const articleRules = modelRules(article, {
 });
 ```
 
-`ruleset(rule)` は、先頭の rule が受け取る状態から線路を始めます。rule のない線路は `ruleset.from(article.delete)` のように線路の種類から作ります。`add` は元の線路を変えずに、rule を足した新しい線路を返します。
+`ruleset(rule)` は、先頭の rule が受け取る状態から線路を始めます。`add` は元の線路を変えずに、rule を足した新しい線路を返します。条件なしで削除してよい model は、何も確かめずに通す `alwaysAllow` を使って `delete: ruleset(alwaysAllow)` と書きます。
 
 - **`load`。** 既存の値を取る port です。ライブラリは `schema.input` で検証・変換した後の `id` でこの port を呼びます。load を宣言するには入力スキーマに `id` があり、port が変換後の型を受け取れる必要があります。戻り値が `null` なら load の step で失敗します。返り値の型は、model の `schema.persisted` の型に代入できなければなりません。`save` で `update` や `upsert` を、または `delete` を使うときに要ります。
 - **`save`。** `article.save` の rule の線路です。`create`、`update`、`upsert` のどれで呼ばれても、この線路を順に通ります。

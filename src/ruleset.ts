@@ -1,5 +1,4 @@
 import { Result } from "@praha/byethrow";
-import type { Track } from "./model.ts";
 import { runWithPorts, type Port, type PortCall, type PortErrors, type PortNames, type Ports } from "./port.ts";
 import type { CheckResult, FailureOf, Rule, SuccessOf } from "./rule.ts";
 import { advanced, checked } from "./unchecked.ts";
@@ -33,18 +32,15 @@ declare const portNames: unique symbol;
 export class Ruleset<K extends TrackKind, T extends string, In, S, E, PN extends string> {
   declare readonly [portNames]: PN;
   readonly kind = "ruleset";
-  readonly track: { readonly kind: K; readonly target: T };
   readonly plan: readonly PlannedRule[];
   readonly ports: readonly Port[];
   readonly run: (s: In, call: PortCall) => Promise<Result.Result<S, E>>;
 
   constructor(
-    track: { readonly kind: K; readonly target: T },
     plan: readonly PlannedRule[],
     ports: readonly Port[],
     run: (s: In, call: PortCall) => Promise<Result.Result<S, E>>,
   ) {
-    this.track = track;
     this.plan = plan;
     this.ports = ports;
     this.run = run;
@@ -71,7 +67,6 @@ export class Ruleset<K extends TrackKind, T extends string, In, S, E, PN extends
       E | StepFailure<N, FailureOf<R> | PortErrors<P>>,
       PN | PortNames<P>
     >(
-      this.track,
       [...this.plan, { name: r.name, when: describeWhen(r.when), ports: ports.map((p) => p.name) }],
       [...this.ports, ...ports],
       async (s0, call) => {
@@ -102,11 +97,6 @@ const step = async <
     : Result.succeed(advanced(r, s, { value: out.value }));
 };
 
-const from = <K extends TrackKind, T extends string, S>(track: Track<K, T, S>): Ruleset<K, T, S, S, never, never> =>
-  new Ruleset<K, T, S, S, never, never>({ kind: track.kind, target: track.target }, [], [], async (s) =>
-    Result.succeed(s),
-  );
-
 const start = <
   K extends TrackKind,
   T extends string,
@@ -117,10 +107,10 @@ const start = <
   P extends Ports,
 >(
   first: Rule<K, T, N, S, W, R, P> & NarrowGuard<S, SuccessOf<R>>,
-) => new Ruleset<K, T, S, S, never, never>(first.track, [], [], async (s) => Result.succeed(s)).add<N, W, R, P>(first);
+) => new Ruleset<K, T, S, S, never, never>([], [], async (s) => Result.succeed(s)).add<N, W, R, P>(first);
 
-// 先頭の rule が受け取る状態から線路を始める。rule のない線路は ruleset.from(線路) で作る
-export const ruleset = Object.assign(start, { from });
+// 先頭の rule が受け取る状態から線路を始める
+export const ruleset = start;
 
 // 線路を走らせるのに要る部分。rule を足す add を含めないので、開始の状態の型だけで代入できるかが決まる
 export type RunnableRuleset<In, S, E, PN extends string> = {
@@ -129,4 +119,5 @@ export type RunnableRuleset<In, S, E, PN extends string> = {
   readonly ports: readonly Port[];
   readonly run: (s: In, call: PortCall) => Promise<Result.Result<S, E>>;
 };
+export type RulesetOut<R> = R extends RunnableRuleset<never, infer S, unknown, string> ? S : never;
 export type RulesetPorts<R> = R extends { readonly [portNames]: infer PN } ? PN : never;

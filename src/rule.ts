@@ -2,7 +2,7 @@ import { Result } from "@praha/byethrow";
 import type { Track } from "./model.ts";
 import type { NoPorts, PortFns, Ports } from "./port.ts";
 import { joinTyped } from "./unchecked.ts";
-import { and, changed, not, onCreate, or, type TrackKind, type WhenParam } from "./when.ts";
+import { always, and, changed, not, onCreate, or, type Always, type TrackKind, type WhenParam } from "./when.ts";
 
 export type CheckResult = Result.Result<unknown, unknown> | Promise<Result.Result<unknown, unknown>>;
 export type SuccessOf<R> = Awaited<R> extends infer X ? (X extends Result.Success<infer V> ? V : never) : never;
@@ -19,7 +19,8 @@ export type Rule<
   P extends Ports,
 > = {
   readonly kind: "rule";
-  readonly track: { readonly kind: K; readonly target: T };
+  // 線路の種類は型の上で rule と線路を合わせるためにある。どの線路にも置ける rule は持たない
+  readonly track?: { readonly kind: K; readonly target: T };
   readonly name: N;
   readonly requires: P | undefined;
   readonly when: W;
@@ -71,3 +72,20 @@ export const immutable = <
       return field === undefined ? Result.succeed() : Result.fail({ code: "IMMUTABLE_FIELD_CHANGED" as const, field });
     },
   });
+
+// 何も確かめずに通す rule。条件なしで削除してよい model の delete に ruleset(alwaysAllow) として渡す
+export const alwaysAllow: Rule<
+  TrackKind,
+  string,
+  "常に許可",
+  unknown,
+  Always,
+  Result.Result<void, never>,
+  NoPorts
+> = Object.freeze({
+  kind: "rule",
+  name: "常に許可",
+  requires: undefined,
+  when: always,
+  check: () => Result.succeed(),
+});

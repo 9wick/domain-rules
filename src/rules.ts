@@ -2,7 +2,8 @@ import { Result } from "@praha/byethrow";
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 import type { Action, Actor, DecideState, DeleteState, Model, Persisted, SaveStates, Value } from "./model.ts";
 import type { Port, PortArgs, PortError, PortValue } from "./port.ts";
-import type { PlannedRule, RunnableRuleset, RulesetPorts } from "./ruleset.ts";
+import type { PlannedRule, RulesetOut, RunnableRuleset, RulesetPorts } from "./ruleset.ts";
+import { runFrom } from "./unchecked.ts";
 
 export type InputFailure = {
   readonly step: "input";
@@ -28,9 +29,16 @@ type LoadMismatch<M extends Model, L> = [L] extends [never]
 type SaveStart<M extends Model, L> = SaveStates<Existing<L>, Value<M>>;
 type DeleteStart<L> = DeleteState<Existing<L>>;
 
+// 線路は開始の状態に値を重ねていくので、最後の状態は開始の状態と線路が重ねた型の交差型になる
+export type SaveEnd<M extends Model, L, Save> = SaveStart<M, L> & RulesetOut<Save>;
+export type DeleteEnd<L, Del> = DeleteStart<L> & RulesetOut<Del>;
+
 // 保存の線路の最後の状態は、next が永続化の型になっていなければならない
-type SaveEnd<M extends Model> = { readonly next: Persisted<M>; readonly actor: unknown };
-type DeleteEnd = { readonly actor: unknown };
+type PersistedGuard<M extends Model, End> = [End] extends [never]
+  ? unknown
+  : [End] extends [{ readonly next: Persisted<M> }]
+    ? unknown
+    : { readonly "最後の next が永続化の型にならない": End extends { readonly next: infer X } ? X : never };
 
 export type AnyRunnable = RunnableRuleset<never, unknown, unknown, string>;
 
@@ -51,13 +59,13 @@ export type ModelRules<
 export function modelRules<
   M extends Model,
   L extends AnyLoad = never,
-  Save extends RunnableRuleset<SaveStart<M, NoInfer<L>>, SaveEnd<M>, unknown, string> | undefined = undefined,
-  Del extends RunnableRuleset<DeleteStart<NoInfer<L>>, DeleteEnd, unknown, string> | undefined = undefined,
+  Save extends RunnableRuleset<SaveStart<M, NoInfer<L>>, unknown, unknown, string> | undefined = undefined,
+  Del extends RunnableRuleset<DeleteStart<NoInfer<L>>, unknown, unknown, string> | undefined = undefined,
 >(
   m: M,
   def: {
     readonly load?: L & LoadMismatch<M, L>;
-    readonly save?: Save;
+    readonly save?: Save & PersistedGuard<M, SaveEnd<M, NoInfer<L>, NoInfer<Save>>>;
     readonly delete?: Del & ([L] extends [never] ? { readonly "delete には load が要る": true } : unknown);
   },
 ): ModelRules<M, NoInfer<L>, NoInfer<Save>, NoInfer<Del>> {
@@ -79,22 +87,25 @@ export type ActionRules<A extends Action = Action, Rs extends AnyRunnable = AnyR
   readonly rules: Rs;
 };
 
-type Decided<S extends { readonly actor: unknown }, T> = { readonly value: T; readonly actor: S["actor"] };
+type DecideStart<A extends Action> = DecideState<StandardSchemaV1.InferOutput<A["input"]>>;
+type Decided<End extends { readonly actor: unknown }, T> = { readonly value: T; readonly actor: End["actor"] };
+
+const actorOf = <X extends { readonly actor: unknown }>(x: X): X["actor"] => x.actor;
 
 // output は線路の最後の step で、最後の状態から返す値を組み立てる
-export function actionRules<A extends Action, S extends { readonly actor: unknown }, E, PN extends string, T>(
+export function actionRules<A extends Action, S, E, PN extends string, T>(
   a: A,
   def: {
-    readonly rules: RunnableRuleset<DecideState<StandardSchemaV1.InferOutput<A["input"]>>, S, E, PN>;
-    readonly output: (s: S) => T;
+    readonly rules: RunnableRuleset<DecideStart<A>, S, E, PN>;
+    readonly output: (s: DecideStart<A> & S) => T;
   },
-): ActionRules<A, RunnableRuleset<DecideState<StandardSchemaV1.InferOutput<A["input"]>>, Decided<S, T>, E, PN>> {
+): ActionRules<A, RunnableRuleset<DecideStart<A>, Decided<DecideStart<A> & S, T>, E, PN>> {
   const { rules, output } = def;
-  const decided: RunnableRuleset<DecideState<StandardSchemaV1.InferOutput<A["input"]>>, Decided<S, T>, E, PN> = {
+  const decided: RunnableRuleset<DecideStart<A>, Decided<DecideStart<A> & S, T>, E, PN> = {
     ...rules,
     run: async (s, call) => {
-      const r = await rules.run(s, call);
-      return Result.isFailure(r) ? r : Result.succeed({ value: output(r.value), actor: r.value.actor });
+      const r = await runFrom(rules, s, call);
+      return Result.isFailure(r) ? r : Result.succeed({ value: output(r.value), actor: actorOf(r.value) });
     },
   };
   return Object.freeze({ kind: "actionRules", name: a.name, action: a, rules: Object.freeze(decided) });

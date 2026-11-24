@@ -2,6 +2,7 @@ import { Result } from "@praha/byethrow";
 import * as v from "valibot";
 import { expect, test } from "vite-plus/test";
 import {
+  alwaysAllow,
   always,
   bind,
   cached,
@@ -123,7 +124,7 @@ const seenNow = rule(item.save, {
 const itemRules = modelRules(item, {
   load: findItem,
   save: ruleset(seenNow).add(assignId),
-  delete: ruleset.from(item.delete),
+  delete: ruleset(alwaysAllow),
 });
 const itemDomain = (load: () => Result.Result<{ id: string; n: number } | null, "DB_DOWN">) =>
   bind([itemRules], { providers: [provide(findItem, load), provide.value(clock, 42)] }).item;
@@ -243,8 +244,8 @@ test("load は入力スキーマで変換された id を受け取る", async ()
   const load = port("loadTransformed").of<(id: number) => { id: number }>();
   const wrongLoad = port("wrongLoad").of<(id: string) => { id: number }>();
   // @ts-expect-error load に渡る id は変換済みの number
-  modelRules(transformed, { load: wrongLoad, delete: ruleset.from(transformed.delete) });
-  const domain = bind([modelRules(transformed, { load, delete: ruleset.from(transformed.delete) })], {
+  modelRules(transformed, { load: wrongLoad, delete: ruleset(alwaysAllow) });
+  const domain = bind([modelRules(transformed, { load, delete: ruleset(alwaysAllow) })], {
     providers: [provide(load, (id) => Result.succeed({ id })), provide.value(clock, 0)],
   });
   const result = await domain.transformed.delete({ input: { id: "42" }, actor: member });
