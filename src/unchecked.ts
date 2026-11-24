@@ -13,10 +13,7 @@ import {
   type Ports,
   type PortValue,
 } from "./port.ts";
-import type { Rule } from "./rule.ts";
-import type { AnyRunnable, RuleSet } from "./rules.ts";
-import type { Advance, RunnableRuleset } from "./ruleset.ts";
-import type { TrackKind, WhenParam } from "./when.ts";
+import type { AnyDecider, AnyRunnable, RuleSet } from "./rules.ts";
 
 // requires の port ごとに、check に渡す関数を作る。object を key ごとの型で組み立てる型を TypeScript は付けられない
 export const portFns = <P extends Ports>(
@@ -33,40 +30,10 @@ export const portFns = <P extends Ports>(
 export const implFor = <P extends Port>(impls: Impls, p: P): Impl<P> | undefined =>
   impls.get(p.token) as Impl<P> | undefined;
 
-const objectOf = (value: unknown): Readonly<Record<string, unknown>> | undefined =>
-  typeof value === "object" && value !== null ? Object.fromEntries(Object.entries(value)) : undefined;
-
-// rule の check の成功の値を状態に重ねる。next は項目ごとに重ねる。
-// 重ねた結果の型は Advance で決まる。always の rule は ruleset が必ず当て、
-// 当てたときだけ applied を渡すので、Advance の分岐と実行時の値が一致する
-export const advanced = <
-  K extends TrackKind,
-  T extends string,
-  N extends string,
-  S,
-  W extends WhenParam<K, S>,
-  V,
-  E,
-  P extends Ports,
->(
-  _rule: Rule<K, T, N, S, W, V, E, P>,
-  s: S,
-  applied: { readonly value: V } | undefined,
-): Advance<S, V, W> => {
-  const out = applied === undefined ? undefined : objectOf(applied.value);
-  const state = objectOf(s);
-  if (out === undefined || state === undefined) return s as Advance<S, V, W>;
-  const before = objectOf(state["next"]);
-  const added = objectOf(out["next"]);
-  const merged =
-    before !== undefined && added !== undefined
-      ? { ...state, ...out, next: { ...before, ...added } }
-      : { ...state, ...out };
-  return merged as Advance<S, V, W>;
-};
-
 // bind は model の schema と load から、modelRules が型で確かめた開始の状態を組み立てて線路を走らせる
-export const runErased = (r: AnyRunnable): ((s: unknown, call: PortCall) => Promise<Result.Result<unknown, unknown>>) =>
+export const runErased = (
+  r: AnyRunnable | AnyDecider,
+): ((s: unknown, call: PortCall) => Promise<Result.Result<unknown, unknown>>) =>
   r.run as (s: unknown, call: PortCall) => Promise<Result.Result<unknown, unknown>>;
 
 // bind は rule の組ごとに、その名前で Bound の型どおりのメソッドを置く
@@ -74,10 +41,3 @@ export const boundOf = <Sets extends readonly RuleSet[]>(
   _sets: Sets,
   methods: Readonly<Record<string, object>>,
 ): Bound<Sets> => methods as Bound<Sets>;
-
-// 線路は受け取った状態に値を重ねるだけなので、先頭の rule の前提より多くを持つ状態で始めれば、最後の状態もそれを持つ
-export const runFrom = async <Start extends In, In, S, E, PN extends string>(
-  r: RunnableRuleset<In, S, E, PN>,
-  start: Start,
-  call: PortCall,
-): Promise<Result.Result<Start & S, E>> => (await r.run(start, call)) as Result.Result<Start & S, E>;

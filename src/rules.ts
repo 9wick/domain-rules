@@ -2,8 +2,7 @@ import { Result } from "@praha/byethrow";
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 import type { Action, Actor, DecideState, DeleteState, Model, Persisted, SaveStates, Value } from "./model.ts";
 import type { Port, PortArgs, PortError, PortValue } from "./port.ts";
-import type { PlannedRule, RulesetOut, RunnableRuleset, RulesetPorts } from "./ruleset.ts";
-import { runFrom } from "./unchecked.ts";
+import type { Decider, PlannedRule, RulesetOut, RunnableRuleset, RulesetPorts } from "./ruleset.ts";
 
 export type InputFailure = {
   readonly step: "input";
@@ -41,6 +40,7 @@ type PersistedGuard<M extends Model, End> = [End] extends [never]
     : { readonly "最後の next が永続化の型にならない": End extends { readonly next: infer X } ? X : never };
 
 export type AnyRunnable = RunnableRuleset<never, unknown, unknown, string>;
+export type AnyDecider = Decider<never, unknown, unknown, string>;
 
 export type ModelRules<
   M extends Model = Model,
@@ -80,7 +80,7 @@ export function modelRules<
   return Object.freeze(set);
 }
 
-export type ActionRules<A extends Action = Action, Rs extends AnyRunnable = AnyRunnable> = {
+export type ActionRules<A extends Action = Action, Rs extends AnyDecider = AnyDecider> = {
   readonly kind: "actionRules";
   readonly name: A["name"];
   readonly action: A;
@@ -93,18 +93,18 @@ type Decided<End extends { readonly actor: unknown }, T> = { readonly value: T; 
 const actorOf = <X extends { readonly actor: unknown }>(x: X): X["actor"] => x.actor;
 
 // output は線路の最後の step で、最後の状態から返す値を組み立てる
-export function actionRules<A extends Action, S, E, PN extends string, T>(
+export function actionRules<A extends Action, D, E, PN extends string, T>(
   a: A,
   def: {
-    readonly rules: RunnableRuleset<DecideStart<A>, S, E, PN>;
-    readonly output: (s: DecideStart<A> & S) => T;
+    readonly rules: RunnableRuleset<DecideStart<A>, D, E, PN>;
+    readonly output: (s: DecideStart<A> & D) => T;
   },
-): ActionRules<A, RunnableRuleset<DecideStart<A>, Decided<DecideStart<A> & S, T>, E, PN>> {
+): ActionRules<A, Decider<DecideStart<A>, Decided<DecideStart<A> & D, T>, E, PN>> {
   const { rules, output } = def;
-  const decided: RunnableRuleset<DecideStart<A>, Decided<DecideStart<A> & S, T>, E, PN> = {
+  const decided: Decider<DecideStart<A>, Decided<DecideStart<A> & D, T>, E, PN> = {
     ...rules,
     run: async (s, call) => {
-      const r = await runFrom(rules, s, call);
+      const r = await rules.run(s, call);
       return Result.isFailure(r) ? r : Result.succeed({ value: output(r.value), actor: actorOf(r.value) });
     },
   };

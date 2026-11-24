@@ -4,10 +4,12 @@ import type { NoPorts, PortFns, Ports } from "./port.ts";
 import {
   always,
   changed,
+  conditionalStep,
   describeWhen,
   onCreate,
   whenOf,
   type Always,
+  type ConditionalStep,
   type TrackKind,
   type WhenParam,
 } from "./when.ts";
@@ -33,7 +35,8 @@ export type Rule<
   readonly track?: { readonly kind: K; readonly target: T };
   readonly name: N;
   readonly requires: P | undefined;
-  readonly when: W;
+  // when に、状態をどう進めるかの step を付けたもの。always のように自分の step を持つ when は、その step が残る
+  readonly when: W & { readonly step: ConditionalStep<S> };
   readonly check: (s: S, ports: PortFns<P>) => Checked<V, E>;
 };
 
@@ -62,7 +65,7 @@ export function rule<
     track: { kind: track.kind, target: track.target },
     name: def.name,
     requires: def.requires,
-    when: def.when,
+    when: Object.freeze(Object.assign((s: S) => def.when(s), { step: conditionalStep(def.when) }, def.when)),
     check: def.check,
   });
 }

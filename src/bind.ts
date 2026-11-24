@@ -14,7 +14,7 @@ import type {
   SaveEnd,
   RuleSetPorts,
 } from "./rules.ts";
-import type { RunnableRuleset } from "./ruleset.ts";
+import type { Decider, RulesetError } from "./ruleset.ts";
 import { seal, type Decision, type Deletable, type Persistable } from "./seal.ts";
 import { boundOf, runErased } from "./unchecked.ts";
 
@@ -24,8 +24,9 @@ type Failure = { readonly step: string; readonly error: unknown };
 type Id<M extends Model> = NonNullable<InputOf<M>["id" & keyof InputOf<M>]>;
 type Args<I> = { readonly input: I; readonly actor: Actor };
 
-type OutOf<R> = R extends RunnableRuleset<never, infer S, unknown, string> ? S : never;
-type ErrorOf<R> = R extends RunnableRuleset<never, unknown, infer E, string> ? E : never;
+type OutOf<R> = R extends Decider<never, infer O, unknown, string> ? O : never;
+type ErrorOf<R> =
+  R extends Decider<never, unknown, infer E, string> ? E : R extends AnyRunnable ? RulesetError<R> : never;
 type ActorOf<S> = S extends { readonly actor: infer A } ? A : never;
 
 type SaveMethods<M extends Model, L, Save> = [Save] extends [undefined]
