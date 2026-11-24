@@ -252,7 +252,7 @@ test("load は入力スキーマで変換された id を受け取る", async ()
   expect(open(Result.unwrap(result)).pre.id).toBe(42);
 });
 
-test("save は更新で引き継いだ永続化済みの値と検証済みの入力を扱える", async () => {
+test("load の返り値は、入力の型にも代入できなければならない", () => {
   const appointment = model({
     name: "appointment",
     schema: {
@@ -260,31 +260,20 @@ test("save は更新で引き継いだ永続化済みの値と検証済みの入
       persisted: v.object({ id: v.string(), date: v.date() }),
     },
   });
-  const date = new Date("2026-11-24");
-  const find = port("findAppointment").of<(id: string) => { id: string; date: Date }>();
-  const stringOnly = rule(appointment.save.with<{ next: { date: string } }>(), {
-    name: "stringOnly",
-    when: always,
-    check: () => Result.succeed(),
-  });
-  // @ts-expect-error 更新で date を省略すると、永続化済みの Date が渡る
-  modelRules(appointment, { load: find, save: ruleset(stringOnly) });
+  const find = port("findAppointment").of<(id: string) => { id: string; date: Date } | null>();
+  // @ts-expect-error 更新で date を省略すると、next の date に入力の型ではない Date が入る
+  modelRules(appointment, { load: find });
+});
 
-  const normalize = rule(appointment.save, {
-    name: "normalize",
-    when: always,
-    check: ({ next }) =>
-      Result.succeed({
-        next: { id: next.id ?? "new", date: typeof next.date === "string" ? new Date(next.date) : next.date },
-      }),
+test("load は検証した id を受け取れなければならない", () => {
+  const item = model({
+    name: "item",
+    schema: { input: v.object({ id: v.optional(v.string()) }), persisted: v.object({ id: v.string() }) },
   });
-  const domain = bind([modelRules(appointment, { load: find, save: ruleset(normalize) })], {
-    providers: [provide(find, (id) => Result.succeed({ id, date })), provide.value(clock, 0)],
-  });
-  const created = await domain.appointment.create({ input: { date: "2026-11-24" }, actor: member });
-  const updated = await domain.appointment.update({ input: { id: "existing" }, actor: member });
-  expect(open(Result.unwrap(created)).next.date).toEqual(date);
-  expect(open(Result.unwrap(updated)).next.date).toBe(date);
+  const narrow = port("findNarrow").of<(id: "fixed") => { id: string } | null>();
+  // @ts-expect-error 検証した id は string で、"fixed" しか受け取らない load には渡せない
+  modelRules(item, { load: narrow });
+  modelRules(item, { load: port("findWide").of<(id: string | number) => { id: string } | null>() });
 });
 
 test("model の入力スキーマは id を必須にできない", () => {

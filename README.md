@@ -355,7 +355,7 @@ export const blogAcceptsPosts = rule(article.save.with<{ next: { blogId: BlogIdE
 
 `when` が当たらずに飛ばされる rule は、状態を変えません。そのため、昇格する rule に `always` 以外の `when` を書くと、その rule のあとの型は「昇格した型か、していない型」の和になります。昇格した型を要求する rule が後ろにあるか、永続化の型が揃わなければ、rule の組を作るときに型エラーになります。
 
-記事の id も、同じように rule で昇格します。この例の `next.id` は `ArticleId | undefined` です。更新で省略した項目は永続化済みの値を引き継ぐため、入力と既存値で型が違う項目には両方の型が現れます。
+記事の id も、同じように rule で昇格します。この例の `next.id` は `ArticleId | undefined` です。
 
 ```ts
 // 既存の記事なら、その id は保存済みのもの
@@ -424,7 +424,7 @@ export const articleRules = modelRules(article, {
 
 `ruleset(rule)` は、先頭の rule が受け取る状態から線路を始めます。`add` は元の線路を変えずに、rule を足した新しい線路を返します。条件なしで削除してよい model は、何も確かめずに通す `alwaysAllow` を使って `delete: ruleset(alwaysAllow)` と書きます。
 
-- **`load`。** 既存の値を取る port です。ライブラリは `schema.input` で検証・変換した後の `id` でこの port を呼びます。load を宣言するには入力スキーマに `id` があり、port が変換後の型を受け取れる必要があります。戻り値が `null` なら load の step で失敗します。返り値の型は、model の `schema.persisted` の型に代入できなければなりません。`save` で `update` や `upsert` を、または `delete` を使うときに要ります。
+- **`load`。** 既存の値を取る port です。ライブラリは `schema.input` で検証・変換した後の `id` でこの port を呼びます。load を宣言するには入力スキーマに `id` があり、port が変換後の型を受け取れる必要があります。戻り値が `null` なら load の step で失敗します。返り値の型は、model の `schema.persisted` の型と、`schema.input` の出力の型の両方に代入できなければなりません。更新では既存の値に入力を重ねて `next` にするので、入力にない項目には既存の値が入るからです。`save` で `update` や `upsert` を、または `delete` を使うときに要ります。
 - **`save`。** `article.save` の rule の線路です。`create`、`update`、`upsert` のどれで呼ばれても、この線路を順に通ります。
 - **`delete`。** `article.delete` の rule の線路です。`delete` を書かなければ、その model は削除できません。束ねたあとに `delete` のメソッドが作られないからです。`save` も同じです。
 
