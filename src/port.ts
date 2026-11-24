@@ -1,5 +1,6 @@
 import { Result } from "@praha/byethrow";
-import { implFor, portFns } from "./unchecked.ts";
+import { portFns } from "./proven.ts";
+import { implFor } from "./unchecked.ts";
 
 declare const portTypes: unique symbol;
 

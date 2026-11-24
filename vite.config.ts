@@ -99,8 +99,13 @@ export default defineConfig({
         rules: { "strict/no-throw": "off", "strict/no-try-catch": "off", "typescript/only-throw-error": "off" },
       },
       {
-        // 入力と出力の型の対応が関数の型で決まっているのに、TypeScript が実装に型を付けられない変換だけを集めた module。
-        // 呼び出し側が変換先の型を選べる汎用の変換は置かない
+        // 型の上では安全なのに TypeScript では型 assertion なしに書けない変換だけの module。あとで別のパッケージに切り出す。
+        // 置く条件は proven.ts の先頭に書いてある
+        files: ["src/proven.ts"],
+        rules: { "typescript/consistent-type-assertions": "off", "typescript/no-unsafe-type-assertion": "off" },
+      },
+      {
+        // まだ消せていない型 assertion。消す方法が決まるまでの一時的な置き場で、新しく足さない
         files: ["src/unchecked.ts"],
         rules: { "typescript/consistent-type-assertions": "off", "typescript/no-unsafe-type-assertion": "off" },
       },
