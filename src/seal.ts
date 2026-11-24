@@ -1,5 +1,4 @@
 import type { Action, Actor, Model, Persisted } from "./model.ts";
-import { contentsOf } from "./unchecked.ts";
 
 declare const sealedAs: unique symbol;
 
@@ -14,33 +13,28 @@ class Sealed<Kind extends string, Target extends string, Op extends string, C> {
     Object.freeze(this);
   }
 
-  static read(value: object): unknown {
-    if (!(#contents in value)) throw new Error("open: メソッドが作った封をした値ではありません");
-    return value.#contents;
+  static contents<C>(s: Sealed<string, string, string, C>): C {
+    // 型の上では封をした値しか渡せないが、スプレッドで作り直した値は実行時にも拒む
+    if (!(#contents in s)) throw new Error("open: メソッドが作った封をした値ではありません");
+    return s.#contents;
   }
 }
-
-export type AnySealed = Sealed<string, string, string, unknown>;
-export type ContentsOf<S> = S extends Sealed<string, string, string, infer C> ? C : never;
 
 export type Persistable<
   M extends Model,
   Op extends "create" | "update" = "create" | "update",
   Pre = Persisted<M>,
   A = Actor,
-> = Op extends "create"
-  ? Sealed<
-      "persistable",
-      M["name"],
-      "create",
-      { readonly pre: null; readonly next: Readonly<Persisted<M>>; readonly actor: A }
-    >
-  : Sealed<
-      "persistable",
-      M["name"],
-      "update",
-      { readonly pre: Readonly<Pre>; readonly next: Readonly<Persisted<M>>; readonly actor: A }
-    >;
+> = Sealed<
+  "persistable",
+  M["name"],
+  Op,
+  // create と update のどちらもありうる値は、中身の型を和にした1つの封の型にする。open は封の型から中身の型を引く
+  | ("create" extends Op ? { readonly pre: null; readonly next: Readonly<Persisted<M>>; readonly actor: A } : never)
+  | ("update" extends Op
+      ? { readonly pre: Readonly<Pre>; readonly next: Readonly<Persisted<M>>; readonly actor: A }
+      : never)
+>;
 
 export type Deletable<M extends Model, Pre = Persisted<M>, A = Actor> = Sealed<
   "deletable",
@@ -59,4 +53,4 @@ export type Decision<Ac extends Action, T = void, A = Actor> = Sealed<
 export const seal = <Kind extends string, Target extends string, Op extends string, C>(contents: C) =>
   new Sealed<Kind, Target, Op, C>(contents);
 
-export const open = <S extends AnySealed>(s: S): ContentsOf<S> => contentsOf(s, (value) => Sealed.read(value));
+export const open = <C>(s: Sealed<string, string, string, C>): C => Sealed.contents(s);

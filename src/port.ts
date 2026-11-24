@@ -4,6 +4,7 @@ import { implFor, portFns } from "./unchecked.ts";
 declare const portTypes: unique symbol;
 
 // port は宣言だけで、実装は provider であとから渡す。引数・値・失敗の型は宣言の型の上にだけある
+// port は宣言だけで、実装は provider であとから渡す。引数・値・失敗の型は宣言の型の上にだけある
 export class Port<
   N extends string = string,
   A extends readonly unknown[] = readonly unknown[],
@@ -22,9 +23,35 @@ export class Port<
     this.cached = cached;
     Object.freeze(this);
   }
+
+  // provide から呼ぶ。実装の型を port の型引数で受け取るので、呼び出す側の型で合っているかが決まる
+  provider(impl: (...args: A) => Result.Result<T, E> | Result.ResultAsync<T, E>): Provider<N> {
+    return Object.freeze({ kind: "port", name: this.name, token: this.token, impl });
+  }
+
+  valued(v: T): Provider<N> {
+    return this.provider(() => Result.succeed(v));
+  }
 }
 
-export type Clock = { readonly kind: "clock"; readonly name: "clock"; readonly token: symbol };
+class Clock {
+  readonly kind = "clock";
+  readonly name = "clock";
+  readonly token = Symbol("clock");
+
+  constructor() {
+    Object.freeze(this);
+  }
+
+  provider(now: () => number): Provider<"clock"> {
+    return Object.freeze({ kind: "clock", name: this.name, token: this.token, now });
+  }
+
+  valued(v: number): Provider<"clock"> {
+    return this.provider(() => v);
+  }
+}
+export type { Clock };
 
 export type PortArgs<P> = P extends Port<string, infer A> ? A : never;
 export type PortValue<P> = P extends Port<string, readonly unknown[], infer T> ? T : never;
@@ -46,32 +73,24 @@ export const port = <const N extends string>(name: N) => ({
 export const cached = <N extends string, A extends readonly unknown[], T, E>(p: Port<N, A, T, E>): Port<N, A, T, E> =>
   new Port<N, A, T, E>(p.name, p.token, true);
 
-export const clock: Clock = Object.freeze({ kind: "clock", name: "clock", token: Symbol("clock") });
+export const clock: Clock = new Clock();
 
 export type Impl<P extends Port> = (
   ...args: PortArgs<P>
 ) => Result.Result<PortValue<P>, PortError<P>> | Result.ResultAsync<PortValue<P>, PortError<P>>;
 
-// provider は port の宣言の token で引く。実装の型は provide の引数で port の型に合わせてある
-export type Provider<N extends string = string> = {
-  readonly name: N;
-  readonly token: symbol;
-  readonly impl: (...args: never) => unknown;
-};
+// provider は port の宣言の token で引く。時計の provider は時刻を返す関数を、型を消さずに持つ
+export type Provider<N extends string = string> =
+  | { readonly kind: "port"; readonly name: N; readonly token: symbol; readonly impl: (...args: never) => unknown }
+  | { readonly kind: "clock"; readonly name: N; readonly token: symbol; readonly now: () => number };
 
-export function provide<P extends Port>(target: P, impl: Impl<P>): Provider<P["name"]>;
-export function provide(target: Clock, impl: () => number): Provider<"clock">;
-export function provide(target: Port | Clock, impl: (...args: never) => unknown): Provider {
-  return Object.freeze({ name: target.name, token: target.token, impl });
-}
+type Providable<N extends string, I> = { provider(impl: I): Provider<N> };
+type Valuable<N extends string, V> = { valued(v: V): Provider<N> };
 
-function value<P extends Port>(target: P, v: PortValue<P>): Provider<P["name"]>;
-function value(target: Clock, v: number): Provider<"clock">;
-function value(target: Port | Clock, v: unknown): Provider {
-  const impl = target.kind === "clock" ? () => v : () => Result.succeed(v);
-  return Object.freeze({ name: target.name, token: target.token, impl });
-}
-provide.value = value;
+export const provide = Object.assign(
+  <N extends string, I>(target: Providable<N, I>, impl: NoInfer<I>): Provider<N> => target.provider(impl),
+  { value: <N extends string, V>(target: Valuable<N, V>, v: NoInfer<V>): Provider<N> => target.valued(v) },
+);
 
 export type Impls = ReadonlyMap<symbol, (...args: never) => unknown>;
 

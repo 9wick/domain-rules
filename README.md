@@ -574,13 +574,13 @@ const saved = await Result.pipe(
 );
 ```
 
-| メソッド | 受け取るもの                          | 返すもの                                               |
-| -------- | ------------------------------------- | ------------------------------------------------------ |
-| `create` | `{ input, actor }`                    | `Persistable<M, "create">`                             |
-| `update` | `{ input, actor }`。`input.id` は必須 | `Persistable<M, "update">`                             |
-| `upsert` | `{ input, actor }`                    | `Persistable<M, "create"> \| Persistable<M, "update">` |
-| `delete` | `{ input: { id }, actor }`            | `Deletable<M>`                                         |
-| `decide` | `{ input, actor }`                    | `Decision<A, T>`                                       |
+| メソッド | 受け取るもの                          | 返すもの                               |
+| -------- | ------------------------------------- | -------------------------------------- |
+| `create` | `{ input, actor }`                    | `Persistable<M, "create">`             |
+| `update` | `{ input, actor }`。`input.id` は必須 | `Persistable<M, "update">`             |
+| `upsert` | `{ input, actor }`                    | `Persistable<M, "create" \| "update">` |
+| `delete` | `{ input: { id }, actor }`            | `Deletable<M>`                         |
+| `decide` | `{ input, actor }`                    | `Decision<A, T>`                       |
 
 `input` は、`schema.input` の入力の型を `Partial` にしたものです。`create` の `input` は `id` を持ちません。model の `schema.input` に `id` を定義する場合は、省略可能にします。`upsert` は、`input.id` がなければ新規作成、あって既存の値が見つかれば更新、あって見つからなければ load の step で失敗します。利用者が id を決めて新規作成する使い方は、まだ扱いません(未決定の論点を参照)。
 

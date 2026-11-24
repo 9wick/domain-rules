@@ -1,5 +1,4 @@
 import type { Actor } from "./model.ts";
-import { allHold, anyHolds } from "./unchecked.ts";
 
 export type TrackKind = "save" | "delete" | "decide";
 
@@ -55,14 +54,17 @@ export type CombinedNeed<Ws, N = unknown> = Ws extends readonly [infer W, ...inf
   ? CombinedNeed<Rest, N & NeedOf<W>>
   : N;
 
-const when = <K extends TrackKind, Need>(description: WhenDescription, f: (s: Need) => boolean): When<K, Need> =>
-  Object.freeze(Object.assign((s: Need) => f(s), { description }));
+// 説明の付いた when を作る。immutable のように、組み合わせの説明を持つ when をライブラリの中で作るときにも使う
+export const whenOf = <K extends TrackKind, Need>(
+  description: WhenDescription,
+  f: (s: Need) => boolean,
+): When<K, Need> => Object.freeze(Object.assign((s: Need) => f(s), { description }));
 
 const descriptionOf = (w: AnyWhen): WhenDescription => w.description ?? { kind: "custom" };
 
 export const always: Always = Object.freeze(Object.assign(() => true, { description: { kind: "always" } as const }));
 
-export const onCreate = when<"save", { readonly pre: unknown }>({ kind: "onCreate" }, (s) => s.pre === null);
+export const onCreate = whenOf<"save", { readonly pre: unknown }>({ kind: "onCreate" }, (s) => s.pre === null);
 
 // undefined は「条件なし」を表すので比べる値に含めない。値は Object.is で比べる
 type Match = string | number | bigint | boolean | symbol | null;
@@ -77,7 +79,7 @@ export const changed = <const F extends string>(
   field: F,
   values: { readonly pre?: Match | undefined; readonly next?: Match | undefined } = {},
 ): When<"save", Changed<F>> =>
-  when({ kind: "changed", field, ...values }, (s: Changed<F>) => {
+  whenOf({ kind: "changed", field, ...values }, (s: Changed<F>) => {
     const after = fieldOf(s.next, field);
     if (s.pre === null) return values.pre === undefined && matches(values.next, after);
     const before = fieldOf(s.pre, field);
@@ -85,26 +87,37 @@ export const changed = <const F extends string>(
   });
 
 export const next = <V>(predicate: (v: V) => boolean): When<"save", { readonly next: V }> =>
-  when({ kind: "next" }, (s: { readonly next: V }) => predicate(s.next));
+  whenOf({ kind: "next" }, (s: { readonly next: V }) => predicate(s.next));
 
 export const pre = <V>(predicate: (v: V) => boolean): When<"save" | "delete", { readonly pre: V | null }> =>
-  when({ kind: "pre" }, (s: { readonly pre: V | null }) => s.pre !== null && predicate(s.pre));
+  whenOf({ kind: "pre" }, (s: { readonly pre: V | null }) => s.pre !== null && predicate(s.pre));
 
 export const actor = <A = Actor, S = unknown>(
   predicate: (a: A, s: S) => boolean,
 ): When<TrackKind, { readonly actor: A } & S> =>
-  when({ kind: "actor" }, (s: { readonly actor: A } & S) => predicate(s.actor, s));
+  whenOf({ kind: "actor" }, (s: { readonly actor: A } & S) => predicate(s.actor, s));
 
-export const and = <const Ws extends readonly AnyWhen[]>(...ws: Ws): When<CombinedKinds<Ws>, CombinedNeed<Ws>> =>
-  when({ kind: "and", conditions: ws.map(descriptionOf) }, (s: CombinedNeed<Ws>) => allHold(ws, s));
+// 並べた when がどれも、まとめた状態を受け取れることを引数の型で求める。呼び出す側の型で確かめるので、中では型を消さずに呼べる
+type Combinable<Ws> = Ws & readonly ((s: CombinedNeed<Ws>) => boolean)[];
 
-export const or = <const Ws extends readonly AnyWhen[]>(...ws: Ws): When<CombinedKinds<Ws>, CombinedNeed<Ws>> =>
-  when({ kind: "or", conditions: ws.map(descriptionOf) }, (s: CombinedNeed<Ws>) => anyHolds(ws, s));
+export const and = <const Ws extends readonly AnyWhen[]>(
+  ...ws: Combinable<Ws>
+): When<CombinedKinds<Ws>, CombinedNeed<Ws>> => {
+  const tests: readonly ((s: CombinedNeed<Ws>) => boolean)[] = ws;
+  return whenOf({ kind: "and", conditions: ws.map(descriptionOf) }, (s: CombinedNeed<Ws>) => tests.every((w) => w(s)));
+};
+
+export const or = <const Ws extends readonly AnyWhen[]>(
+  ...ws: Combinable<Ws>
+): When<CombinedKinds<Ws>, CombinedNeed<Ws>> => {
+  const tests: readonly ((s: CombinedNeed<Ws>) => boolean)[] = ws;
+  return whenOf({ kind: "or", conditions: ws.map(descriptionOf) }, (s: CombinedNeed<Ws>) => tests.some((w) => w(s)));
+};
 
 export const not = <K extends TrackKind, N>(w: When<K, N>): When<K, N> =>
-  when({ kind: "not", condition: descriptionOf(w) }, (s: N) => !w(s));
+  whenOf({ kind: "not", condition: descriptionOf(w) }, (s: N) => !w(s));
 
 export const describe = <S>(description: string, f: (s: S) => boolean): When<TrackKind, S> =>
-  when({ kind: "custom", description }, f);
+  whenOf({ kind: "custom", description }, f);
 
 export const describeWhen = descriptionOf;

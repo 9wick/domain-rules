@@ -1,12 +1,21 @@
 import { Result } from "@praha/byethrow";
 import type { Track } from "./model.ts";
 import type { NoPorts, PortFns, Ports } from "./port.ts";
-import { joinTyped } from "./unchecked.ts";
-import { always, and, changed, not, onCreate, or, type Always, type TrackKind, type WhenParam } from "./when.ts";
+import {
+  always,
+  changed,
+  describeWhen,
+  onCreate,
+  whenOf,
+  type Always,
+  type TrackKind,
+  type WhenParam,
+} from "./when.ts";
 
-export type CheckResult = Result.Result<unknown, unknown> | Promise<Result.Result<unknown, unknown>>;
-export type SuccessOf<R> = Awaited<R> extends infer X ? (X extends Result.Success<infer V> ? V : never) : never;
-export type FailureOf<R> = Awaited<R> extends infer X ? (X extends Result.Failure<infer E> ? E : never) : never;
+export type Checked<V, E> = Result.Result<V, E> | Promise<Result.Result<V, E>>;
+export type CheckResult = Checked<unknown, unknown>;
+type SuccessOf<R> = Awaited<R> extends infer X ? (X extends Result.Success<infer V> ? V : never) : never;
+type FailureOf<R> = Awaited<R> extends infer X ? (X extends Result.Failure<infer E> ? E : never) : never;
 
 // rule は線路の1つの step。check の型がそのまま、受け取る状態・成功の値・失敗の型を表す
 export type Rule<
@@ -15,7 +24,8 @@ export type Rule<
   N extends string,
   S,
   W extends WhenParam<K, S>,
-  R extends CheckResult,
+  V,
+  E,
   P extends Ports,
 > = {
   readonly kind: "rule";
@@ -24,7 +34,7 @@ export type Rule<
   readonly name: N;
   readonly requires: P | undefined;
   readonly when: W;
-  readonly check: (s: S, ports: PortFns<P>) => R;
+  readonly check: (s: S, ports: PortFns<P>) => Checked<V, E>;
 };
 
 export function rule<
@@ -35,15 +45,18 @@ export function rule<
   W extends WhenParam<K, S>,
   R extends CheckResult,
   P extends Ports = NoPorts,
+  // 成功の値と失敗の型は check の返り値から引く。返り値の型を、引いた型の Result として扱えることは呼び出す側で確かめる
+  V = SuccessOf<R>,
+  E = FailureOf<R>,
 >(
   track: Track<K, T, S>,
   def: {
     readonly name: N;
     readonly requires?: P;
     readonly when: W;
-    readonly check: (s: S, ports: PortFns<P>) => R;
+    readonly check: (s: S, ports: PortFns<P>) => R & NoInfer<Checked<V, E>>;
   },
-): Rule<K, T, N, S, W, R, P> {
+): Rule<K, T, N, S, W, V, E, P> {
   return Object.freeze({
     kind: "rule",
     track: { kind: track.kind, target: track.target },
@@ -56,33 +69,33 @@ export function rule<
 
 const valueOf = (o: object | null, f: string): unknown => (o === null ? undefined : new Map(Object.entries(o)).get(f));
 
-export const immutable = <
-  T extends string,
-  S extends { readonly pre: object | null; readonly next: object },
-  const F extends readonly (keyof S["next"] & string)[],
->(
+export const immutable = <T extends string, S extends { readonly pre: object | null; readonly next: object }>(
   track: Track<"save", T, S>,
-  fields: F,
-) =>
-  rule(track, {
-    name: `作成後に変えられない項目: ${joinTyped(fields)}` as const,
-    when: and(not(onCreate), or(...fields.map((f) => changed(f)))),
+  fields: readonly (keyof S["next"] & string)[],
+) => {
+  const changedField = (s: S) => fields.find((f) => !Object.is(valueOf(s.pre, f), valueOf(s.next, f)));
+  return rule(track, {
+    name: `作成後に変えられない項目: ${fields.join(", ")}` as const,
+    // 説明は and(not(onCreate), or(changed(...))) と同じ形にする。判定は項目の数によらず1つの関数で書く
+    when: whenOf<"save", S>(
+      {
+        kind: "and",
+        conditions: [
+          { kind: "not", condition: describeWhen(onCreate) },
+          { kind: "or", conditions: fields.map((f) => describeWhen(changed(f))) },
+        ],
+      },
+      (s) => s.pre !== null && changedField(s) !== undefined,
+    ),
     check: (s) => {
-      const field = fields.find((f) => !Object.is(valueOf(s.pre, f), valueOf(s.next, f)));
+      const field = changedField(s);
       return field === undefined ? Result.succeed() : Result.fail({ code: "IMMUTABLE_FIELD_CHANGED" as const, field });
     },
   });
+};
 
 // 何も確かめずに通す rule。条件なしで削除してよい model の delete に ruleset(alwaysAllow) として渡す
-export const alwaysAllow: Rule<
-  TrackKind,
-  string,
-  "常に許可",
-  unknown,
-  Always,
-  Result.Result<void, never>,
-  NoPorts
-> = Object.freeze({
+export const alwaysAllow: Rule<TrackKind, string, "常に許可", unknown, Always, void, never, NoPorts> = Object.freeze({
   kind: "rule",
   name: "常に許可",
   requires: undefined,

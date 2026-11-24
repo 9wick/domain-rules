@@ -16,7 +16,7 @@ import type {
 } from "./rules.ts";
 import type { RunnableRuleset } from "./ruleset.ts";
 import { seal, type Decision, type Deletable, type Persistable } from "./seal.ts";
-import { boundOf, clockFor, runErased } from "./unchecked.ts";
+import { boundOf, runErased } from "./unchecked.ts";
 
 type State = Readonly<Record<string, unknown>>;
 type Failure = { readonly step: string; readonly error: unknown };
@@ -49,8 +49,7 @@ type SaveMethods<M extends Model, L, Save> = [Save] extends [undefined]
           readonly upsert: (
             args: Args<InputOf<M>>,
           ) => Result.ResultAsync<
-            | Persistable<M, "create", Existing<L>, ActorOf<SaveEnd<M, L, Save>>>
-            | Persistable<M, "update", Existing<L>, ActorOf<SaveEnd<M, L, Save>>>,
+            Persistable<M, "create" | "update", Existing<L>, ActorOf<SaveEnd<M, L, Save>>>,
             InputFailure | LoadFailure<L> | ErrorOf<Save>
           >;
         });
@@ -97,10 +96,13 @@ export function bind<const Sets extends readonly RuleSet[], const Ps extends rea
     : { readonly "provider が足りない port": MissingProviders<Sets, Ps> }),
 ): Bound<Sets> {
   const impls = new Map<symbol, (...args: never) => unknown>();
+  let now: (() => number) | undefined;
   for (const p of options.providers) {
     if (impls.has(p.token)) throw new Error(`bind: port "${p.name}" の provider が重複しています`);
-    impls.set(p.token, p.impl);
+    impls.set(p.token, p.kind === "clock" ? p.now : p.impl);
+    if (p.kind === "clock") now = p.now;
   }
+  const env: Env = { impls, now };
   const bound: Record<string, object> = {};
   for (const set of sets) {
     if (Object.hasOwn(bound, set.name)) throw new Error(`bind: "${set.name}" の rule の組が重複しています`);
@@ -108,7 +110,7 @@ export function bind<const Sets extends readonly RuleSet[], const Ps extends rea
       .filter((port) => !impls.has(port.token))
       .map((port) => port.name);
     if (missing.length > 0) throw new Error(`bind: provider が足りない port: ${missing.join(", ")}`);
-    bound[set.name] = set.kind === "modelRules" ? modelMethods(set, impls) : actionMethods(set, impls);
+    bound[set.name] = set.kind === "modelRules" ? modelMethods(set, env) : actionMethods(set, env);
   }
   return boundOf(sets, bound);
 }
@@ -121,11 +123,14 @@ const requiredPorts = (set: RuleSet): readonly { readonly name: string; readonly
 
 type Invocation = { readonly call: PortCall; readonly now: number };
 
-const invocation = (impls: Impls): Invocation => {
-  const now = clockFor(impls)?.();
+// provider の実装と時計。時計は時刻を返す関数のまま持つ
+type Env = { readonly impls: Impls; readonly now: (() => number) | undefined };
+
+const invocation = (env: Env): Invocation => {
+  const now = env.now?.();
   // bind が clock の provider を確かめてから呼ぶので、ここに来るのは壊れたときだけ
   if (now === undefined) throw new Error("bind: clock の provider がありません");
-  return { call: portCaller(impls), now };
+  return { call: portCaller(env.impls), now };
 };
 
 // schema や provider が返した object を、項目名で引ける状態として読む
@@ -206,7 +211,7 @@ const saveWith =
     );
   };
 
-const modelMethods = (set: ModelRules, impls: Impls) => {
+const modelMethods = (set: ModelRules, env: Env) => {
   const { save, delete: del, load: loadPort, model } = set;
   const schema = model.schema.input;
 
@@ -214,7 +219,7 @@ const modelMethods = (set: ModelRules, impls: Impls) => {
     (rules: AnyRunnable): Run =>
     async ({ input, actor }) => {
       const next = await validateWhole(schema, input);
-      return Result.isFailure(next) ? next : saveWith(rules)(invocation(impls), null, next.value, actor, "create");
+      return Result.isFailure(next) ? next : saveWith(rules)(invocation(env), null, next.value, actor, "create");
     };
 
   const loadExisting = (loader: Port<string, readonly [unknown]>) => async (input: State) => {
@@ -222,7 +227,7 @@ const modelMethods = (set: ModelRules, impls: Impls) => {
     if (Result.isFailure(validated)) return validated;
     const id = requireId(validated.value);
     if (Result.isFailure(id)) return id;
-    const inv = invocation(impls);
+    const inv = invocation(env);
     const pre = await load(inv, loader, id.value);
     if (Result.isFailure(pre)) return pre;
     return Result.succeed({ inv, pre: pre.value, validated: validated.value });
@@ -262,11 +267,11 @@ const modelMethods = (set: ModelRules, impls: Impls) => {
   });
 };
 
-const actionMethods = (set: ActionRules, impls: Impls) => {
+const actionMethods = (set: ActionRules, env: Env) => {
   const decide = async ({ input, actor }: Args<unknown>) => {
     const validated = await validate(set.action.input, input);
     if (Result.isFailure(validated)) return Result.fail(inputFailure(validated.error));
-    const inv = invocation(impls);
+    const inv = invocation(env);
     const r = await runErased(set.rules)({ input: validated.value, actor, now: inv.now }, inv.call);
     if (Result.isFailure(r)) return r;
     return Result.succeed(seal<"decision", string, "decide", unknown>(r.value));

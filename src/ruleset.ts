@@ -1,7 +1,7 @@
 import { Result } from "@praha/byethrow";
 import { runWithPorts, type Port, type PortCall, type PortErrors, type PortNames, type Ports } from "./port.ts";
-import type { CheckResult, FailureOf, Rule, SuccessOf } from "./rule.ts";
-import { advanced, checked } from "./unchecked.ts";
+import type { Rule } from "./rule.ts";
+import { advanced } from "./unchecked.ts";
 import { describeWhen, isAlways, type IsAlways, type TrackKind, type WhenDescription, type WhenParam } from "./when.ts";
 
 // 当たれば成功の値を状態に重ね、当たらないこともある rule では重ねる前の状態も残る
@@ -47,26 +47,12 @@ export class Ruleset<K extends TrackKind, T extends string, In, S, E, PN extends
     Object.freeze(this);
   }
 
-  add<N extends string, W extends WhenParam<K, S>, R extends CheckResult, P extends Ports>(
-    r: Rule<K, T, N, S, W, R, P> & NarrowGuard<S, SuccessOf<R>>,
-  ): Ruleset<
-    K,
-    T,
-    In,
-    Advance<S, SuccessOf<R>, W>,
-    E | StepFailure<N, FailureOf<R> | PortErrors<P>>,
-    PN | PortNames<P>
-  > {
+  add<N extends string, W extends WhenParam<K, S>, V, E2, P extends Ports>(
+    r: Rule<K, T, N, S, W, V, E2, P> & NarrowGuard<S, V>,
+  ): Ruleset<K, T, In, Advance<S, V, W>, E | StepFailure<N, E2 | PortErrors<P>>, PN | PortNames<P>> {
     const previous = this.run;
     const ports = Object.values(r.requires ?? {});
-    return new Ruleset<
-      K,
-      T,
-      In,
-      Advance<S, SuccessOf<R>, W>,
-      E | StepFailure<N, FailureOf<R> | PortErrors<P>>,
-      PN | PortNames<P>
-    >(
+    return new Ruleset<K, T, In, Advance<S, V, W>, E | StepFailure<N, E2 | PortErrors<P>>, PN | PortNames<P>>(
       [...this.plan, { name: r.name, when: describeWhen(r.when), ports: ports.map((p) => p.name) }],
       [...this.ports, ...ports],
       async (s0, call) => {
@@ -83,15 +69,16 @@ const step = async <
   N extends string,
   S,
   W extends WhenParam<K, S>,
-  R extends CheckResult,
+  V,
+  E2,
   P extends Ports,
 >(
-  r: Rule<K, T, N, S, W, R, P>,
+  r: Rule<K, T, N, S, W, V, E2, P>,
   s: S,
   call: PortCall,
-): Promise<Result.Result<Advance<S, SuccessOf<R>, W>, StepFailure<N, FailureOf<R> | PortErrors<P>>>> => {
+): Promise<Result.Result<Advance<S, V, W>, StepFailure<N, E2 | PortErrors<P>>>> => {
   if (!isAlways(r.when) && !r.when(s)) return Result.succeed(advanced(r, s, undefined));
-  const out = await runWithPorts(call, r.requires, async (fns) => checked<R>(await r.check(s, fns)));
+  const out = await runWithPorts(call, r.requires, (fns) => r.check(s, fns));
   return Result.isFailure(out)
     ? Result.fail({ step: r.name, error: out.error })
     : Result.succeed(advanced(r, s, { value: out.value }));
@@ -103,11 +90,12 @@ const start = <
   S,
   N extends string,
   W extends WhenParam<K, S>,
-  R extends CheckResult,
+  V,
+  E2,
   P extends Ports,
 >(
-  first: Rule<K, T, N, S, W, R, P> & NarrowGuard<S, SuccessOf<R>>,
-) => new Ruleset<K, T, S, S, never, never>([], [], async (s) => Result.succeed(s)).add<N, W, R, P>(first);
+  first: Rule<K, T, N, S, W, V, E2, P> & NarrowGuard<S, V>,
+) => new Ruleset<K, T, S, S, never, never>([], [], async (s) => Result.succeed(s)).add<N, W, V, E2, P>(first);
 
 // 先頭の rule が受け取る状態から線路を始める
 export const ruleset = start;
