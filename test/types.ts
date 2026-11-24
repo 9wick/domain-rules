@@ -15,6 +15,7 @@ import {
   ruleset,
   type Persistable,
   type Port,
+  type Provider,
 } from "../src/index.ts";
 import {
   article,
@@ -233,6 +234,29 @@ describe("型", () => {
     // @ts-expect-error 実装を広い型で受け取る provider の型にも代入できない
     const providable: { readonly provider: (impl: (n: number) => Result.Result<unknown, unknown>) => unknown } = p;
     expectTypeOf(providable).not.toBeNever();
+  });
+
+  test("provider は port の provider からしか作れない", () => {
+    const p = port("p").of<(n: number) => string>();
+    // @ts-expect-error 同じ形の object では provider を作れない
+    const forged: Provider<"p"> = { name: "p", registerIn: () => undefined };
+    expectTypeOf(forged).not.toBeNever();
+    expectTypeOf(provide(p, (n) => Result.succeed(String(n)))).toEqualTypeOf<Provider<"p">>();
+  });
+
+  test("check が受け取る port は requires の値からしか決まらない", () => {
+    const p = port("p").of<(n: number) => string>();
+    rule<"save", "article", unknown, "x", typeof always, Result.Result<void, never>, { readonly p: typeof p }>(
+      article.save,
+      // @ts-expect-error port の型を明示して requires を省くと、check が受け取る port の値がない
+      { name: "x", when: always, check: () => Result.succeed() },
+    );
+    const ports: Readonly<Record<string, typeof p>> = { p };
+    // @ts-expect-error index signature の record では、型にある key が値にないことがある
+    rule(article.save, { name: "y", requires: ports, when: always, check: () => Result.succeed() });
+    const optional: { readonly p?: typeof p } = {};
+    // @ts-expect-error 省略できる key は、型にあるのに値にないことがある
+    rule(article.save, { name: "z", requires: optional, when: always, check: () => Result.succeed() });
   });
 
   test("with で前提を付けない rule の pre は永続化の型", () => {

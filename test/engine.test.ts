@@ -281,3 +281,24 @@ test("model の入力スキーマは id を必須にできない", () => {
   // @ts-expect-error create は入力から id を受け取らない
   model({ name: "requiredId", schema });
 });
+
+test("列挙できない key で渡した requires の port も、check で呼べる", async () => {
+  class Hidden {
+    get lookup() {
+      return lookup;
+    }
+  }
+  const requires: { readonly lookup: typeof lookup } = new Hidden();
+  const read = rule(item.save, {
+    name: "read",
+    requires,
+    when: always,
+    check: async ({ next }, { lookup }) => Result.succeed({ next: { id: String(await lookup(next.n)) } }),
+  });
+  const domain = bind([modelRules(item, { save: ruleset(read) })], {
+    providers: [provide(lookup, (n) => Result.succeed(n * 10)), provide.value(clock, 0)],
+  });
+  const result = await domain.item.create({ input: { n: 2 }, actor: member });
+  expect(Object.keys(requires)).toEqual([]);
+  expect(open(Result.unwrap(result)).next.id).toBe("20");
+});

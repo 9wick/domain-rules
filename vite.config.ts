@@ -100,8 +100,8 @@ export default defineConfig({
       },
       {
         // 型の上では安全なのに TypeScript では型 assertion なしに書けない変換だけの module。あとで別のパッケージに切り出す。
-        // 置く条件は proven.ts の先頭に書いてある
-        files: ["src/proven.ts"],
+        // 置く条件は keyed.ts の先頭に書いてある
+        files: ["src/keyed.ts"],
         rules: { "typescript/consistent-type-assertions": "off", "typescript/no-unsafe-type-assertion": "off" },
       },
       {

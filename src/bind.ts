@@ -1,8 +1,7 @@
 import { Result } from "@praha/byethrow";
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 import type { Action, Actor, InputOf, Model } from "./model.ts";
-import type { Invocation } from "./methods.ts";
-import { clock, portCaller, type Impls, type Provider } from "./port.ts";
+import { clock, type Invocation, type Provider } from "./port.ts";
 import type {
   ActionRules,
   AnyRunnable,
@@ -94,36 +93,33 @@ export function bind<const Sets extends readonly RuleSet[], const Ps extends rea
     ? unknown
     : { readonly "provider が足りない port": MissingProviders<Sets, Ps> }),
 ): Bound<Sets> {
-  const impls = new Map<symbol, (...args: never) => unknown>();
-  let now: (() => number) | undefined;
-  for (const p of options.providers) {
-    if (impls.has(p.token)) throw new Error(`bind: port "${p.name}" の provider が重複しています`);
-    impls.set(p.token, p.kind === "clock" ? p.now : p.impl);
-    if (p.kind === "clock") now = p.now;
-  }
+  const scope = {};
+  for (const p of options.providers) p.registerIn(scope);
   const bound: Record<string, object> = {};
   for (const set of sets) {
     if (Object.hasOwn(bound, set.name)) throw new Error(`bind: "${set.name}" の rule の組が重複しています`);
     const missing = requiredPorts(set)
-      .filter((port) => !impls.has(port.token))
+      .filter((port) => !port.providedIn(scope))
       .map((port) => port.name);
     if (missing.length > 0) throw new Error(`bind: provider が足りない port: ${missing.join(", ")}`);
-    bound[set.name] = set.methods(() => invocation(impls, now));
+    bound[set.name] = set.methods(() => invocation(scope));
   }
   return boundOf(sets, bound);
 }
 
-const requiredPorts = (set: RuleSet): readonly { readonly name: string; readonly token: symbol }[] => {
+const requiredPorts = (
+  set: RuleSet,
+): readonly { readonly name: string; readonly providedIn: (scope: object) => boolean }[] => {
   const rulesets = set.kind === "modelRules" ? [set.save, set.delete] : [set.rules];
   const load = set.kind === "modelRules" && set.load !== undefined ? [set.load] : [];
   return [clock, ...load, ...rulesets.flatMap((r) => r?.ports ?? [])];
 };
 
-const invocation = (impls: Impls, now: (() => number) | undefined): Invocation => {
-  const at = now?.();
+const invocation = (scope: object): Invocation => {
+  const now = clock.nowIn(scope);
   // bind が clock の provider を確かめてから呼ぶので、ここに来るのは壊れたときだけ
-  if (at === undefined) throw new Error("bind: clock の provider がありません");
-  return { call: portCaller(impls), now: at };
+  if (now === undefined) throw new Error("bind: clock の provider がありません");
+  return { scope, now };
 };
 
 export type { Action };

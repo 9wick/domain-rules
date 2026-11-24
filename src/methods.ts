@@ -1,7 +1,7 @@
 import { Result } from "@praha/byethrow";
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 import type { Actor, DecideState, DeleteState, Entries, ObjectSchema, SaveState } from "./model.ts";
-import type { Port, PortCall } from "./port.ts";
+import type { Invocation, Port } from "./port.ts";
 import type { Decider, RunnableRuleset } from "./ruleset.ts";
 import { seal } from "./seal.ts";
 
@@ -9,9 +9,6 @@ type State = Readonly<Record<string, unknown>>;
 type Failure = { readonly step: string; readonly error: unknown };
 type Args<I> = { readonly input: I; readonly actor: Actor };
 type Method<I> = (args: Args<I>) => Promise<Result.Result<unknown, unknown>>;
-
-// 1回の呼び出しで使う port の呼び出し方と時刻。bind が provider から作る
-export type Invocation = { readonly call: PortCall; readonly now: number };
 
 // rule の組が、bind から受け取った呼び出しの作り方でメソッドを作る。型は rule の組を作るときに決まっているので、ここで型を消さない
 export type BuildMethods = (invocation: () => Invocation) => Readonly<Record<string, object>>;
@@ -71,7 +68,7 @@ const load = async <A, V, E>(
   port: Port<string, [A], V, E>,
   id: A,
 ): Promise<Result.Result<V & {}, Failure>> => {
-  const r = await inv.call(port, [id]);
+  const r = await port.callIn(inv, [id]);
   if (Result.isFailure(r)) return Result.fail({ step: "load", error: r.error });
   const existing = r.value;
   return existing === null || existing === undefined
@@ -89,7 +86,7 @@ const saveWith = async <Pre, Out>(
   next: Out,
   actor: Actor,
 ) => {
-  const r = await rules.run({ pre, next, actor, now: inv.now }, inv.call);
+  const r = await rules.run({ pre, next, actor, now: inv.now }, inv);
   if (Result.isFailure(r)) return r;
   const contents = { pre: pre === null ? null : Object.freeze({ ...pre }), next: Object.freeze(r.value.next) };
   return Result.succeed(seal({ ...contents, actor: r.value.actor }));
@@ -146,7 +143,7 @@ export const modelMethods =
         const existing = await loadExisting(loader, input);
         if (Result.isFailure(existing)) return existing;
         const { inv, pre } = existing.value;
-        const r = await rules.run({ pre, next: null, actor, now: inv.now }, inv.call);
+        const r = await rules.run({ pre, next: null, actor, now: inv.now }, inv);
         if (Result.isFailure(r)) return r;
         return Result.succeed(seal({ pre: Object.freeze({ ...pre }), actor: r.value.actor }));
       };
@@ -166,7 +163,7 @@ export const actionMethods =
       const validated = await validate(input, value);
       if (Result.isFailure(validated)) return Result.fail(inputFailure(validated.error));
       const inv = invocation();
-      const r = await rules.run({ input: validated.value, actor, now: inv.now }, inv.call);
+      const r = await rules.run({ input: validated.value, actor, now: inv.now }, inv);
       return Result.isFailure(r) ? r : Result.succeed(seal(r.value));
     };
     return Object.freeze({ decide });

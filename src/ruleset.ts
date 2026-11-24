@@ -1,5 +1,5 @@
 import { Result } from "@praha/byethrow";
-import { runWithPorts, type AnyPort, type PortCall, type PortErrors, type PortNames, type Ports } from "./port.ts";
+import type { AnyPort, Invocation, PortErrors, PortNames, Ports } from "./port.ts";
 import type { Rule } from "./rule.ts";
 import {
   describeWhen,
@@ -40,7 +40,7 @@ declare const startState: unique symbol;
 // when が状態をどう進めるか。線路は、rule の when が持つ step がこの型を満たすことを add で確かめる
 type Stepper<Cur, V, E, D> = <X extends Cur>(s: X, check: Check<X, V, E>) => Promise<Result.Result<X & D, E>>;
 
-type RunState<In, D, E> = <X extends In>(s: X, call: PortCall) => Promise<Result.Result<X & D, E>>;
+type RunState<In, D, E> = <X extends In>(s: X, invocation: Invocation) => Promise<Result.Result<X & D, E>>;
 
 // rule を先頭から順に当てる線路。rule を足すたびに、前の rule が作った状態の型を次の rule が受け取れるかを型で確かめる。
 // 状態は、開始の状態に rule が重ねた型 D を足したもの。開始の状態の型は走らせる側が決め、そのまま最後まで残る
@@ -68,17 +68,17 @@ export class Ruleset<K extends TrackKind, T extends string, In extends {}, D, E,
       },
   ): Ruleset<K, T, In, D & Delta<V, W>, E | StepFailure<N, E2 | PortErrors<P>>, PN | PortNames<P>> {
     const previous = this.run;
-    const ports = Object.values(r.requires ?? {});
+    const ports = r.ports;
     // r.when.step は、rule が付けた step と when 自身の step の交差型になる。add で確かめた型の方で呼ぶ
     const step: Stepper<In & D, V, StepFailure<N, E2 | PortErrors<P>>, Delta<V, W>> = r.when.step;
     return new Ruleset<K, T, In, D & Delta<V, W>, E | StepFailure<N, E2 | PortErrors<P>>, PN | PortNames<P>>(
       [...this.plan, { name: r.name, when: describeWhen(r.when), ports: ports.map((p) => p.name) }],
       [...this.ports, ...ports],
-      async <X extends In>(s0: X, call: PortCall) => {
-        const prev = await previous(s0, call);
+      async <X extends In>(s0: X, invocation: Invocation) => {
+        const prev = await previous(s0, invocation);
         if (Result.isFailure(prev)) return prev;
         return step(prev.value, async (s) => {
-          const out = await runWithPorts(call, r.requires, (fns) => r.check(s, fns));
+          const out = await r.run(s, invocation);
           return Result.isFailure(out) ? Result.fail({ step: r.name, error: out.error }) : out;
         });
       },
@@ -124,5 +124,5 @@ export type Decider<In, Out, E, PN extends string> = {
   readonly [portNames]: PN;
   readonly plan: readonly PlannedRule[];
   readonly ports: readonly AnyPort[];
-  readonly run: (s: In, call: PortCall) => Promise<Result.Result<Out, E>>;
+  readonly run: (s: In, invocation: Invocation) => Promise<Result.Result<Out, E>>;
 };

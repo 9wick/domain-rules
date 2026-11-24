@@ -1,6 +1,16 @@
 import { Result } from "@praha/byethrow";
 import type { Track } from "./model.ts";
-import type { NoPorts, PortFns, Ports } from "./port.ts";
+import { resolveField, type Holder, type StrictRecord } from "./keyed.ts";
+import {
+  runWithPorts,
+  type AnyPort,
+  type Invocation,
+  type NoPorts,
+  type PortErrors,
+  type PortCtx,
+  type PortFns,
+  type Requires,
+} from "./port.ts";
 import {
   always,
   changed,
@@ -19,25 +29,20 @@ export type CheckResult = Checked<unknown, unknown>;
 type SuccessOf<R> = Awaited<R> extends infer X ? (X extends Result.Success<infer V> ? V : never) : never;
 type FailureOf<R> = Awaited<R> extends infer X ? (X extends Result.Failure<infer E> ? E : never) : never;
 
-// rule は線路の1つの step。check の型がそのまま、受け取る状態・成功の値・失敗の型を表す
-export type Rule<
-  K extends TrackKind,
-  T extends string,
-  N extends string,
-  S,
-  W extends WhenParam<K, S>,
-  V,
-  E,
-  P extends Ports,
-> = {
+declare const rulePorts: unique symbol;
+
+// rule は線路の1つの step。run の型がそのまま、受け取る状態・成功の値・失敗の型を表す。
+// P は requires に書いた port の record の型で、bind が provider の不足を型で確かめるために持つ
+export type Rule<K extends TrackKind, T extends string, N extends string, S, W extends WhenParam<K, S>, V, E, P> = {
   readonly kind: "rule";
   // 線路の種類は型の上で rule と線路を合わせるためにある。どの線路にも置ける rule は持たない
   readonly track?: { readonly kind: K; readonly target: T };
+  readonly [rulePorts]?: P;
   readonly name: N;
-  readonly requires: P | undefined;
+  readonly ports: readonly AnyPort[];
   // when に、状態をどう進めるかの step を付けたもの。always のように自分の step を持つ when は、その step が残る
   readonly when: W & { readonly step: ConditionalStep<S> };
-  readonly check: (s: S, ports: PortFns<P>) => Checked<V, E>;
+  readonly run: (s: S, invocation: Invocation) => Promise<Result.Result<V, E | PortErrors<P>>>;
 };
 
 export function rule<
@@ -47,26 +52,34 @@ export function rule<
   const N extends string,
   W extends WhenParam<K, S>,
   R extends CheckResult,
-  P extends Ports = NoPorts,
+  P extends Requires<P> = NoPorts,
   // 成功の値と失敗の型は check の返り値から引く。返り値の型を、引いた型の Result として扱えることは呼び出す側で確かめる
   V = SuccessOf<R>,
   E = FailureOf<R>,
 >(
   track: Track<K, T, S>,
+  // requires を省略できるのは、check が受け取る port がないときだけ
   def: {
     readonly name: N;
-    readonly requires?: P;
+    readonly requires?: P & StrictRecord<P>;
     readonly when: W;
     readonly check: (s: S, ports: PortFns<P>) => R & NoInfer<Checked<V, E>>;
-  },
-): Rule<K, T, N, S, W, V, E, P> {
+  } & Holder<"requires", P>,
+): Rule<K, T, N, S, W, V, E, NoInfer<P>> {
+  const check: (s: S, ports: PortFns<P>) => Checked<V, E> = def.check;
+  const run = (s: S, invocation: Invocation): Promise<Result.Result<V, E | PortErrors<P>>> =>
+    runWithPorts<P, V, E>(
+      invocation,
+      (ctx) => resolveField<PortCtx<PortErrors<P>>, "requires", P>(def, "requires", ctx),
+      (fns) => check(s, fns),
+    );
   return Object.freeze({
     kind: "rule",
     track: { kind: track.kind, target: track.target },
     name: def.name,
-    requires: def.requires,
+    ports: Object.values(def.requires ?? {}),
     when: Object.freeze(Object.assign((s: S) => def.when(s), { step: conditionalStep(def.when) }, def.when)),
-    check: def.check,
+    run,
   });
 }
 
@@ -101,7 +114,7 @@ export const immutable = <T extends string, S extends { readonly pre: object | n
 export const alwaysAllow: Rule<TrackKind, string, "常に許可", unknown, Always, void, never, NoPorts> = Object.freeze({
   kind: "rule",
   name: "常に許可",
-  requires: undefined,
+  ports: [],
   when: always,
-  check: () => Result.succeed(),
+  run: async () => Result.succeed(),
 });
