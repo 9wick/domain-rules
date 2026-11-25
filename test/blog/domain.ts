@@ -95,13 +95,13 @@ export const isDraft = (a: ArticleValue) => a.status === "DRAFT";
 export const isPublished = (a: ArticleValue) => a.status === "PUBLISHED";
 export const isApproved = (a: ArticleValue) => a.approvedAt !== null;
 
-export const authorIsNotReviewer = rule(article.save, {
+export const authorIsNotReviewer = rule(article.onSave, {
   name: "著者とレビュアーは別の人",
   when: always,
   check: (s) => (s.next.authorId !== s.next.reviewerId ? Result.succeed() : Result.fail("SAME_AUTHOR_AND_REVIEWER")),
 });
 
-export const uniqueSlugInBlog = rule(article.save, {
+export const uniqueSlugInBlog = rule(article.onSave, {
   name: "slug はブログ内で一意",
   requires: { findArticlesInBlog },
   when: changed("slug"),
@@ -114,31 +114,31 @@ export const uniqueSlugInBlog = rule(article.save, {
   },
 });
 
-export const publishAtInFuture = rule(article.save, {
+export const publishAtInFuture = rule(article.onSave, {
   name: "公開日時は未来",
   when: changed("publishAt"),
   check: (s) => (s.next.publishAt > s.now ? Result.succeed() : Result.fail("PUBLISH_AT_IN_PAST")),
 });
 
-export const onlyReviewerPublishes = rule(article.save, {
+export const onlyReviewerPublishes = rule(article.onSave, {
   name: "公開できるのは今のレビュアーだけ",
   when: changed("status", { pre: "DRAFT", next: "PUBLISHED" }),
   check: (s) => (s.actor.id === s.pre?.reviewerId ? Result.succeed() : Result.fail("NOT_REVIEWER")),
 });
 
-export const onlyAuthorChangesReviewer = rule(article.save, {
+export const onlyAuthorChangesReviewer = rule(article.onSave, {
   name: "作成後にレビュアーを変えられるのは著者だけ",
   when: and(not(onCreate), changed("reviewerId")),
   check: (s) => (s.actor.id === s.pre?.authorId ? Result.succeed() : Result.fail("NOT_AUTHOR")),
 });
 
-export const slugLockedAfterPublish = rule(article.save, {
+export const slugLockedAfterPublish = rule(article.onSave, {
   name: "公開後の slug を変えられるのは管理者だけ",
   when: and(changed("slug"), pre(isPublished), not(actor(isAdmin))),
   check: () => Result.fail("SLUG_LOCKED"),
 });
 
-export const publishedIsApproved = rule(article.save, {
+export const publishedIsApproved = rule(article.onSave, {
   name: "公開中の記事は承認済み",
   when: next(isPublished),
   check: (s) => (isApproved(s.next) ? Result.succeed() : Result.fail("NOT_APPROVED")),
@@ -150,7 +150,7 @@ const allowedStatusChanges: Record<ArticleValue["status"], readonly ArticleValue
   ARCHIVED: ["ARCHIVED"],
 };
 
-export const statusChangesAreAllowed = rule(article.save, {
+export const statusChangesAreAllowed = rule(article.onSave, {
   name: "status は許可された変化だけ",
   when: changed("status"),
   check: (s) => {
@@ -159,15 +159,15 @@ export const statusChangesAreAllowed = rule(article.save, {
   },
 });
 
-export const onlyDraftIsDeletable = rule(article.delete, {
+export const onlyDraftIsDeletable = rule(article.onDelete, {
   name: "削除できるのは下書きだけ",
   when: not(pre(isDraft)),
   check: () => Result.fail("NOT_DRAFT"),
 });
 
-export const articleImmutableFields = immutable(article.save, ["blogId", "authorId"]);
+export const articleImmutableFields = immutable(article.onSave, ["blogId", "authorId"]);
 
-export const reviewerExists = rule(article.save, {
+export const reviewerExists = rule(article.onSave, {
   name: "レビュアーが存在する",
   requires: { requireExistingUser },
   when: always,
@@ -181,7 +181,7 @@ export const reviewerExists = rule(article.save, {
   },
 });
 
-export const blogExists = rule(article.save, {
+export const blogExists = rule(article.onSave, {
   name: "ブログが存在する",
   requires: { findBlog },
   when: always,
@@ -195,7 +195,7 @@ export const blogExists = rule(article.save, {
   },
 });
 
-export const blogAcceptsPosts = rule(article.save.with<{ next: { blogId: BlogIdExisted } }>(), {
+export const blogAcceptsPosts = rule(article.onSave.assuming<{ next: { blogId: BlogIdExisted } }>(), {
   name: "投稿を受け付けているブログ",
   requires: { findBlog },
   when: changed("status", { next: "PUBLISHED" }),
@@ -206,13 +206,13 @@ export const blogAcceptsPosts = rule(article.save.with<{ next: { blogId: BlogIdE
   },
 });
 
-export const existingArticleId = rule(article.save, {
+export const existingArticleId = rule(article.onSave, {
   name: "既存の記事の id",
   when: always,
   check: ({ pre }) => Result.succeed({ next: { id: pre?.id } }),
 });
 
-export const articleIdAssigned = rule(article.save.with<{ next: { id: Article["id"] | undefined } }>(), {
+export const articleIdAssigned = rule(article.onSave.assuming<{ next: { id: Article["id"] | undefined } }>(), {
   name: "新しい記事に id を付ける",
   requires: { newArticleId },
   when: always,
@@ -232,8 +232,8 @@ const memberOnly = {
   check: ({ actor }: { actor: AppActor }) => (isMember(actor) ? Result.succeed({ actor }) : Result.fail("NOT_MEMBER")),
 };
 
-export const memberCanSave = rule(article.save, memberOnly);
-export const memberCanDelete = rule(article.delete, memberOnly);
+export const memberCanSave = rule(article.onSave, memberOnly);
+export const memberCanDelete = rule(article.onDelete, memberOnly);
 
 export const articleRules = modelRules(article)
   .load(findArticleById)
@@ -265,7 +265,7 @@ export const findArticle = cached(
   port("findArticle").of<(blogId: BlogId, id: ArticleId) => ExistingArticle | null, InfraError>(),
 );
 
-export const targetArticleExists = rule(previewArticle.decide, {
+export const targetArticleExists = rule(previewArticle.onDecide, {
   name: "対象の記事が存在する",
   requires: { findArticle },
   when: always,
@@ -276,13 +276,13 @@ export const targetArticleExists = rule(previewArticle.decide, {
   },
 });
 
-export const notArchived = rule(previewArticle.decide.with<{ article: ExistingArticle }>(), {
+export const notArchived = rule(previewArticle.onDecide.assuming<{ article: ExistingArticle }>(), {
   name: "アーカイブ済みの記事はプレビューできない",
   when: always,
   check: ({ article }) => (article.status !== "ARCHIVED" ? Result.succeed() : Result.fail("ARCHIVED")),
 });
 
-export const canPreview = rule(previewArticle.decide.with<{ article: ExistingArticle }>(), {
+export const canPreview = rule(previewArticle.onDecide.assuming<{ article: ExistingArticle }>(), {
   name: "プレビューできるのはメンバーの著者かレビュアーだけ",
   when: always,
   check: ({ actor, article }) => {

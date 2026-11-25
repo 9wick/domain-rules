@@ -31,7 +31,7 @@ const lookup = cached(port("lookup").of<(n: number) => number>());
 const uncachedLookup = port("uncachedLookup").of<(n: number) => number>();
 
 const twice = (name: string) =>
-  rule(item.save, {
+  rule(item.onSave, {
     name,
     requires: { lookup, uncachedLookup },
     when: always,
@@ -65,7 +65,7 @@ test("load がない model の rule の組は create だけを持つ", () => {
 });
 
 test("check が throw した例外は握りつぶさない", async () => {
-  const boom = rule(item.save, {
+  const boom = rule(item.onSave, {
     name: "boom",
     when: always,
     check: (): Result.Result<{ next: { id: string } }, never> => {
@@ -78,7 +78,7 @@ test("check が throw した例外は握りつぶさない", async () => {
 
 const failingRule = <E>(name: string, onFailure: (e: "DOWN") => E) => {
   const failing = port("failing").of<() => number, "DOWN">();
-  const r = rule(item.save, {
+  const r = rule(item.onSave, {
     name,
     requires: { failing },
     when: always,
@@ -119,12 +119,12 @@ test("prototype の名前の項目も schema にない項目として失敗す�
 
 const stored = { id: "i1", n: 5 };
 const findItem = port("findItem").of<(id: string) => { id: string; n: number } | null, "DB_DOWN">();
-const assignId = rule(item.save, {
+const assignId = rule(item.onSave, {
   name: "id",
   when: always,
   check: ({ next }) => Result.succeed({ next: { id: next.id ?? "new" } }),
 });
-const seenNow = rule(item.save, {
+const seenNow = rule(item.onSave, {
   name: "now",
   when: always,
   check: ({ now }) => (now === 42 ? Result.succeed() : Result.fail("WRONG_NOW")),
@@ -171,7 +171,7 @@ test("封をした値の pre と next は凍結され、provider が返した値
 
 test("rule で昇格した actor が封をした値に入る", async () => {
   const promoted = { ...member, promoted: true };
-  const promote = rule(item.save, {
+  const promote = rule(item.onSave, {
     name: "promote",
     when: always,
     check: () => Result.succeed({ actor: promoted, next: { id: "x" } }),
@@ -182,7 +182,11 @@ test("rule で昇格した actor が封をした値に入る", async () => {
 
 test("when が当たらない rule は check を呼ばず、状態を変えない", async () => {
   let called = false;
-  const never = rule(item.save, { name: "never", when: () => false, check: () => ((called = true), Result.fail("X")) });
+  const never = rule(item.onSave, {
+    name: "never",
+    when: () => false,
+    check: () => ((called = true), Result.fail("X")),
+  });
   const domain = bind([modelRules(item).save(ruleset(never).add(assignId))], {
     providers: [provide.value(clock, 0)],
   });
@@ -195,7 +199,7 @@ test("when が当たらない rule は check を呼ばず、状態を変えな�
 
 test("add は元の ruleset を変えず、新しい ruleset を返す", () => {
   const base = ruleset(assignId);
-  base.add(rule(item.save, { name: "other", when: always, check: () => Result.succeed() }));
+  base.add(rule(item.onSave, { name: "other", when: always, check: () => Result.succeed() }));
   expect(plan(modelRules(item).save(base)).save?.map((r) => r.name)).toEqual(["id"]);
 });
 
@@ -226,7 +230,7 @@ test("同名の別宣言の provider では port を満たせない", () => {
 test("cached は元の宣言の provider を使う", async () => {
   const raw = port("raw").of<(n: number) => number>();
   const cachedRaw = cached(raw);
-  const read = rule(item.save, {
+  const read = rule(item.onSave, {
     name: "read",
     when: always,
     requires: { cachedRaw },
