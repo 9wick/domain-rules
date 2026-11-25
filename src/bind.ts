@@ -1,10 +1,9 @@
-import { byName, type ByName, type UniqueNames } from "keyed";
+import { fromEntries, mapValues } from "as-free";
 import type { BindCtx } from "./methods.ts";
+import type { UniqueNames } from "./names.ts";
 import type { Action } from "./model.ts";
 import { clock, type Invocation, type Provider } from "./port.ts";
 import type { RuleSet, RuleSetPorts } from "./rules.ts";
-
-export type Bound<Sets extends readonly RuleSet[]> = ByName<Sets>;
 
 type RequiredPorts<Sets extends readonly RuleSet[]> = RuleSetPorts<Sets[number]> | "clock";
 type MissingProviders<Sets extends readonly RuleSet[], Ps extends readonly Provider[]> = Exclude<
@@ -12,21 +11,30 @@ type MissingProviders<Sets extends readonly RuleSet[], Ps extends readonly Provi
   Ps[number]["name"]
 >;
 
+// bind の返り値の型。名前を付けて受け渡すときに使う
+export type Bound<Sets extends readonly RuleSet[]> = ReturnType<typeof bind<Sets, readonly Provider[]>>;
+
 export function bind<const Sets extends readonly RuleSet[], const Ps extends readonly Provider[]>(
   sets: Sets & UniqueNames<Sets>,
   options: { readonly providers: Ps } & ([MissingProviders<Sets, Ps>] extends [never]
     ? unknown
     : { readonly "provider が足りない port": MissingProviders<Sets, Ps> }),
-): Bound<Sets> {
+) {
   const scope = {};
   for (const p of options.providers) p.registerIn(scope);
+  const names = new Set<string>();
   for (const set of sets) {
+    // 復帰できない異常: 同じ名前の rule の組を2つ渡している。型でも弾くが、tuple でない配列などで来たときに後の組で黙って上書きしない
+    if (names.has(set.name)) throw new Error(`bind: "${set.name}" の rule の組が重複しています`);
+    names.add(set.name);
     const missing = requiredPorts(set)
       .filter((port) => !port.providedIn(scope))
       .map((port) => port.name);
     if (missing.length > 0) throw new Error(`bind: provider が足りない port: ${missing.join(", ")}`);
   }
-  return byName<BindCtx, Sets>(sets, { invocation: () => invocation(scope) });
+  const ctx: BindCtx = { invocation: () => invocation(scope) };
+  const list: Sets = sets;
+  return fromEntries(mapValues(list, (set) => [set.name, set.resolveIn(ctx)] as const));
 }
 
 const requiredPorts = (

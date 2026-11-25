@@ -1,5 +1,5 @@
 import { Result } from "@praha/byethrow";
-import type { Resolved } from "keyed";
+import { mapValues } from "as-free";
 
 declare const portTypes: unique symbol;
 
@@ -131,7 +131,28 @@ export type PortNames<P extends Ports> = { [K in keyof P]: P[K]["name"] }[keyof 
 export type Requires<P> = Readonly<
   Record<string, AnyPort & { readonly resolveIn: (ctx: PortCtx<PortErrors<P>>) => unknown }>
 >;
-export type PortFns<P> = Resolved<P>;
+
+type HasIndex<P> = string extends keyof P
+  ? true
+  : number extends keyof P
+    ? true
+    : symbol extends keyof P
+      ? true
+      : false;
+type OptionalKeys<P> = { [K in keyof P]-?: {} extends Pick<P, K> ? K : never }[keyof P];
+
+// index signature や省略できる key があると、bind が確かめる port と check が使う port がずれる
+export type StrictRecord<P> =
+  HasIndex<P> extends true
+    ? { readonly "index signature の record は渡せない": never }
+    : [OptionalKeys<P>] extends [never]
+      ? unknown
+      : { readonly "省略できる key は渡せない": OptionalKeys<P> };
+
+// requires の port ごとに、check に渡す関数を作る
+export const resolvePorts = <P extends Requires<P>>(requires: P, ctx: PortCtx<PortErrors<P>>) =>
+  mapValues(requires, (p) => p.resolveIn(ctx));
+export type PortFns<P extends Requires<P>> = ReturnType<typeof resolvePorts<P>>;
 
 export const port = <const N extends string>(name: N) => ({
   of: <F extends (...args: never) => unknown, E = never>() =>

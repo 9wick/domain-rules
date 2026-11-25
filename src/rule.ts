@@ -1,15 +1,16 @@
 import { Result } from "@praha/byethrow";
+import { getOrEmpty, type OmittableIfEmpty } from "as-free";
 import type { Track } from "./model.ts";
-import { resolveField, type Holder, type StrictRecord } from "keyed";
 import {
   runWithPorts,
   type AnyPort,
   type Invocation,
   type NoPorts,
   type PortErrors,
-  type PortCtx,
   type PortFns,
   type Requires,
+  type StrictRecord,
+  resolvePorts,
 } from "./port.ts";
 import {
   always,
@@ -64,20 +65,21 @@ export function rule<
     readonly requires?: P & StrictRecord<P>;
     readonly when: W;
     readonly check: (s: S, ports: PortFns<P>) => R & NoInfer<Checked<V, E>>;
-  } & Holder<"requires", P>,
+  } & OmittableIfEmpty<"requires", P & StrictRecord<P>>,
 ): Rule<K, T, N, S, W, V, E, NoInfer<P>> {
+  const requires: P = getOrEmpty<"requires", P & StrictRecord<P>>(def, "requires");
   const check: (s: S, ports: PortFns<P>) => Checked<V, E> = def.check;
   const run = (s: S, invocation: Invocation): Promise<Result.Result<V, E | PortErrors<P>>> =>
     runWithPorts<P, V, E>(
       invocation,
-      (ctx) => resolveField<PortCtx<PortErrors<P>>, "requires", P>(def, "requires", ctx),
+      (ctx) => resolvePorts(requires, ctx),
       (fns) => check(s, fns),
     );
   return Object.freeze({
     kind: "rule",
     track: { kind: track.kind, target: track.target },
     name: def.name,
-    ports: Object.values(def.requires ?? {}),
+    ports: Object.values(requires),
     when: Object.freeze(Object.assign((s: S) => def.when(s), { step: conditionalStep(def.when) }, def.when)),
     run,
   });

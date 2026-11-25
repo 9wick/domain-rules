@@ -72,10 +72,6 @@ export default defineConfig({
           "typescript/ban-ts-comment": ["error", { "ts-expect-error": "allow-with-description", "ts-ignore": true }],
           // rule の check や provider が throw したときの振る舞いを確かめるため、throw を書く
           "strict/no-throw": "off",
-          // brand 付きの id や、わざと型に合わない値を作って渡す
-          "typescript/consistent-type-assertions": "off",
-          "typescript/no-unsafe-type-assertion": "off",
-          "typescript/no-unsafe-assignment": "off",
           // README の例と同じく、actor の絞り込みに型述語を使う
           "strict/no-type-predicate": "off",
           // 封をした値を作り直しても open できないことを、spread で作り直して確かめる
@@ -97,16 +93,6 @@ export default defineConfig({
         // check には port の成功の値だけを渡すため、port の失敗は throw で check を抜け、ここで Result に戻す
         files: ["src/port.ts"],
         rules: { "strict/no-throw": "off", "strict/no-try-catch": "off", "typescript/only-throw-error": "off" },
-      },
-      {
-        // 型の上では安全なのに TypeScript では型 assertion なしに書けない変換だけを置く、別のパッケージ
-        // 置く条件は packages/keyed/src/index.ts の先頭に書いてある。型の約束が値で破れるとき(name の重複)は throw で止める
-        files: ["packages/keyed/src/**/*.ts"],
-        rules: {
-          "typescript/consistent-type-assertions": "off",
-          "typescript/no-unsafe-type-assertion": "off",
-          "strict/no-throw": "off",
-        },
       },
     ],
     options: {
