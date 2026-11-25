@@ -1,14 +1,9 @@
 import { Result } from "@praha/byethrow";
-import type { AnyPort, Invocation, PortNames, Ports } from "./port.ts";
+import type { TrackKind } from "../definition/track.ts";
+import type { Invocation } from "../port/invocation.ts";
+import type { AnyPort, PortNames, Ports } from "../port/port.ts";
 import type { Rule } from "./rule.ts";
-import {
-  describeWhen,
-  type Check,
-  type IsAlways,
-  type TrackKind,
-  type WhenDescription,
-  type WhenParam,
-} from "./when.ts";
+import { describeWhen, type Check, type IsAlways, type WhenDescription, type WhenParam } from "./when/when.ts";
 
 // rule が状態に重ねる型。何も返さない check は状態を変えない。当たらないこともある rule では、重ねない場合も残る
 type Lift<V> = [V] extends [object] ? V : unknown;

@@ -1,15 +1,13 @@
 import { Result } from "@praha/byethrow";
 import * as v from "valibot";
 import {
-  action,
   actionRules,
-  actor,
   always,
   and,
   cached,
   changed,
+  domain,
   immutable,
-  model,
   modelRules,
   next,
   not,
@@ -39,11 +37,7 @@ export type AppActor = { readonly id: UserId; readonly role: "GUEST" | "MEMBER" 
 export type MemberActor = AppActor & { readonly role: "MEMBER" | "ADMIN" };
 export const isAdmin = (a: AppActor) => a.role === "ADMIN";
 
-declare module "../../src/index.ts" {
-  interface Register {
-    actor: AppActor;
-  }
-}
+const { model, action, actor } = domain<{ actor: AppActor }>();
 
 export const ArticleIdSchema = v.pipe(v.string(), v.startsWith("art_"), v.brand("ArticleId"));
 export const ArticleIdExistedSchema = v.pipe(ArticleIdSchema, v.brand("ArticleIdExisted"));

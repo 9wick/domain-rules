@@ -1,10 +1,12 @@
 import { fromEntries, mapValues } from "as-free";
-import type { BindCtx } from "./methods.ts";
-import type { UniqueNames } from "./names.ts";
-import type { Action } from "./model.ts";
-import { clock, type Invocation, type Provider } from "./port.ts";
-import type { RuleSet, RuleSetPorts } from "./rules.ts";
-import { Panic } from "./panic.ts";
+import type { Action } from "./definition/action.ts";
+import type { BindCtx } from "./method/context.ts";
+import { clock } from "./port/clock.ts";
+import type { Invocation } from "./port/invocation.ts";
+import type { Provider } from "./port/provider.ts";
+import type { RuleSet, RuleSetPorts } from "./rule-set/rule-set.ts";
+import { Panic } from "./shared/panic.ts";
+import type { UniqueNames } from "./shared/unique-names.ts";
 
 type RequiredPorts<Sets extends readonly RuleSet[]> = RuleSetPorts<Sets[number]> | "clock";
 type MissingProviders<Sets extends readonly RuleSet[], Ps extends readonly Provider[]> = Exclude<

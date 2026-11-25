@@ -29,7 +29,7 @@ import {
   bind,
   changed,
   clock,
-  model,
+  domain,
   modelRules,
   open,
   port,
@@ -40,6 +40,9 @@ import {
 } from "domain-rules";
 
 // 1. モデル・ポート・ルールを定義する（ドメイン層）
+// actor の型はここで1回だけ決める。rule の check はこの型の actor を受け取る
+const { model } = domain<{ actor: { readonly id: string } }>();
+
 const articleInput = v.object({
   id: v.optional(v.string()),
   title: v.pipe(v.string(), v.minLength(1)),
