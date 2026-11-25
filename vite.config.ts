@@ -86,13 +86,8 @@ export default defineConfig({
       // ── 実装の例外:そのファイルが何であるかによって、ルールが守る性質が別の形で保たれるもの ──
       {
         // 復帰できない異常(provider の重複・不足、時刻を返さない clock、偽造された値)は throw で止める
-        files: ["src/bind.ts", "src/seal.ts"],
+        files: ["src/bind.ts", "src/seal.ts", "src/port.ts"],
         rules: { "strict/no-throw": "off" },
-      },
-      {
-        // check には port の成功の値だけを渡すため、port の失敗は throw で check を抜け、ここで Result に戻す
-        files: ["src/port.ts"],
-        rules: { "strict/no-throw": "off", "strict/no-try-catch": "off", "typescript/only-throw-error": "off" },
       },
     ],
     options: {

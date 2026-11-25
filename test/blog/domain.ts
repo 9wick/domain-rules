@@ -107,7 +107,8 @@ export const uniqueSlugInBlog = rule(article.save, {
   when: changed("slug"),
   check: async (s, { findArticlesInBlog }) => {
     const articles = await findArticlesInBlog(s.next.blogId);
-    return articles.some((a) => a.slug === s.next.slug && a.id !== s.pre?.id)
+    if (Result.isFailure(articles)) return articles;
+    return articles.value.some((a) => a.slug === s.next.slug && a.id !== s.pre?.id)
       ? Result.fail("DUPLICATED_SLUG")
       : Result.succeed();
   },
@@ -175,7 +176,8 @@ export const reviewerExists = rule(article.save, {
       return Result.succeed({ next: { reviewerId: pre.reviewerId } });
     }
     const reviewerId = await requireExistingUser(next.reviewerId);
-    return Result.succeed({ next: { reviewerId } });
+    if (Result.isFailure(reviewerId)) return reviewerId;
+    return Result.succeed({ next: { reviewerId: reviewerId.value } });
   },
 });
 
@@ -188,7 +190,8 @@ export const blogExists = rule(article.save, {
       return Result.succeed({ next: { blogId: pre.blogId } });
     }
     const blog = await findBlog(next.blogId);
-    return blog ? Result.succeed({ next: { blogId: blog.id } }) : Result.fail("BLOG_NOT_FOUND");
+    if (Result.isFailure(blog)) return blog;
+    return blog.value ? Result.succeed({ next: { blogId: blog.value.id } }) : Result.fail("BLOG_NOT_FOUND");
   },
 });
 
@@ -198,7 +201,8 @@ export const blogAcceptsPosts = rule(article.save.with<{ next: { blogId: BlogIdE
   when: changed("status", { next: "PUBLISHED" }),
   check: async ({ next }, { findBlog }) => {
     const blog = await findBlog(next.blogId);
-    return blog?.acceptsPosts === true ? Result.succeed() : Result.fail("BLOG_CLOSED");
+    if (Result.isFailure(blog)) return blog;
+    return blog.value?.acceptsPosts === true ? Result.succeed() : Result.fail("BLOG_CLOSED");
   },
 });
 
@@ -212,7 +216,12 @@ export const articleIdAssigned = rule(article.save.with<{ next: { id: Article["i
   name: "新しい記事に id を付ける",
   requires: { newArticleId },
   when: always,
-  check: async ({ next }, { newArticleId }) => Result.succeed({ next: { id: next.id ?? (await newArticleId()) } }),
+  check: async ({ next }, { newArticleId }) => {
+    if (next.id !== undefined) return Result.succeed({ next: { id: next.id } });
+    const id = await newArticleId();
+    if (Result.isFailure(id)) return id;
+    return Result.succeed({ next: { id: id.value } });
+  },
 });
 
 export const isMember = (a: AppActor): a is MemberActor => a.role === "MEMBER" || a.role === "ADMIN";
@@ -262,7 +271,8 @@ export const targetArticleExists = rule(previewArticle.decide, {
   when: always,
   check: async ({ input }, { findArticle }) => {
     const article = await findArticle(input.blogId, input.articleId);
-    return article ? Result.succeed({ article }) : Result.fail("ARTICLE_NOT_FOUND");
+    if (Result.isFailure(article)) return article;
+    return article.value ? Result.succeed({ article: article.value }) : Result.fail("ARTICLE_NOT_FOUND");
   },
 });
 

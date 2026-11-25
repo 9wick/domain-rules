@@ -2,11 +2,9 @@ import { Result } from "@praha/byethrow";
 import { getOrEmpty, type OmittableIfEmpty } from "as-free";
 import type { Track } from "./model.ts";
 import {
-  runWithPorts,
   type AnyPort,
   type Invocation,
   type NoPorts,
-  type PortErrors,
   type PortFns,
   type Requires,
   type StrictRecord,
@@ -43,7 +41,7 @@ export type Rule<K extends TrackKind, T extends string, N extends string, S, W e
   readonly ports: readonly AnyPort[];
   // when に、状態をどう進めるかの step を付けたもの。always のように自分の step を持つ when は、その step が残る
   readonly when: W & { readonly step: ConditionalStep<S> };
-  readonly run: (s: S, invocation: Invocation) => Promise<Result.Result<V, E | PortErrors<P>>>;
+  readonly run: (s: S, invocation: Invocation) => Promise<Result.Result<V, E>>;
 };
 
 export function rule<
@@ -53,7 +51,7 @@ export function rule<
   const N extends string,
   W extends WhenParam<K, S>,
   R extends CheckResult,
-  P extends Requires<P> = NoPorts,
+  P extends Requires = NoPorts,
   // 成功の値と失敗の型は check の返り値から引く。返り値の型を、引いた型の Result として扱えることは呼び出す側で確かめる
   V = SuccessOf<R>,
   E = FailureOf<R>,
@@ -69,12 +67,8 @@ export function rule<
 ): Rule<K, T, N, S, W, V, E, NoInfer<P>> {
   const requires: P = getOrEmpty<"requires", P & StrictRecord<P>>(def, "requires");
   const check: (s: S, ports: PortFns<P>) => Checked<V, E> = def.check;
-  const run = (s: S, invocation: Invocation): Promise<Result.Result<V, E | PortErrors<P>>> =>
-    runWithPorts<P, V, E>(
-      invocation,
-      (ctx) => resolvePorts(requires, ctx),
-      (fns) => check(s, fns),
-    );
+  const run = async (s: S, invocation: Invocation): Promise<Result.Result<V, E>> =>
+    check(s, resolvePorts(requires, invocation));
   return Object.freeze({
     kind: "rule",
     track: { kind: track.kind, target: track.target },

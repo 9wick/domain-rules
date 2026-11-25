@@ -165,7 +165,7 @@ export const newArticleId = port("newArticleId").of<() => ArticleIdNew, InfraErr
 
 port が何を返すかは、port ごとに違います。昇格した値、数、真偽値、データのどれでもかまいません。呼ぶかどうか、どの引数で呼ぶかは、check が決めます。
 
-check の中で呼ぶ port は、`Result` ではなく成功の値を返します。例えば `await findBlog(id)` は `Blog | null` です。port が失敗したら、ライブラリはそこで線路を止め、port の失敗の値を、その rule の失敗の値にします。check の中で `Result` を組み合わせる必要はありません。
+check の中で呼ぶ port も、provider と同じ `Result` を返します。例えば `await findBlog(id)` は `Result<Blog | null, InfraError>` です。失敗をどう扱うかは check が決めます。そのまま rule の失敗にするときは、受け取った失敗を返します。成功の値は、失敗でないことを確かめるまで読めません。
 
 port は線路の種類に属しません。引数を受け取るので、保存の rule からも削除の rule からも action の rule からも呼べます。
 
@@ -193,7 +193,8 @@ export const uniqueSlugInBlog = rule(article.save, {
   when: changed("slug"),
   check: async (s, { findArticlesInBlog }) => {
     const articles = await findArticlesInBlog(s.next.blogId);
-    return articles.some((a) => a.slug === s.next.slug && a.id !== s.pre?.id)
+    if (Result.isFailure(articles)) return articles;
+    return articles.value.some((a) => a.slug === s.next.slug && a.id !== s.pre?.id)
       ? Result.fail("DUPLICATED_SLUG")
       : Result.succeed();
   },
@@ -321,7 +322,8 @@ export const reviewerExists = rule(article.save, {
       return Result.succeed({ next: { reviewerId: pre.reviewerId } });
     }
     const reviewerId = await requireExistingUser(next.reviewerId);
-    return Result.succeed({ next: { reviewerId } });
+    if (Result.isFailure(reviewerId)) return reviewerId;
+    return Result.succeed({ next: { reviewerId: reviewerId.value } });
   },
 });
 
@@ -335,7 +337,8 @@ export const blogExists = rule(article.save, {
       return Result.succeed({ next: { blogId: pre.blogId } });
     }
     const blog = await findBlog(next.blogId);
-    return blog ? Result.succeed({ next: { blogId: blog.id } }) : Result.fail("BLOG_NOT_FOUND");
+    if (Result.isFailure(blog)) return blog;
+    return blog.value ? Result.succeed({ next: { blogId: blog.value.id } }) : Result.fail("BLOG_NOT_FOUND");
   },
 });
 
@@ -346,12 +349,13 @@ export const blogAcceptsPosts = rule(article.save.with<{ next: { blogId: BlogIdE
   when: changed("status", { next: "PUBLISHED" }),
   check: async ({ next }, { findBlog }) => {
     const blog = await findBlog(next.blogId);
-    return blog?.acceptsPosts ? Result.succeed() : Result.fail("BLOG_CLOSED");
+    if (Result.isFailure(blog)) return blog;
+    return blog.value?.acceptsPosts ? Result.succeed() : Result.fail("BLOG_CLOSED");
   },
 });
 ```
 
-`reviewerExists` を通ったあとの状態では、`next.reviewerId` は `UserIdExisted` です。`requireExistingUser` は、ユーザーが存在すれば同じ id を `UserIdExisted` として返し、存在しなければ `USER_NOT_FOUND` で失敗します。その失敗は、そのまま `reviewerExists` の失敗になります。同じ id のままの更新では、既存の値を引き継ぎます。既存の値は最初から `UserIdExisted` なので、どちらの経路でもキャストは要りません。
+`reviewerExists` を通ったあとの状態では、`next.reviewerId` は `UserIdExisted` です。`requireExistingUser` は、ユーザーが存在すれば同じ id を `UserIdExisted` として返し、存在しなければ `USER_NOT_FOUND` で失敗します。check はその失敗をそのまま返すので、`reviewerExists` の失敗になります。同じ id のままの更新では、既存の値を引き継ぎます。既存の値は最初から `UserIdExisted` なので、どちらの経路でもキャストは要りません。
 
 `when` が当たらずに飛ばされる rule は、状態を変えません。そのため、昇格する rule に `always` 以外の `when` を書くと、その rule のあとの型は「昇格した型か、していない型」の和になります。昇格した型を要求する rule が後ろにあるか、永続化の型が揃わなければ、rule の組を作るときに型エラーになります。
 
@@ -369,7 +373,12 @@ export const articleIdAssigned = rule(article.save.with<{ next: { id: Article["i
   name: "新しい記事に id を付ける",
   requires: { newArticleId },
   when: always,
-  check: async ({ next }, { newArticleId }) => Result.succeed({ next: { id: next.id ?? (await newArticleId()) } }),
+  check: async ({ next }, { newArticleId }) => {
+    if (next.id !== undefined) return Result.succeed({ next: { id: next.id } });
+    const id = await newArticleId();
+    if (Result.isFailure(id)) return id;
+    return Result.succeed({ next: { id: id.value } });
+  },
 });
 ```
 
@@ -472,7 +481,8 @@ export const targetArticleExists = rule(previewArticle.decide, {
   when: always,
   check: async ({ input }, { findArticle }) => {
     const article = await findArticle(input.blogId, input.articleId);
-    return article ? Result.succeed({ article }) : Result.fail("ARTICLE_NOT_FOUND");
+    if (Result.isFailure(article)) return article;
+    return article.value ? Result.succeed({ article: article.value }) : Result.fail("ARTICLE_NOT_FOUND");
   },
 });
 
@@ -631,7 +641,7 @@ type Failure =
   | ...;                                                        // 並べた rule ごとに1つ
 ```
 
-rule の失敗の値は、check が `Result.fail` に入れた値そのものです。conflict か、not found か、infra の失敗かは、利用者が失敗の値で表します。ライブラリは失敗に種類を付けません。check の中で呼んだ port が失敗したときは、port の失敗の値が、そのまま rule の失敗の値になります。port の失敗を別の値にしたいときは、port の側で、失敗ではなく値として返します(例えば、見つからないことを `null` で返す)。
+rule の失敗の値は、check が `Result.fail` に入れた値そのものです。conflict か、not found か、infra の失敗かは、利用者が失敗の値で表します。ライブラリは失敗に種類を付けません。check の中で呼んだ port の失敗は、check が返したときだけ rule の失敗になります。受け取った失敗をそのまま返せば port の失敗の値が、別の値で `Result.fail` すればその値が、rule の失敗の値になります。
 
 ## 実行モデル
 

@@ -8,9 +8,6 @@ type ImplOf<A extends readonly unknown[], T, E> = (...args: A) => Result.Result<
 // 1回のメソッド呼び出し。scope は bind ごとに1つで、provider の実装はこれを key に登録する
 export type Invocation = { readonly scope: object; readonly now: number };
 
-// check に渡す関数が使う、呼び出しと失敗の受け取り先。失敗は port の失敗の型のまま受け取る
-export type PortCtx<E> = { readonly invocation: Invocation; readonly fail: (e: E) => never };
-
 const register = <I>(impls: WeakMap<object, I>, scope: object, impl: I, name: string): void => {
   // 復帰できない異常: 同じ port の provider を同じ bind に2つ渡している
   if (impls.has(scope)) throw new Error(`bind: port "${name}" の provider が重複しています`);
@@ -81,13 +78,11 @@ export class Port<N extends string, in out A extends readonly unknown[], in out 
     return pending;
   };
 
-  // check に渡す関数。失敗したら ctx.fail で check を抜ける
+  // check に渡す関数。provider と同じ Result を返し、失敗をどう扱うかは check が決める
   readonly resolveIn =
-    (ctx: PortCtx<E>) =>
-    async (...args: A): Promise<T> => {
-      const r = await this.callIn(ctx.invocation, args);
-      return Result.isFailure(r) ? ctx.fail(r.error) : r.value;
-    };
+    (invocation: Invocation) =>
+    (...args: A): Promise<Result.Result<T, E>> =>
+      this.callIn(invocation, args);
 }
 
 // 型引数を問わない port。型の上で port の一覧を持つためで、実装の登録や呼び出しには使えない
@@ -125,12 +120,9 @@ export type PortError<P> = TypesOf<P> extends { readonly error: infer E } ? E : 
 
 export type Ports = Readonly<Record<string, AnyPort>>;
 export type NoPorts = Readonly<Record<never, AnyPort>>;
-export type PortErrors<P> = { [K in keyof P]: PortError<P[K]> }[keyof P];
 export type PortNames<P extends Ports> = { [K in keyof P]: P[K]["name"] }[keyof P];
-// requires に書ける record。各 port が、check の失敗の受け取り先から check に渡す関数を作れることを型で表す
-export type Requires<P> = Readonly<
-  Record<string, AnyPort & { readonly resolveIn: (ctx: PortCtx<PortErrors<P>>) => unknown }>
->;
+// requires に書ける record。各 port が、1回の呼び出しから check に渡す関数を作れることを型で表す
+export type Requires = Readonly<Record<string, AnyPort & { readonly resolveIn: (invocation: Invocation) => unknown }>>;
 
 type HasIndex<P> = string extends keyof P
   ? true
@@ -150,9 +142,9 @@ export type StrictRecord<P> =
       : { readonly "省略できる key は渡せない": OptionalKeys<P> };
 
 // requires の port ごとに、check に渡す関数を作る
-export const resolvePorts = <P extends Requires<P>>(requires: P, ctx: PortCtx<PortErrors<P>>) =>
-  mapValues(requires, (p) => p.resolveIn(ctx));
-export type PortFns<P extends Requires<P>> = ReturnType<typeof resolvePorts<P>>;
+export const resolvePorts = <P extends Requires>(requires: P, invocation: Invocation) =>
+  mapValues(requires, (p) => p.resolveIn(invocation));
+export type PortFns<P extends Requires> = ReturnType<typeof resolvePorts<P>>;
 
 export const port = <const N extends string>(name: N) => ({
   of: <F extends (...args: never) => unknown, E = never>() =>
@@ -171,34 +163,3 @@ export const provide = Object.assign(
   <N extends string, I>(target: Providable<N, I>, impl: NoInfer<I>): Provider<N> => target.provider(impl),
   { value: <N extends string, V>(target: Valuable<N, V>, v: NoInfer<V>): Provider<N> => target.valued(v) },
 );
-
-class PortFailed<E> {
-  readonly error: E;
-  constructor(error: E) {
-    this.error = error;
-  }
-}
-
-// check の中では port の成功の値だけを見せたいので、失敗は throw で check を抜けさせる。
-// check が throw を握りつぶして成功を返しても線路を止められるよう、最初の失敗を別に覚えておく
-export const runWithPorts = async <P extends Requires<P>, T, E>(
-  invocation: Invocation,
-  resolve: (ctx: PortCtx<PortErrors<P>>) => PortFns<P>,
-  check: (fns: PortFns<P>) => Result.Result<T, E> | Promise<Result.Result<T, E>>,
-): Promise<Result.Result<T, E | PortErrors<P>>> => {
-  let failed: PortFailed<PortErrors<P>> | undefined;
-  const ctx: PortCtx<PortErrors<P>> = {
-    invocation,
-    fail: (e) => {
-      failed ??= new PortFailed(e);
-      throw failed;
-    },
-  };
-  try {
-    const result = await check(resolve(ctx));
-    return failed === undefined ? result : Result.fail(failed.error);
-  } catch (e) {
-    if (failed !== undefined && e === failed) return Result.fail(failed.error);
-    throw e;
-  }
-};

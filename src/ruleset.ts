@@ -1,5 +1,5 @@
 import { Result } from "@praha/byethrow";
-import type { AnyPort, Invocation, PortErrors, PortNames, Ports } from "./port.ts";
+import type { AnyPort, Invocation, PortNames, Ports } from "./port.ts";
 import type { Rule } from "./rule.ts";
 import {
   describeWhen,
@@ -64,14 +64,14 @@ export class Ruleset<K extends TrackKind, T extends string, In extends {}, D, E,
   add<N extends string, W extends WhenParam<K, In & D>, V, E2, P extends Ports>(
     r: Rule<K, T, N, In & D, W, V, E2, P> &
       NarrowGuard<In & D, V> & {
-        readonly when: { readonly step: Stepper<In & D, V, StepFailure<N, E2 | PortErrors<P>>, Delta<V, W>> };
+        readonly when: { readonly step: Stepper<In & D, V, StepFailure<N, E2>, Delta<V, W>> };
       },
-  ): Ruleset<K, T, In, D & Delta<V, W>, E | StepFailure<N, E2 | PortErrors<P>>, PN | PortNames<P>> {
+  ): Ruleset<K, T, In, D & Delta<V, W>, E | StepFailure<N, E2>, PN | PortNames<P>> {
     const previous = this.run;
     const ports = r.ports;
     // r.when.step は、rule が付けた step と when 自身の step の交差型になる。add で確かめた型の方で呼ぶ
-    const step: Stepper<In & D, V, StepFailure<N, E2 | PortErrors<P>>, Delta<V, W>> = r.when.step;
-    return new Ruleset<K, T, In, D & Delta<V, W>, E | StepFailure<N, E2 | PortErrors<P>>, PN | PortNames<P>>(
+    const step: Stepper<In & D, V, StepFailure<N, E2>, Delta<V, W>> = r.when.step;
+    return new Ruleset<K, T, In, D & Delta<V, W>, E | StepFailure<N, E2>, PN | PortNames<P>>(
       [...this.plan, { name: r.name, when: describeWhen(r.when), ports: ports.map((p) => p.name) }],
       [...this.ports, ...ports],
       async <X extends In>(s0: X, invocation: Invocation) => {
@@ -98,7 +98,7 @@ const start = <
 >(
   first: Rule<K, T, N, S & {}, W, V, E2, P> &
     NarrowGuard<S & {}, V> & {
-      readonly when: { readonly step: Stepper<S & {}, V, StepFailure<N, E2 | PortErrors<P>>, Delta<V, W>> };
+      readonly when: { readonly step: Stepper<S & {}, V, StepFailure<N, E2>, Delta<V, W>> };
     },
 ) =>
   new Ruleset<K, T, S & {}, unknown, never, never>([], [], async (s) => Result.succeed(s)).add<N, W, V, E2, P>(first);

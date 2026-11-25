@@ -76,22 +76,30 @@ test("check が throw した例外は握りつぶさない", async () => {
   await expect(domain.item.create({ input: { n: 1 }, actor: member })).rejects.toThrow("bug");
 });
 
-test("check が port の失敗を catch して成功を返しても、port の失敗で止まる", async () => {
+const failingRule = <E>(name: string, onFailure: (e: "DOWN") => E) => {
   const failing = port("failing").of<() => number, "DOWN">();
-  const swallow = rule(item.save, {
-    name: "swallow",
+  const r = rule(item.save, {
+    name,
     requires: { failing },
     when: always,
     check: async (_, { failing }) => {
-      await failing().catch(() => 0);
-      return Result.succeed({ next: { id: "i" } });
+      const n = await failing();
+      return Result.isFailure(n) ? Result.fail(onFailure(n.error)) : Result.succeed({ next: { id: String(n.value) } });
     },
   });
-  const domain = bind([modelRules(item).save(ruleset(swallow))], {
+  return bind([modelRules(item).save(ruleset(r))], {
     providers: [provide(failing, () => Result.fail("DOWN" as const)), provide.value(clock, 0)],
   });
-  const r = await domain.item.create({ input: { n: 1 }, actor: member });
-  expect(Result.unwrapError(r)).toEqual({ step: "swallow", error: "DOWN" });
+};
+
+test("check が返した port の失敗が、rule の失敗になる", async () => {
+  const r = await failingRule("pass", (e) => e).item.create({ input: { n: 1 }, actor: member });
+  expect(Result.unwrapError(r)).toEqual({ step: "pass", error: "DOWN" });
+});
+
+test("check は port の失敗を別の値にして返せる", async () => {
+  const r = await failingRule("mapped", () => "UNAVAILABLE" as const).item.create({ input: { n: 1 }, actor: member });
+  expect(Result.unwrapError(r)).toEqual({ step: "mapped", error: "UNAVAILABLE" });
 });
 
 test("prototype の名前の項目も schema にない項目として失敗する", async () => {
@@ -222,7 +230,11 @@ test("cached は元の宣言の provider を使う", async () => {
     name: "read",
     when: always,
     requires: { cachedRaw },
-    check: async ({ next }, { cachedRaw }) => Result.succeed({ next: { id: String(await cachedRaw(next.n)) } }),
+    check: async ({ next }, { cachedRaw }) =>
+      Result.pipe(
+        await cachedRaw(next.n),
+        Result.map((n) => ({ next: { id: String(n) } })),
+      ),
   });
   const domain = bind([modelRules(item).save(ruleset(read))], {
     providers: [provide(raw, (n) => Result.succeed(n + 1)), provide.value(clock, 0)],
