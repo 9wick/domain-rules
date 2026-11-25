@@ -32,7 +32,7 @@ const appointment = model({
 });
 const actor: AppActor = { id: v.parse(UserIdSchema, "usr_1"), role: "MEMBER" };
 const find = port("findAppointment").of<(id: string) => { id: string; date: Date } | null>();
-const keepId = rule(appointment.save, {
+const keepId = rule(appointment.onSave, {
   name: "id",
   when: always,
   check: ({ pre }) => Result.succeed({ next: { id: pre?.id ?? "new" } }),

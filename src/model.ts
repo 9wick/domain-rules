@@ -20,7 +20,7 @@ export class Track<K extends TrackKind, T extends string, S> {
   }
 
   // 前の rule が昇格させた状態を前提にする
-  with<R>(): Track<K, T, S & R> {
+  assuming<R>(): Track<K, T, S & R> {
     return new Track<K, T, S & R>(this.kind, this.target);
   }
 }
@@ -34,8 +34,8 @@ export type Model<N extends string = string, In = unknown, Out = unknown, P = un
   readonly kind: "model";
   readonly name: N;
   readonly schema: { readonly input: ObjectSchema<In, Out>; readonly persisted: StandardSchemaV1<unknown, P> };
-  readonly save: Track<"save", N, SaveState<P | null, Out>>;
-  readonly delete: Track<"delete", N, DeleteState<P>>;
+  readonly onSave: Track<"save", N, SaveState<P | null, Out>>;
+  readonly onDelete: Track<"delete", N, DeleteState<P>>;
 };
 
 export type SaveState<Pre, Next> = {
@@ -68,15 +68,15 @@ export const model = <const N extends string, In, Out, P>(def: {
     kind: "model",
     name: def.name,
     schema: def.schema,
-    save: new Track<"save", N, SaveState<P | null, Out>>("save", def.name),
-    delete: new Track<"delete", N, DeleteState<P>>("delete", def.name),
+    onSave: new Track<"save", N, SaveState<P | null, Out>>("save", def.name),
+    onDelete: new Track<"delete", N, DeleteState<P>>("delete", def.name),
   });
 
 export type Action<N extends string = string, In = unknown, Out = unknown> = {
   readonly kind: "action";
   readonly name: N;
   readonly input: StandardSchemaV1<In, Out>;
-  readonly decide: Track<"decide", N, DecideState<Out>>;
+  readonly onDecide: Track<"decide", N, DecideState<Out>>;
 };
 
 export type DecideState<I> = { readonly input: I; readonly actor: Actor; readonly now: number };
@@ -89,5 +89,5 @@ export const action = <const N extends string, In, Out>(def: {
     kind: "action",
     name: def.name,
     input: def.input,
-    decide: new Track<"decide", N, DecideState<Out>>("decide", def.name),
+    onDecide: new Track<"decide", N, DecideState<Out>>("decide", def.name),
   });

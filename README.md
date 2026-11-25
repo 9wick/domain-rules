@@ -117,13 +117,13 @@ model は port を持ちません。既存の値を取る port は利用者が�
 
 rule は、どの線路に属するかを値で受け取ります。線路は3種類あり、それぞれ線路を流れる状態の初めの形が違います。
 
-| 線路         | 書き方                  | 状態の初めの形                                             |
-| ------------ | ----------------------- | ---------------------------------------------------------- |
-| model の保存 | `article.save`          | `{ pre: Article \| null, next: ArticleValue, actor, now }` |
-| model の削除 | `article.delete`        | `{ pre: Article, next: null, actor, now }`                 |
-| action       | `previewArticle.decide` | `{ input, actor, now }`                                    |
+| 線路         | 書き方                    | 状態の初めの形                                             |
+| ------------ | ------------------------- | ---------------------------------------------------------- |
+| model の保存 | `article.onSave`          | `{ pre: Article \| null, next: ArticleValue, actor, now }` |
+| model の削除 | `article.onDelete`        | `{ pre: Article, next: null, actor, now }`                 |
+| action       | `previewArticle.onDecide` | `{ input, actor, now }`                                    |
 
-- `pre` は既存の値です。DB から読んだ値で、新規作成のときは `null` です。実行時の値は、rule の組の `load` に渡した port が返したものです。rule の中での型は、model の永続化の型です。rule を定義する時点では、どの port が既存の値を取るかが決まっていないからです。port の返り値の型を前提にする rule は、`with` でその型を付けます。その rule を線路の先頭に置けば、開始の状態がその型を満たすかを、`modelRules` が load の型で確かめます。
+- `pre` は既存の値です。DB から読んだ値で、新規作成のときは `null` です。実行時の値は、rule の組の `load` に渡した port が返したものです。rule の中での型は、model の永続化の型です。rule を定義する時点では、どの port が既存の値を取るかが決まっていないからです。port の返り値の型を前提にする rule は、`assuming` でその型を付けます。その rule を線路の先頭に置けば、開始の状態がその型を満たすかを、`modelRules` が load の型で確かめます。
 - `next` は変更後の値です。既存の値に入力を重ねたものです。型は `ArticleValue` ですが、入力にない項目には、既存の値がそのまま入っています。
 - `now` は呼び出された時刻です。`clock` の provider が返し、1回の呼び出しの中では同じ値です。
 
@@ -132,10 +132,10 @@ rule は、どの線路に属するかを値で受け取ります。線路は3�
 前の step で昇格した状態を前提にする rule は、線路の種類に前提の型を付けます。
 
 ```ts
-article.save.with<{ next: { reviewerId: UserIdExisted } }>();
+article.onSave.assuming<{ next: { reviewerId: UserIdExisted } }>();
 ```
 
-この rule を線路に足すとき、前の step までにその型になっていなければ、型エラーになります。`with` に渡した型は、check の成功の値と同じ規則で状態に重なります。
+この rule を線路に足すとき、前の step までにその型になっていなければ、型エラーになります。`assuming` に渡した型は、check の成功の値と同じ規則で状態に重なります。
 
 ### port を宣言する
 
@@ -181,13 +181,13 @@ check は、成功すると何も返さないか、状態に重ねる値を返�
 import { rule, always, onCreate, changed, next, pre, actor, and, not } from "domain-rules";
 import { Result } from "@praha/byethrow";
 
-export const authorIsNotReviewer = rule(article.save, {
+export const authorIsNotReviewer = rule(article.onSave, {
   name: "著者とレビュアーは別の人",
   when: always,
   check: (s) => (s.next.authorId !== s.next.reviewerId ? Result.succeed() : Result.fail("SAME_AUTHOR_AND_REVIEWER")),
 });
 
-export const uniqueSlugInBlog = rule(article.save, {
+export const uniqueSlugInBlog = rule(article.onSave, {
   name: "slug はブログ内で一意",
   requires: { findArticlesInBlog },
   when: changed("slug"),
@@ -200,7 +200,7 @@ export const uniqueSlugInBlog = rule(article.save, {
   },
 });
 
-export const publishAtInFuture = rule(article.save, {
+export const publishAtInFuture = rule(article.onSave, {
   name: "公開日時は未来",
   when: changed("publishAt"),
   check: (s) => (s.next.publishAt > s.now ? Result.succeed() : Result.fail("PUBLISH_AT_IN_PAST")),
@@ -208,25 +208,25 @@ export const publishAtInFuture = rule(article.save, {
 
 // 公開の権限は、変更前のレビュアーで判断する。変更後の値で判断すると、
 // 同じ更新でレビュアーを自分に変えれば誰でも公開できてしまう
-export const onlyReviewerPublishes = rule(article.save, {
+export const onlyReviewerPublishes = rule(article.onSave, {
   name: "公開できるのは今のレビュアーだけ",
   when: changed("status", { pre: "DRAFT", next: "PUBLISHED" }),
   check: (s) => (s.actor.id === s.pre?.reviewerId ? Result.succeed() : Result.fail("NOT_REVIEWER")),
 });
 
-export const onlyAuthorChangesReviewer = rule(article.save, {
+export const onlyAuthorChangesReviewer = rule(article.onSave, {
   name: "作成後にレビュアーを変えられるのは著者だけ",
   when: and(not(onCreate), changed("reviewerId")),
   check: (s) => (s.actor.id === s.pre?.authorId ? Result.succeed() : Result.fail("NOT_AUTHOR")),
 });
 
-export const slugLockedAfterPublish = rule(article.save, {
+export const slugLockedAfterPublish = rule(article.onSave, {
   name: "公開後の slug を変えられるのは管理者だけ",
   when: and(changed("slug"), pre(isPublished), not(actor(isAdmin))),
   check: () => Result.fail("SLUG_LOCKED"),
 });
 
-export const publishedIsApproved = rule(article.save, {
+export const publishedIsApproved = rule(article.onSave, {
   name: "公開中の記事は承認済み",
   when: next(isPublished),
   check: (s) => (isApproved(s.next) ? Result.succeed() : Result.fail("NOT_APPROVED")),
@@ -239,7 +239,7 @@ const allowedStatusChanges: Record<ArticleValue["status"], readonly ArticleValue
   ARCHIVED: ["ARCHIVED"],
 };
 
-export const statusChangesAreAllowed = rule(article.save, {
+export const statusChangesAreAllowed = rule(article.onSave, {
   name: "status は許可された変化だけ",
   when: changed("status"),
   check: (s) => {
@@ -248,7 +248,7 @@ export const statusChangesAreAllowed = rule(article.save, {
   },
 });
 
-export const onlyDraftIsDeletable = rule(article.delete, {
+export const onlyDraftIsDeletable = rule(article.onDelete, {
   name: "削除できるのは下書きだけ",
   when: not(pre(isDraft)),
   check: () => Result.fail("NOT_DRAFT"),
@@ -261,7 +261,7 @@ export const onlyDraftIsDeletable = rule(article.delete, {
 import { immutable } from "domain-rules";
 
 // 作成後に変えられない項目
-export const articleImmutableFields = immutable(article.save, ["blogId", "authorId"]);
+export const articleImmutableFields = immutable(article.onSave, ["blogId", "authorId"]);
 ```
 
 `immutable` が返す rule の名前は `"作成後に変えられない項目: blogId, authorId"` です。新規作成でないときに、並べた項目のどれかが変わると、`{ code: "IMMUTABLE_FIELD_CHANGED", field: "blogId" }` のような値で失敗します。
@@ -312,7 +312,7 @@ check の成功の値は、状態に重なります。`next` の項目や `actor
 置き換える値は、状態の同じ項目より狭い型でなければなりません。`UserId` を `UserIdExisted` にする、`ArticleId | undefined` を `ArticleIdExisted | undefined` にする、といった変化です。重ねたあとの状態の型は、重ねる前の型と成功の値の型の交差型になるので、別の型に置き換えると型と実際の値がずれます。そのため、別の型に置き換える rule は線路に足すときに型エラーになります。値の形を変えたいときは、入力の schema で変換します。一度狭めた項目を、狭めた範囲の外の値で埋めることもできません。例えば `id` を `ArticleIdExisted | undefined` に狭めたあとで、`undefined` を `ArticleIdNew` で埋める rule は足せません。狭めるときは、後ろの rule が入れる値も含む型にとどめます。
 
 ```ts
-export const reviewerExists = rule(article.save, {
+export const reviewerExists = rule(article.onSave, {
   name: "レビュアーが存在する",
   requires: { requireExistingUser },
   when: always,
@@ -328,7 +328,7 @@ export const reviewerExists = rule(article.save, {
 });
 
 // Blog は blog の model の永続化の型で、id は BlogIdExisted
-export const blogExists = rule(article.save, {
+export const blogExists = rule(article.onSave, {
   name: "ブログが存在する",
   requires: { findBlog },
   when: always,
@@ -343,7 +343,7 @@ export const blogExists = rule(article.save, {
 });
 
 // findBlog は cached なので、blogExists が同じ blogId で呼んでいれば取得しない
-export const blogAcceptsPosts = rule(article.save.with<{ next: { blogId: BlogIdExisted } }>(), {
+export const blogAcceptsPosts = rule(article.onSave.assuming<{ next: { blogId: BlogIdExisted } }>(), {
   name: "投稿を受け付けているブログ",
   requires: { findBlog },
   when: changed("status", { next: "PUBLISHED" }),
@@ -363,13 +363,13 @@ export const blogAcceptsPosts = rule(article.save.with<{ next: { blogId: BlogIdE
 
 ```ts
 // 既存の記事なら、その id は保存済みのもの
-export const existingArticleId = rule(article.save, {
+export const existingArticleId = rule(article.onSave, {
   name: "既存の記事の id",
   when: always,
   check: ({ pre }) => Result.succeed({ next: { id: pre?.id } }),
 });
 
-export const articleIdAssigned = rule(article.save.with<{ next: { id: Article["id"] | undefined } }>(), {
+export const articleIdAssigned = rule(article.onSave.assuming<{ next: { id: Article["id"] | undefined } }>(), {
   name: "新しい記事に id を付ける",
   requires: { newArticleId },
   when: always,
@@ -395,8 +395,8 @@ const memberOnly = {
   check: ({ actor }: { actor: AppActor }) => (isMember(actor) ? Result.succeed({ actor }) : Result.fail("NOT_MEMBER")),
 };
 
-export const memberCanSave = rule(article.save, memberOnly);
-export const memberCanDelete = rule(article.delete, memberOnly);
+export const memberCanSave = rule(article.onSave, memberOnly);
+export const memberCanDelete = rule(article.onDelete, memberOnly);
 ```
 
 `memberCanSave` を通ったあとの状態では、`actor` は `MemberActor` です。
@@ -435,8 +435,8 @@ export const articleRules = modelRules(article)
 `ruleset(rule)` は、先頭の rule が受け取る状態から線路を始めます。`add` は元の線路を変えずに、rule を足した新しい線路を返します。条件なしで削除してよい model は、何も確かめずに通す `alwaysAllow` を使って `.delete(ruleset(alwaysAllow))` と書きます。
 
 - **`load(port)`。** 既存の値を取る port です。ライブラリは `schema.input` で検証・変換した後の `id` でこの port を呼びます。load を宣言するには入力スキーマに `id` があり、port が変換後の型を受け取れる必要があります。戻り値が `null` なら load の step で失敗します。返り値の型は、model の `schema.persisted` の型と、`schema.input` の出力の型の両方に代入できなければなりません。更新では既存の値に入力を重ねて `next` にするので、入力にない項目には既存の値が入るからです。`update`、`upsert`、`delete` を作るときに要ります。`save` と `delete` より前に書きます。
-- **`save(線路)`。** `article.save` の rule の線路です。`create` のメソッドを作ります。`load` のあとに書くと、`update` と `upsert` も作ります。どのメソッドで呼ばれても、この線路を順に通ります。
-- **`delete(線路)`。** `article.delete` の rule の線路です。`load` のあとにだけ書けます。`delete` を書かなければ、その model は削除できません。束ねたあとに `delete` のメソッドが作られないからです。`save` も同じです。
+- **`save(線路)`。** `article.onSave` の rule の線路です。`create` のメソッドを作ります。`load` のあとに書くと、`update` と `upsert` も作ります。どのメソッドで呼ばれても、この線路を順に通ります。
+- **`delete(線路)`。** `article.onDelete` の rule の線路です。`load` のあとにだけ書けます。`delete` を書かなければ、その model は削除できません。束ねたあとに `delete` のメソッドが作られないからです。`save` も同じです。
 
 状態の型は、次の場所で確かめます。
 
@@ -475,7 +475,7 @@ export const findArticle = cached(
   port("findArticle").of<(blogId: BlogId, id: ArticleId) => ExistingArticle | null, InfraError>(),
 );
 
-export const targetArticleExists = rule(previewArticle.decide, {
+export const targetArticleExists = rule(previewArticle.onDecide, {
   name: "対象の記事が存在する",
   requires: { findArticle },
   when: always,
@@ -486,13 +486,13 @@ export const targetArticleExists = rule(previewArticle.decide, {
   },
 });
 
-export const notArchived = rule(previewArticle.decide.with<{ article: ExistingArticle }>(), {
+export const notArchived = rule(previewArticle.onDecide.assuming<{ article: ExistingArticle }>(), {
   name: "アーカイブ済みの記事はプレビューできない",
   when: always,
   check: ({ article }) => (article.status !== "ARCHIVED" ? Result.succeed() : Result.fail("ARCHIVED")),
 });
 
-export const canPreview = rule(previewArticle.decide.with<{ article: ExistingArticle }>(), {
+export const canPreview = rule(previewArticle.onDecide.assuming<{ article: ExistingArticle }>(), {
   name: "プレビューできるのはメンバーの著者かレビュアーだけ",
   when: always,
   check: ({ actor, article }) => {
@@ -690,7 +690,7 @@ plan(articleRules);
 - **副作用は port で注入する。** check は、`requires` に宣言した port を2つ目の引数で受け取ります。既存の値の取得と時計も port です。
 - **値の形は schema、項目をまたぐ条件は rule。** schema は項目ごとの形を表し、更新では入力にある項目だけを検証します。項目をまたぐ条件は rule に書くので、更新のたびに値の全体を検証し直す必要はありません。
 - **マージの規則は1つにする。** `undefined` は「変えない」、`null` は「空にする」です。
-- **線路の種類を値で渡す。** rule は、`article.save` のような値で線路の種類を受け取ります。種類の違うものを組み合わせると型エラーになり、型引数を明示しなくても型が推論されます。
+- **線路の種類を値で渡す。** rule は、`article.onSave` のような値で線路の種類を受け取ります。種類の違うものを組み合わせると型エラーになり、型引数を明示しなくても型が推論されます。
 - **ライブラリは状態遷移、認証、認可を持たない。**
 - **`when` は同期の関数。** その rule に来た時点の状態で評価します。
 - **失敗の値は利用者が決める。** ライブラリは、どの step で失敗したかだけを付けます。

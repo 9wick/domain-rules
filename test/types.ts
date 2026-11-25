@@ -143,13 +143,13 @@ describe("型", () => {
   });
 
   test("使えない線路の when は型エラー", () => {
-    rule(article.delete, {
+    rule(article.onDelete, {
       name: "x",
       // @ts-expect-error changed は保存の線路だけ
       when: changed("slug"),
       check: () => Result.succeed(),
     });
-    rule(article.save, {
+    rule(article.onSave, {
       name: "x",
       // @ts-expect-error 存在しない項目
       when: changed("slugg"),
@@ -158,7 +158,7 @@ describe("型", () => {
   });
 
   test("always 以外の when で昇格すると、昇格していない型との和になる", () => {
-    const maybe = rule(article.save, {
+    const maybe = rule(article.onSave, {
       name: "たまに昇格",
       when: changed("reviewerId"),
       check: ({ next }) => Result.succeed({ next: { reviewerId: v.parse(UserIdExistedSchema, next.reviewerId) } }),
@@ -170,7 +170,7 @@ describe("型", () => {
   });
 
   test("load の型を前提にする線路は、その型から始める", () => {
-    const existingOnly = rule(article.save.with<{ pre: ExistingArticle | null }>(), {
+    const existingOnly = rule(article.onSave.assuming<{ pre: ExistingArticle | null }>(), {
       name: "既存の記事だけ",
       when: always,
       check: ({ pre }) => {
@@ -191,7 +191,7 @@ describe("型", () => {
   });
 
   test("状態の項目を別の型に置き換える rule は足せない", () => {
-    const replace = rule(article.save, {
+    const replace = rule(article.onSave, {
       name: "置き換え",
       when: always,
       check: () => Result.succeed({ next: { publishAt: "now" } }),
@@ -248,20 +248,20 @@ describe("型", () => {
   test("check が受け取る port は requires の値からしか決まらない", () => {
     const p = port("p").of<(n: number) => string>();
     rule<"save", "article", unknown, "x", typeof always, Result.Result<void, never>, { readonly p: typeof p }>(
-      article.save,
+      article.onSave,
       // @ts-expect-error port の型を明示して requires を省くと、check が受け取る port の値がない
       { name: "x", when: always, check: () => Result.succeed() },
     );
     const ports: Readonly<Record<string, typeof p>> = { p };
     // @ts-expect-error index signature の record では、型にある key が値にないことがある
-    rule(article.save, { name: "y", requires: ports, when: always, check: () => Result.succeed() });
+    rule(article.onSave, { name: "y", requires: ports, when: always, check: () => Result.succeed() });
     const optional: { readonly p?: typeof p } = {};
     // @ts-expect-error 省略できる key は、型にあるのに値にないことがある
-    rule(article.save, { name: "z", requires: optional, when: always, check: () => Result.succeed() });
+    rule(article.onSave, { name: "z", requires: optional, when: always, check: () => Result.succeed() });
   });
 
   test("with で前提を付けない rule の pre は永続化の型", () => {
-    rule(article.save, {
+    rule(article.onSave, {
       name: "x",
       when: always,
       check: ({ pre }) => {
@@ -272,7 +272,7 @@ describe("型", () => {
   });
 });
 
-export const actorWithState = rule(article.save, {
+export const actorWithState = rule(article.onSave, {
   name: "著者だけ",
   when: actor((a, s: { next: ArticleValue }) => a.id === s.next.authorId),
   check: () => Result.succeed(),

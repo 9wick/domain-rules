@@ -7,7 +7,7 @@ import { UserIdSchema, type AppActor } from "./blog/domain.ts";
 const download = action({ name: "download", input: v.object({ fileId: v.pipe(v.string(), v.minLength(1)) }) });
 const member: AppActor = { id: v.parse(UserIdSchema, "usr_1"), role: "MEMBER" };
 
-const allowed = rule(download.decide, {
+const allowed = rule(download.onDecide, {
   name: "メンバーだけ",
   when: always,
   check: ({ actor, input }) =>
