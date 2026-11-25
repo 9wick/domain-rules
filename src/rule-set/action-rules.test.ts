@@ -1,40 +1,37 @@
 import { Result } from "@praha/byethrow";
 import * as v from "valibot";
 import { expect, test } from "vite-plus/test";
-import { action, actionRules, always, bind, clock, open, plan, provide, rule, ruleset } from "../index.ts";
-import { UserIdSchema, type AppActor } from "../../test/blog/domain.ts";
+import { defineAction } from "../definition/action.ts";
+import { open } from "../method/seal.ts";
+import { rule } from "../pipeline/rule.ts";
+import { ruleset } from "../pipeline/ruleset.ts";
+import { always } from "../pipeline/when/step.ts";
+import { actionRules } from "./action-rules.ts";
 
-const download = action({ name: "download", input: v.object({ fileId: v.pipe(v.string(), v.minLength(1)) }) });
-const member: AppActor = { id: v.parse(UserIdSchema, "usr_1"), role: "MEMBER" };
+type Operator = { readonly role: "MEMBER" | "GUEST" };
+const member: Operator = { role: "MEMBER" };
 
+const download = defineAction<Operator>()({ name: "download", input: v.object({ fileId: v.string() }) });
 const allowed = rule(download.onDecide, {
   name: "メンバーだけ",
   when: always,
   check: ({ actor, input }) =>
     actor.role === "MEMBER" ? Result.succeed({ url: `/files/${input.fileId}` }) : Result.fail("FORBIDDEN"),
 });
+const set = actionRules(download, { rules: ruleset(allowed), output: ({ url }) => url });
+const { decide } = set.resolveIn({ invocation: () => ({ scope: {}, now: 0 }) });
 
-const domain = bind([actionRules(download, { rules: ruleset(allowed), output: ({ url }) => url })], {
-  providers: [provide.value(clock, 0)],
-});
-
-test("入力の全体を action の schema で検証する", async () => {
-  const r = await domain.download.decide({ input: { fileId: "" }, actor: member });
-  expect(Result.unwrapError(r)).toMatchObject({ step: "input", error: { issues: [{ path: [{ key: "fileId" }] }] } });
-});
-
-test("output の値と actor を封をした値で返す", async () => {
-  const r = await domain.download.decide({ input: { fileId: "f1" }, actor: member });
+test("output が線路の最後の状態から組み立てた値と actor を、封をした値で返す", async () => {
+  const r = await decide({ input: { fileId: "f1" }, actor: member });
   expect(open(Result.unwrap(r))).toEqual({ value: "/files/f1", actor: member });
 });
 
-test("rule の失敗で止まる", async () => {
-  const r = await domain.download.decide({ input: { fileId: "f1" }, actor: { ...member, role: "GUEST" } });
+test("線路の失敗はそのまま返し、output は呼ばない", async () => {
+  const r = await decide({ input: { fileId: "f1" }, actor: { role: "GUEST" } });
   expect(Result.unwrapError(r)).toEqual({ step: "メンバーだけ", error: "FORBIDDEN" });
 });
 
-test("plan は action の線路も表示する", () => {
-  expect(plan(actionRules(download, { rules: ruleset(allowed), output: () => undefined }))).toEqual({
-    rules: [{ name: "メンバーだけ", when: { kind: "always" }, ports: [] }],
-  });
+test("rule の組は action の名前と線路の plan を持つ", () => {
+  expect([set.kind, set.name, set.action]).toEqual(["actionRules", "download", download]);
+  expect(set.rules.plan).toEqual([{ name: "メンバーだけ", when: { kind: "always" }, ports: [] }]);
 });

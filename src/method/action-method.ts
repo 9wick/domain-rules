@@ -6,16 +6,22 @@ import type { Args, BindCtx } from "./context.ts";
 import { seal, type Decision } from "./seal.ts";
 import { inputFailure, validate, type InputFailure } from "./validate.ts";
 
-export type DecideMethod<N extends string, In, Out, T, A, E> = (
-  args: Args<In>,
-) => Result.ResultAsync<Decision<Action<N, In, Out>, T, A>, InputFailure | E>;
+// 線路を走らせるのに要る部分。判定の線路は、返す値と actor を返す
+export type DecideRun<Out, Act, T, A, E> = Pick<
+  Decider<DecideState<Out, Act>, { readonly value: T; readonly actor: A }, E, string>,
+  "run"
+>;
 
-export const actionMethods = <N extends string, In, Out, T, A, E>(
+export type DecideMethod<N extends string, In, Out, Act, T, A, E> = (
+  args: Args<In, Act>,
+) => Result.ResultAsync<Decision<Action<N, In, Out, Act>, T, A>, InputFailure | E>;
+
+export const actionMethods = <N extends string, In, Out, Act, T, A, E>(
   ctx: BindCtx,
   input: StandardSchemaV1<In, Out>,
-  rules: Decider<DecideState<Out>, { readonly value: T; readonly actor: A }, E, string>,
-): { readonly decide: DecideMethod<N, In, Out, T, A, E> } => {
-  const decide: DecideMethod<N, In, Out, T, A, E> = async ({ input: value, actor }) => {
+  rules: DecideRun<Out, Act, T, A, E>,
+): { readonly decide: DecideMethod<N, In, Out, Act, T, A, E> } => {
+  const decide: DecideMethod<N, In, Out, Act, T, A, E> = async ({ input: value, actor }) => {
     const validated = await validate(input, value);
     if (Result.isFailure(validated)) return Result.fail(inputFailure(validated.error));
     const inv = ctx.invocation();

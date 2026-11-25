@@ -4,6 +4,7 @@
 
 ## 目次
 
+- [ドメインを作る (`domain`)](#ドメインを作る-domain)
 - [モデルを定義する (`model`)](#モデルを定義する-model)
 - [操作フェーズと状態型 (`onSave` / `onDelete` / `onDecide`)](#操作フェーズと状態型-onsave--ondelete--ondecide)
 - [外部依存を宣言する (`port` / `cached`)](#外部依存を宣言する-port--cached)
@@ -19,13 +20,29 @@
 
 ---
 
+## ドメインを作る (`domain`)
+
+`domain` は、メソッドを呼ぶ操作者 (`actor`) の型を 1 回だけ決め、その型を使う `model` / `action` / `actor` を返します。各線路の状態の `actor`、メソッドの引数の `actor`、`Persistable` などの既定の `actor` の型は、すべてここで決めた型になります。`actor` の型を model や rule ごとに書く必要はありません。
+
+```ts
+import { domain } from "domain-rules";
+
+export type AppActor = { readonly id: UserId; readonly role: "GUEST" | "MEMBER" | "ADMIN" };
+
+export const { model, action, actor } = domain<{ actor: AppActor }>();
+```
+
+グローバルな型の登録は使わないので、1 つのアプリケーションの中で `actor` の型が違う domain を複数作れます。
+
+---
+
 ## モデルを定義する (`model`)
 
-`model` は、検証対象の入力スキーマと永続化後のスキーマを定義します。
+`model` は、検証対象の入力スキーマと永続化後のスキーマを定義します。`domain` が返した `model` を使います。
 
 ```ts
 import * as v from "valibot";
-import { model, type Persisted, type Value } from "domain-rules";
+import type { Persisted, Value } from "domain-rules";
 
 export const ArticleIdSchema = v.pipe(v.string(), v.startsWith("art_"), v.brand("ArticleId"));
 export const ArticleIdExistedSchema = v.pipe(ArticleIdSchema, v.brand("ArticleIdExisted"));
@@ -133,7 +150,8 @@ export const newArticleId = port("newArticleId").of<() => ArticleIdNew, InfraErr
 `rule` はパイプラインの 1 ステップを定義します。外部ポートを使う場合は `requires` に指定し、`check` の第 2 引数から受け取ります。
 
 ```ts
-import { rule, always, onCreate, changed, next, pre, actor, and, not } from "domain-rules";
+import { rule, always, onCreate, changed, next, pre, and, not } from "domain-rules";
+// actor は domain が返したもの。述語は domain の actor の型を受け取る
 import { Result } from "@praha/byethrow";
 
 export const authorIsNotReviewer = rule(article.onSave, {
@@ -349,17 +367,9 @@ export const articleRules = modelRules(article)
 - **`.save(ruleset)`**: `create` を生成します（`.load()` の後に書くと `update` と `upsert` も生成されます）。保存パイプラインの終端で `next` が `schema.persisted` の型を満たしていないとコンパイルエラーになります。
 - **`.delete(ruleset)`**: `.load()` の後にだけ指定でき、`delete` を生成します。指定しなければ削除メソッドは生えません。
 
-### `actor` 型の登録
+### `actor` 型
 
-アプリケーション全体で使う `actor` の型は、module augmentation で 1 回だけ登録します。
-
-```ts
-declare module "domain-rules" {
-  interface Register {
-    actor: AppActor;
-  }
-}
-```
+`actor` の型は [`domain`](#ドメインを作る-domain) で決めます。`model` が domain の `actor` の型を持つので、`modelRules` が作るメソッドの引数と各 rule の状態の `actor` は、何も書かなくてもその型になります。
 
 ---
 
@@ -368,7 +378,8 @@ declare module "domain-rules" {
 プレビュー閲覧やダウンロード可否判定など、DB への保存を伴わない操作は `action` として定義します。`action` の入力スキーマは任意の Standard Schema 準拠スキーマが使えます。
 
 ```ts
-import { action, actionRules, cached, port, rule, ruleset, always } from "domain-rules";
+import { actionRules, cached, port, rule, ruleset, always } from "domain-rules";
+// action は domain が返したもの
 
 export const previewArticle = action({
   name: "previewArticle",
@@ -548,7 +559,7 @@ const save = (p: Persistable<typeof article, "create" | "update">) => {
 | `Deletable<M, Pre, A>`             | `pre: Readonly<Pre>`, `actor`         |
 | `Decision<Ac, T, A>`               | `value: T`, `actor`                   |
 
-- `Pre` と `A` の型引数は省略可能で、省略時はそれぞれ `Persisted<M>` と登録済み `Actor` になります。
+- `Pre` と `A` の型引数は省略可能で、省略時はそれぞれ `Persisted<M>` と、model / action を作った `domain` の `actor` の型になります。
 - `open()` が返すオブジェクトおよび `pre` / `next` は浅く凍結（`Object.freeze`）されており、型上も `Readonly` です。
 - 返り値をスプレッド構文などで複製した偽造オブジェクトを `open()` に渡すと、型エラーかつ実行時エラー（`Panic`）になります。
 

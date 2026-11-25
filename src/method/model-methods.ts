@@ -1,5 +1,4 @@
 import { Result } from "@praha/byethrow";
-import type { Actor } from "../definition/actor.ts";
 import type { DeleteState, Model, SaveState } from "../definition/model.ts";
 import type { Invocation } from "../port/invocation.ts";
 import type { Port } from "../port/port.ts";
@@ -23,52 +22,52 @@ const load = async <A, V, E>(
 };
 
 // 線路を走らせるのに要る部分。保存の線路は、最後の next が永続化の型になっていることを返り値の型で約束する
-export type SaveRun<Pre, Out, P, A, E> = {
+export type SaveRun<Pre, Out, P, Act, A, E> = {
   readonly run: (
-    s: SaveState<Pre | null, Out>,
+    s: SaveState<Pre | null, Out, Act>,
     invocation: Invocation,
   ) => Promise<Result.Result<{ readonly next: P; readonly actor: A }, E>>;
 };
-export type DeleteRun<Pre, A, E> = {
-  readonly run: (s: DeleteState<Pre>, invocation: Invocation) => Promise<Result.Result<{ readonly actor: A }, E>>;
+export type DeleteRun<Pre, Act, A, E> = {
+  readonly run: (s: DeleteState<Pre, Act>, invocation: Invocation) => Promise<Result.Result<{ readonly actor: A }, E>>;
 };
 
 type IdOf<In> = NonNullable<Partial<In>["id" & keyof Partial<In>]>;
 
-export type CreateMethod<N extends string, In, Out, P, A, E> = (
-  args: Args<Omit<Partial<In>, "id">>,
-) => Result.ResultAsync<Persistable<Model<N, In, Out, P>, "create", P, A>, InputFailure | E>;
-export type UpdateMethod<N extends string, In, Out, P, Pre, A, E, LE> = (
-  args: Args<Partial<In> & { readonly id: IdOf<In> }>,
-) => Result.ResultAsync<Persistable<Model<N, In, Out, P>, "update", Pre, A>, InputFailure | LoadFailureOf<LE> | E>;
-export type UpsertMethod<N extends string, In, Out, P, Pre, A, E, LE> = (
-  args: Args<Partial<In>>,
+export type CreateMethod<N extends string, In, Out, P, Act, A, E> = (
+  args: Args<Omit<Partial<In>, "id">, Act>,
+) => Result.ResultAsync<Persistable<Model<N, In, Out, P, Act>, "create", P, A>, InputFailure | E>;
+export type UpdateMethod<N extends string, In, Out, P, Act, Pre, A, E, LE> = (
+  args: Args<Partial<In> & { readonly id: IdOf<In> }, Act>,
+) => Result.ResultAsync<Persistable<Model<N, In, Out, P, Act>, "update", Pre, A>, InputFailure | LoadFailureOf<LE> | E>;
+export type UpsertMethod<N extends string, In, Out, P, Act, Pre, A, E, LE> = (
+  args: Args<Partial<In>, Act>,
 ) => Result.ResultAsync<
-  Persistable<Model<N, In, Out, P>, "create" | "update", Pre, A>,
+  Persistable<Model<N, In, Out, P, Act>, "create" | "update", Pre, A>,
   InputFailure | LoadFailureOf<LE> | E
 >;
-export type DeleteMethod<N extends string, In, Out, P, Pre, A, E, LE> = (
-  args: Args<{ readonly id: IdOf<In> }>,
-) => Result.ResultAsync<Deletable<Model<N, In, Out, P>, Pre, A>, InputFailure | LoadFailureOf<LE> | E>;
+export type DeleteMethod<N extends string, In, Out, P, Act, Pre, A, E, LE> = (
+  args: Args<{ readonly id: IdOf<In> }, Act>,
+) => Result.ResultAsync<Deletable<Model<N, In, Out, P, Act>, Pre, A>, InputFailure | LoadFailureOf<LE> | E>;
 
-const saveWith = async <Pre, Out, P, A, E>(
-  rules: SaveRun<Pre, Out, P, A, E>,
+const saveWith = async <Pre, Out, P, Act, A, E>(
+  rules: SaveRun<Pre, Out, P, Act, A, E>,
   inv: Invocation,
   pre: Pre | null,
   next: Out,
-  actor: Actor,
+  actor: Act,
 ) => {
   const r = await rules.run({ pre, next, actor, now: inv.now }, inv);
   if (Result.isFailure(r)) return r;
   return Result.succeed({ next: Object.freeze(r.value.next), actor: r.value.actor });
 };
 
-const createIn = async <N extends string, In, Out, P, A, E>(
+const createIn = async <N extends string, In, Out, P, Act, A, E>(
   ctx: BindCtx,
-  model: Model<N, In, Out, P>,
-  rules: SaveRun<never, Out, P, A, E>,
+  model: Model<N, In, Out, P, Act>,
+  rules: SaveRun<never, Out, P, Act, A, E>,
   input: State,
-  actor: Actor,
+  actor: Act,
 ) => {
   const next = await validateWhole(model.schema.input, input);
   if (Result.isFailure(next)) return next;
@@ -82,9 +81,9 @@ const createIn = async <N extends string, In, Out, P, A, E>(
   );
 };
 
-const loadExisting = async <N extends string, In, Out extends { readonly id?: LA | undefined }, P, LA, LT, LE>(
+const loadExisting = async <N extends string, In, Out extends { readonly id?: LA | undefined }, P, Act, LA, LT, LE>(
   ctx: BindCtx,
-  model: Model<N, In, Out, P>,
+  model: Model<N, In, Out, P, Act>,
   port: Port<string, [LA], LT, LE>,
   input: State,
 ) => {
@@ -104,6 +103,7 @@ const updateIn = async <
   In,
   Out extends { readonly id?: LA | undefined },
   P,
+  Act,
   LA,
   LT extends Out | null,
   LE,
@@ -111,11 +111,11 @@ const updateIn = async <
   E,
 >(
   ctx: BindCtx,
-  model: Model<N, In, Out, P>,
+  model: Model<N, In, Out, P, Act>,
   port: Port<string, [LA], LT, LE>,
-  rules: SaveRun<LT & {}, Out, P, A, E>,
+  rules: SaveRun<LT & {}, Out, P, Act, A, E>,
   input: State,
-  actor: Actor,
+  actor: Act,
 ) => {
   const existing = await loadExisting(ctx, model, port, input);
   if (Result.isFailure(existing)) return existing;
@@ -138,31 +138,31 @@ const updateIn = async <
 };
 
 export const createMethod =
-  <N extends string, In, Out, P, A, E>(
-    model: Model<N, In, Out, P>,
-    rules: SaveRun<never, Out, P, A, E>,
-  ): ((ctx: BindCtx) => CreateMethod<N, In, Out, P, A, E>) =>
+  <N extends string, In, Out, P, Act, A, E>(
+    model: Model<N, In, Out, P, Act>,
+    rules: SaveRun<never, Out, P, Act, A, E>,
+  ): ((ctx: BindCtx) => CreateMethod<N, In, Out, P, Act, A, E>) =>
   (ctx) =>
   ({ input, actor }) =>
     createIn(ctx, model, rules, input, actor);
 
 export const updateMethod =
-  <N extends string, In, Out extends { readonly id?: LA | undefined }, P, LA, LT extends Out | null, LE, A, E>(
-    model: Model<N, In, Out, P>,
+  <N extends string, In, Out extends { readonly id?: LA | undefined }, P, Act, LA, LT extends Out | null, LE, A, E>(
+    model: Model<N, In, Out, P, Act>,
     port: Port<string, [LA], LT, LE>,
-    rules: SaveRun<LT & {}, Out, P, A, E>,
-  ): ((ctx: BindCtx) => UpdateMethod<N, In, Out, P, LT & {}, A, E, LE>) =>
+    rules: SaveRun<LT & {}, Out, P, Act, A, E>,
+  ): ((ctx: BindCtx) => UpdateMethod<N, In, Out, P, Act, LT & {}, A, E, LE>) =>
   (ctx) =>
   ({ input, actor }) =>
     updateIn(ctx, model, port, rules, input, actor);
 
 // input に id がなければ新規作成、あれば更新する
 export const upsertMethod =
-  <N extends string, In, Out extends { readonly id?: LA | undefined }, P, LA, LT extends Out | null, LE, A, E>(
-    model: Model<N, In, Out, P>,
+  <N extends string, In, Out extends { readonly id?: LA | undefined }, P, Act, LA, LT extends Out | null, LE, A, E>(
+    model: Model<N, In, Out, P, Act>,
     port: Port<string, [LA], LT, LE>,
-    rules: SaveRun<LT & {}, Out, P, A, E>,
-  ): ((ctx: BindCtx) => UpsertMethod<N, In, Out, P, LT & {}, A, E, LE>) =>
+    rules: SaveRun<LT & {}, Out, P, Act, A, E>,
+  ): ((ctx: BindCtx) => UpsertMethod<N, In, Out, P, Act, LT & {}, A, E, LE>) =>
   (ctx) =>
   ({ input, actor }) => {
     const fields: State = input;
@@ -172,11 +172,11 @@ export const upsertMethod =
   };
 
 export const deleteMethod =
-  <N extends string, In, Out extends { readonly id?: LA | undefined }, P, LA, LT extends Out | null, LE, A, E>(
-    model: Model<N, In, Out, P>,
+  <N extends string, In, Out extends { readonly id?: LA | undefined }, P, Act, LA, LT extends Out | null, LE, A, E>(
+    model: Model<N, In, Out, P, Act>,
     port: Port<string, [LA], LT, LE>,
-    rules: DeleteRun<LT & {}, A, E>,
-  ): ((ctx: BindCtx) => DeleteMethod<N, In, Out, P, LT & {}, A, E, LE>) =>
+    rules: DeleteRun<LT & {}, Act, A, E>,
+  ): ((ctx: BindCtx) => DeleteMethod<N, In, Out, P, Act, LT & {}, A, E, LE>) =>
   (ctx) =>
   async ({ input, actor }) => {
     const existing = await loadExisting(ctx, model, port, input);

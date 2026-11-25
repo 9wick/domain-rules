@@ -1,6 +1,5 @@
-import type { Action } from "../definition/action.ts";
-import type { Actor } from "../definition/actor.ts";
-import type { Model, Persisted } from "../definition/model.ts";
+import type { Action, ActionActor } from "../definition/action.ts";
+import type { Model, ModelActor, Persisted } from "../definition/model.ts";
 import { Panic } from "../shared/panic.ts";
 
 declare const sealedAs: unique symbol;
@@ -27,7 +26,7 @@ export type Persistable<
   M extends Model,
   Op extends "create" | "update" = "create" | "update",
   Pre = Persisted<M>,
-  A = Actor,
+  A = ModelActor<M>,
 > = Sealed<
   "persistable",
   M["name"],
@@ -39,14 +38,14 @@ export type Persistable<
       : never)
 >;
 
-export type Deletable<M extends Model, Pre = Persisted<M>, A = Actor> = Sealed<
+export type Deletable<M extends Model, Pre = Persisted<M>, A = ModelActor<M>> = Sealed<
   "deletable",
   M["name"],
   "delete",
   { readonly pre: Readonly<Pre>; readonly actor: A }
 >;
 
-export type Decision<Ac extends Action, T = void, A = Actor> = Sealed<
+export type Decision<Ac extends Action, T = void, A = ActionActor<Ac>> = Sealed<
   "decision",
   Ac["name"],
   "decide",

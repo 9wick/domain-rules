@@ -1,4 +1,3 @@
-import type { Actor } from "../../definition/actor.ts";
 import type { TrackKind } from "../../definition/track.ts";
 import {
   describeWhen,
@@ -35,9 +34,8 @@ export const next = <V>(predicate: (v: V) => boolean): When<"save", { readonly n
 export const pre = <V>(predicate: (v: V) => boolean): When<"save" | "delete", { readonly pre: V | null }> =>
   whenOf({ kind: "pre" }, (s: { readonly pre: V | null }) => s.pre !== null && predicate(s.pre));
 
-export const actor = <A = Actor, S = unknown>(
-  predicate: (a: A, s: S) => boolean,
-): When<TrackKind, { readonly actor: A } & S> =>
+// actor の型は述語の引数から決まる
+export const actor = <A, S = unknown>(predicate: (a: A, s: S) => boolean): When<TrackKind, { readonly actor: A } & S> =>
   whenOf({ kind: "actor" }, (s: { readonly actor: A } & S) => predicate(s.actor, s));
 
 // 並べた when がどれも、まとめた状態を受け取れることを引数の型で求める。呼び出す側の型で確かめるので、中では型を消さずに呼べる

@@ -1,36 +1,43 @@
+import { Result } from "@praha/byethrow";
 import * as v from "valibot";
 import { expectTypeOf, test } from "vite-plus/test";
-import {
-  ArticleIdNewSchema,
-  UserIdExistedSchema,
-  article,
-  articleIdAssigned,
-  blogExists,
-  existingArticleId,
-  findArticleById,
-  findBlog,
-  newArticleId,
-  requireExistingUser,
-  reviewerExists,
-} from "../test/blog/domain.ts";
-import { bind, clock, modelRules, provide, ruleset } from "./index.ts";
+import { bind } from "./bind.ts";
+import { defineModel } from "./definition/model.ts";
+import { rule } from "./pipeline/rule.ts";
+import { ruleset } from "./pipeline/ruleset.ts";
+import { always } from "./pipeline/when/step.ts";
+import { clock } from "./port/clock.ts";
+import { port } from "./port/port.ts";
+import { provide } from "./port/provider.ts";
+import { modelRules } from "./rule-set/model-rules.ts";
 
-test("provider が足りなければ型エラー", () => {
-  const set = modelRules(article)
-    .load(findArticleById)
-    .save(ruleset(blogExists).add(reviewerExists).add(existingArticleId).add(articleIdAssigned));
-  const run = () => {
-    // @ts-expect-error findBlog などの provider がない
-    bind([set], { providers: [provide(clock, () => 0)] });
-    bind([set], {
-      providers: [
-        provide.value(clock, 0),
-        provide.value(findArticleById, null),
-        provide.value(findBlog, null),
-        provide.value(requireExistingUser, v.parse(UserIdExistedSchema, "usr_1")),
-        provide.value(newArticleId, v.parse(ArticleIdNewSchema, "art_1")),
-      ],
-    });
-  };
-  expectTypeOf(run).toBeFunction();
+const item = defineModel<string>()({
+  name: "item",
+  schema: { input: v.object({ id: v.optional(v.string()) }), persisted: v.object({ id: v.string() }) },
+});
+const newId = port("newId").of<() => string>();
+const assign = rule(item.onSave, {
+  name: "id",
+  requires: { newId },
+  when: always,
+  check: async (_, { newId }) =>
+    Result.pipe(
+      await newId(),
+      Result.map((id) => ({ next: { id } })),
+    ),
+});
+const items = modelRules(item).save(ruleset(assign));
+const providers = [provide.value(newId, "i"), provide.value(clock, 0)] as const;
+
+test("返り値は、rule の組の名前を key にしたメソッドの組", () => {
+  expectTypeOf(bind([items], { providers }))
+    .toHaveProperty("item")
+    .toHaveProperty("create")
+    .toBeFunction();
+});
+
+test("bind には、長さの決まった rule の組の tuple だけを渡せる", () => {
+  const sets = [items];
+  // @ts-expect-error 配列は要素が無いことがあり、型にあるメソッドが値に無いことがある
+  bind(sets, { providers });
 });

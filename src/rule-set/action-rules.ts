@@ -19,19 +19,19 @@ type Decided<End extends { readonly actor: unknown }, T> = { readonly value: T; 
 const actorOf = <X extends { readonly actor: unknown }>(x: X): X["actor"] => x.actor;
 
 // output は線路の最後の step で、最後の状態から返す値を組み立てる
-export function actionRules<N extends string, In, Out, D, E, PN extends string, T>(
-  a: Action<N, In, Out>,
+export function actionRules<N extends string, In, Out, Act, D, E, PN extends string, T>(
+  a: Action<N, In, Out, Act>,
   def: {
-    readonly rules: RunnableRuleset<DecideState<Out>, D, E, PN>;
-    readonly output: (s: DecideState<Out> & D) => T;
+    readonly rules: RunnableRuleset<DecideState<Out, Act>, D, E, PN>;
+    readonly output: (s: DecideState<Out, Act> & D) => T;
   },
 ): ActionRules<
-  Action<N, In, Out>,
-  Decider<DecideState<Out>, Decided<DecideState<Out> & D, T>, E, PN>,
-  { readonly decide: DecideMethod<N, In, Out, T, (DecideState<Out> & D)["actor"], E> }
+  Action<N, In, Out, Act>,
+  Decider<DecideState<Out, Act>, Decided<DecideState<Out, Act> & D, T>, E, PN>,
+  { readonly decide: DecideMethod<N, In, Out, Act, T, (DecideState<Out, Act> & D)["actor"], E> }
 > {
   const { rules, output } = def;
-  const decided: Decider<DecideState<Out>, Decided<DecideState<Out> & D, T>, E, PN> = {
+  const decided: Decider<DecideState<Out, Act>, Decided<DecideState<Out, Act> & D, T>, E, PN> = {
     ...rules,
     run: async (s, call) => {
       const r = await rules.run(s, call);
@@ -44,6 +44,6 @@ export function actionRules<N extends string, In, Out, D, E, PN extends string, 
     action: a,
     rules: Object.freeze(decided),
     resolveIn: (ctx: BindCtx) =>
-      actionMethods<N, In, Out, T, (DecideState<Out> & D)["actor"], E>(ctx, a.input, decided),
+      actionMethods<N, In, Out, Act, T, (DecideState<Out, Act> & D)["actor"], E>(ctx, a.input, decided),
   });
 }
