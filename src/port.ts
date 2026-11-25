@@ -1,130 +1,166 @@
 import { Result } from "@praha/byethrow";
-import { callErased, withPhantom, type ErasedFn, type Phantom } from "./erased.ts";
+import { mapValues } from "as-free";
+import { Panic } from "./panic.ts";
 
-type PortInfo<A, T, E> = { readonly args: A; readonly value: T; readonly error: E };
+declare const portTypes: unique symbol;
 
-export type Port<
-  N extends string = string,
-  A extends readonly unknown[] = readonly unknown[],
-  T = unknown,
-  E = unknown,
-> = {
-  readonly kind: "port";
+type ImplOf<A extends readonly unknown[], T, E> = (...args: A) => Result.Result<T, E> | Result.ResultAsync<T, E>;
+
+// 1回のメソッド呼び出し。scope は bind ごとに1つで、provider の実装はこれを key に登録する
+export type Invocation = { readonly scope: object; readonly now: number };
+
+const register = <I>(impls: WeakMap<object, I>, scope: object, impl: I, name: string): void => {
+  // 復帰できない異常: 同じ port の provider を同じ bind に2つ渡している
+  if (impls.has(scope)) throw new Panic(`bind: port "${name}" の provider が重複しています`);
+  impls.set(scope, impl);
+};
+
+// provider は、自分の port の型で作った実装を、渡された scope に登録するだけの値。
+// port の provider からしか作れないので、port と違う型の実装を登録する provider は作れない
+export class Provider<N extends string = string> {
+  readonly name: N;
+  readonly #register: (scope: object) => void;
+
+  constructor(name: N, register: (scope: object) => void) {
+    this.name = name;
+    this.#register = register;
+    Object.freeze(this);
+  }
+
+  readonly registerIn = (scope: object): void => this.#register(scope);
+}
+
+// port の実装の置き場。cached で作った port も同じ置き場を使うので、元の宣言の provider で満たせる
+class Slots<A extends readonly unknown[], T, E> {
+  readonly impls = new WeakMap<object, ImplOf<A, T, E>>();
+  readonly memos = new WeakMap<Invocation, Map<string, Promise<Result.Result<T, E>>>>();
+}
+
+// port は宣言で、実装は provider であとから渡す。実装は port 自身が、自分の型のまま scope ごとに持つ。
+// 型引数は不変にする。広い型の port として扱えると、宣言と違う型の実装を登録できてしまうため
+export class Port<N extends string, in out A extends readonly unknown[], in out T, in out E> {
+  declare readonly [portTypes]: { readonly args: A; readonly value: T; readonly error: E };
+  readonly kind = "port";
   readonly name: N;
   readonly cached: boolean;
-  readonly token: symbol;
-} & Phantom<PortInfo<A, T, E>>;
+  readonly #slots: Slots<A, T, E>;
 
-export type Clock = { readonly kind: "clock"; readonly name: "clock"; readonly token: symbol };
+  constructor(name: N, cached: boolean, slots: Slots<A, T, E>) {
+    this.name = name;
+    this.cached = cached;
+    this.#slots = slots;
+    Object.freeze(this);
+  }
 
-type InfoOf<P> = P extends Phantom<infer I> ? I : never;
-export type PortArgs<P> = InfoOf<P> extends { readonly args: infer A extends readonly unknown[] } ? A : never;
-export type PortValue<P> = InfoOf<P> extends PortInfo<readonly unknown[], infer T, unknown> ? T : never;
-export type PortError<P> = InfoOf<P> extends PortInfo<readonly unknown[], unknown, infer E> ? E : never;
+  // method ではなく関数の property にするのは、method の引数は広い型の object の型へ代入するときに
+  // 確かめられず、宣言と違う型の実装を渡せてしまうため
+  readonly provider = (impl: ImplOf<A, T, E>): Provider<N> =>
+    new Provider(this.name, (scope) => register(this.#slots.impls, scope, impl, this.name));
 
-export type Ports = Record<string, Port>;
-export type PortFns<P extends Ports> = {
-  readonly [K in keyof P]: (...args: PortArgs<P[K]>) => Promise<PortValue<P[K]>>;
-};
-export type PortErrors<P extends Ports> = { [K in keyof P]: PortError<P[K]> }[keyof P];
+  readonly valued = (v: T): Provider<N> => this.provider(() => Result.succeed(v));
 
-export const port = <const N extends string>(name: N) => ({
-  of: <F extends ErasedFn, E = never>(): Port<N, Parameters<F>, ReturnType<F>, E> =>
-    withPhantom<Port<N, Parameters<F>, ReturnType<F>, E>>(
-      Object.freeze({ kind: "port", name, token: Symbol(name), cached: false }),
-    ),
-});
+  readonly providedIn = (scope: object): boolean => this.#slots.impls.has(scope);
 
-export const cached = <P extends Port>(p: P): P => Object.freeze({ ...p, cached: true });
+  readonly withCache = (): Port<N, A, T, E> => new Port(this.name, true, this.#slots);
 
-export const clock: Clock = Object.freeze({ kind: "clock", name: "clock", token: Symbol("clock") });
-
-type Impl<P extends Port> = (
-  ...args: PortArgs<P>
-) => Result.Result<PortValue<P>, PortError<P>> | Result.ResultAsync<PortValue<P>, PortError<P>>;
-
-// port の provider は Result を、clock の provider は時刻の数を返す。どちらを返すかは provide の overload で型を確かめる
-export type Provider<N extends string = string> = {
-  readonly name: N;
-  readonly token: symbol;
-  readonly impl: ErasedFn;
-};
-
-export function provide<P extends Port>(target: P, impl: Impl<P>): Provider<P["name"]>;
-export function provide(target: Clock, impl: () => number): Provider<"clock">;
-export function provide(target: Port | Clock, impl: ErasedFn): Provider {
-  return Object.freeze({ name: target.name, token: target.token, impl });
-}
-
-function value<P extends Port>(target: P, v: PortValue<P>): Provider<P["name"]>;
-function value(target: Clock, v: number): Provider<"clock">;
-function value(target: Port | Clock, v: unknown): Provider {
-  const impl = target.kind === "clock" ? () => v : () => Result.succeed(v);
-  return Object.freeze({ name: target.name, token: target.token, impl });
-}
-provide.value = value;
-
-export type PortCall = (p: Port, args: readonly unknown[]) => Promise<Result.Result<unknown, unknown>>;
-
-export const portCaller = (impls: ReadonlyMap<symbol, ErasedFn>): PortCall => {
-  const cache = new Map<symbol, Map<string, Promise<Result.Result<unknown, unknown>>>>();
-  return (p, args) => {
-    const impl = impls.get(p.token);
-    const run = async (): Promise<Result.Result<unknown, unknown>> => {
-      if (impl === undefined) return Result.fail({ code: "PROVIDER_MISSING", port: p.name });
-      const r: unknown = await callErased(impl, ...args);
-      return Result.isResult<unknown, unknown>(r)
-        ? r
-        : Result.fail({ code: "PROVIDER_RETURNED_NON_RESULT", port: p.name });
-    };
-    if (!p.cached) return run();
-    const byArgs = cache.get(p.token) ?? new Map<string, Promise<Result.Result<unknown, unknown>>>();
-    cache.set(p.token, byArgs);
+  readonly callIn = async (invocation: Invocation, args: A): Promise<Result.Result<T, E>> => {
+    const impl = this.#slots.impls.get(invocation.scope);
+    // bind が provider の不足を確かめてから呼ぶので、ここに来るのは壊れたときだけ
+    if (impl === undefined) throw new Panic(`port "${this.name}" の provider がありません`);
+    if (!this.cached) return impl(...args);
+    // 同じ引数の呼び出しを1回の呼び出しの中で使い回す
+    const memo = this.#slots.memos.get(invocation) ?? new Map<string, Promise<Result.Result<T, E>>>();
+    this.#slots.memos.set(invocation, memo);
     const key = JSON.stringify(args);
-    const hit = byArgs.get(key);
+    const hit = memo.get(key);
     if (hit !== undefined) return hit;
-    const pending = run();
-    byArgs.set(key, pending);
+    const pending = Promise.resolve(impl(...args));
+    memo.set(key, pending);
     return pending;
   };
-};
 
-class PortFailed {
-  readonly error: unknown;
-  constructor(error: unknown) {
-    this.error = error;
-  }
+  // check に渡す関数。provider と同じ Result を返し、失敗をどう扱うかは check が決める
+  readonly resolveIn =
+    (invocation: Invocation) =>
+    (...args: A): Promise<Result.Result<T, E>> =>
+      this.callIn(invocation, args);
 }
 
-type PortFnsRuntime = Readonly<Record<string, (...args: readonly unknown[]) => Promise<unknown>>>;
-type CheckResult = Result.Result<unknown, unknown> | Promise<Result.Result<unknown, unknown>>;
-
-// check の中では port の成功の値だけを見せたいので、失敗は throw で check を抜けさせる。
-// check が throw を握りつぶして成功を返しても線路を止められるよう、最初の失敗を別に覚えておく
-export const runWithPorts = async (
-  call: PortCall,
-  requires: Ports,
-  check: (fns: PortFnsRuntime) => CheckResult,
-): Promise<Result.Result<unknown, unknown>> => {
-  let failed: PortFailed | undefined;
-  const fns: PortFnsRuntime = Object.fromEntries(
-    Object.entries(requires).map(([key, p]) => [
-      key,
-      async (...args: readonly unknown[]) => {
-        const r = await call(p, args);
-        if (Result.isFailure(r)) {
-          failed ??= new PortFailed(r.error);
-          throw failed;
-        }
-        return r.value;
-      },
-    ]),
-  );
-  try {
-    const result = await check(fns);
-    return failed === undefined ? result : Result.fail(failed.error);
-  } catch (e) {
-    if (failed !== undefined && e === failed) return Result.fail(failed.error);
-    throw e;
-  }
+// 型引数を問わない port。型の上で port の一覧を持つためで、実装の登録や呼び出しには使えない
+export type AnyPort = {
+  readonly kind: "port";
+  readonly name: string;
+  readonly cached: boolean;
+  readonly providedIn: (scope: object) => boolean;
 };
+
+class Clock {
+  readonly kind = "clock";
+  readonly name = "clock";
+  readonly #impls = new WeakMap<object, () => number>();
+
+  constructor() {
+    Object.freeze(this);
+  }
+
+  readonly provider = (now: () => number): Provider<"clock"> =>
+    new Provider(this.name, (scope) => register(this.#impls, scope, now, this.name));
+
+  readonly valued = (v: number): Provider<"clock"> => this.provider(() => v);
+
+  readonly providedIn = (scope: object): boolean => this.#impls.has(scope);
+
+  readonly nowIn = (scope: object): number | undefined => this.#impls.get(scope)?.();
+}
+export type { Clock };
+
+type TypesOf<P> = P extends { readonly [portTypes]: infer X } ? X : never;
+export type PortArgs<P> = TypesOf<P> extends { readonly args: infer A extends readonly unknown[] } ? A : never;
+export type PortValue<P> = TypesOf<P> extends { readonly value: infer T } ? T : never;
+export type PortError<P> = TypesOf<P> extends { readonly error: infer E } ? E : never;
+
+export type Ports = Readonly<Record<string, AnyPort>>;
+export type NoPorts = Readonly<Record<never, AnyPort>>;
+export type PortNames<P extends Ports> = { [K in keyof P]: P[K]["name"] }[keyof P];
+// requires に書ける record。各 port が、1回の呼び出しから check に渡す関数を作れることを型で表す
+export type Requires = Readonly<Record<string, AnyPort & { readonly resolveIn: (invocation: Invocation) => unknown }>>;
+
+type HasIndex<P> = string extends keyof P
+  ? true
+  : number extends keyof P
+    ? true
+    : symbol extends keyof P
+      ? true
+      : false;
+type OptionalKeys<P> = { [K in keyof P]-?: {} extends Pick<P, K> ? K : never }[keyof P];
+
+// index signature や省略できる key があると、bind が確かめる port と check が使う port がずれる
+export type StrictRecord<P> =
+  HasIndex<P> extends true
+    ? { readonly "index signature の record は渡せない": never }
+    : [OptionalKeys<P>] extends [never]
+      ? unknown
+      : { readonly "省略できる key は渡せない": OptionalKeys<P> };
+
+// requires の port ごとに、check に渡す関数を作る
+export const resolvePorts = <P extends Requires>(requires: P, invocation: Invocation) =>
+  mapValues(requires, (p) => p.resolveIn(invocation));
+export type PortFns<P extends Requires> = ReturnType<typeof resolvePorts<P>>;
+
+export const port = <const N extends string>(name: N) => ({
+  of: <F extends (...args: never) => unknown, E = never>() =>
+    new Port<N, Parameters<F>, ReturnType<F>, E>(name, false, new Slots()),
+});
+
+export const cached = <N extends string, A extends readonly unknown[], T, E>(p: Port<N, A, T, E>): Port<N, A, T, E> =>
+  p.withCache();
+
+export const clock: Clock = new Clock();
+
+type Providable<N extends string, I> = { readonly provider: (impl: I) => Provider<N> };
+type Valuable<N extends string, V> = { readonly valued: (v: V) => Provider<N> };
+
+export const provide = Object.assign(
+  <N extends string, I>(target: Providable<N, I>, impl: NoInfer<I>): Provider<N> => target.provider(impl),
+  { value: <N extends string, V>(target: Valuable<N, V>, v: NoInfer<V>): Provider<N> => target.valued(v) },
+);

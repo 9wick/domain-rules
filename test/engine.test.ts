@@ -1,7 +1,24 @@
 import { Result } from "@praha/byethrow";
 import * as v from "valibot";
-import { expect, test } from "vite-plus/test";
-import { always, bind, cached, clock, model, modelRules, open, port, provide, rule } from "../src/index.ts";
+import { expect, expectTypeOf, test } from "vite-plus/test";
+import {
+  alwaysAllow,
+  always,
+  bind,
+  cached,
+  clock,
+  model,
+  modelRules,
+  open,
+  port,
+  provide,
+  plan,
+  rule,
+  ruleset,
+} from "../src/index.ts";
+import { UserIdSchema, type AppActor } from "./blog/domain.ts";
+
+const member: AppActor = { id: v.parse(UserIdSchema, "usr_1"), role: "MEMBER" };
 
 const item = model({
   name: "item",
@@ -27,21 +44,21 @@ const twice = (name: string) =>
 
 test("cached の port は1回の呼び出しの中でだけ、同じ引数の結果を使い回す", async () => {
   const calls: string[] = [];
-  const domain = bind([modelRules(item, { save: [twice("a"), twice("b")] })], {
+  const domain = bind([modelRules(item).save(ruleset(twice("a")).add(twice("b")))], {
     providers: [
       provide(lookup, (n) => (calls.push(`lookup(${n})`), Result.succeed(n))),
       provide(uncachedLookup, (n) => (calls.push(`uncached(${n})`), Result.succeed(n))),
       provide(clock, () => 0),
     ],
   });
-  await domain.item.create({ input: { n: 1 }, actor: { id: "usr_1" as never, role: "MEMBER" } });
+  await domain.item.create({ input: { n: 1 }, actor: member });
   expect(calls).toEqual(["lookup(1)", "uncached(1)", "uncached(1)"]);
-  await domain.item.create({ input: { n: 1 }, actor: { id: "usr_1" as never, role: "MEMBER" } });
+  await domain.item.create({ input: { n: 1 }, actor: member });
   expect(calls.filter((c) => c === "lookup(1)")).toHaveLength(2);
 });
 
 test("load がない model の rule の組は create だけを持つ", () => {
-  const domain = bind([modelRules(item, { save: [twice("a")] })], {
+  const domain = bind([modelRules(item).save(ruleset(twice("a")))], {
     providers: [provide.value(lookup, 1), provide.value(uncachedLookup, 1), provide.value(clock, 0)],
   });
   expect(Object.keys(domain.item)).toEqual(["create"]);
@@ -55,45 +72,50 @@ test("check が throw した例外は握りつぶさない", async () => {
       throw new Error("bug");
     },
   });
-  const domain = bind([modelRules(item, { save: [boom] })], { providers: [provide.value(clock, 0)] });
-  await expect(
-    domain.item.create({ input: { n: 1 }, actor: { id: "usr_1" as never, role: "MEMBER" } }),
-  ).rejects.toThrow("bug");
+  const domain = bind([modelRules(item).save(ruleset(boom))], { providers: [provide.value(clock, 0)] });
+  await expect(domain.item.create({ input: { n: 1 }, actor: member })).rejects.toThrow("bug");
 });
 
-test("check が port の失敗を catch して成功を返しても、port の失敗で止まる", async () => {
+const failingRule = <E>(name: string, onFailure: (e: "DOWN") => E) => {
   const failing = port("failing").of<() => number, "DOWN">();
-  const swallow = rule(item.save, {
-    name: "swallow",
+  const r = rule(item.save, {
+    name,
     requires: { failing },
     when: always,
     check: async (_, { failing }) => {
-      await failing().catch(() => 0);
-      return Result.succeed({ next: { id: "i" } });
+      const n = await failing();
+      return Result.isFailure(n) ? Result.fail(onFailure(n.error)) : Result.succeed({ next: { id: String(n.value) } });
     },
   });
-  const domain = bind([modelRules(item, { save: [swallow] })], {
+  return bind([modelRules(item).save(ruleset(r))], {
     providers: [provide(failing, () => Result.fail("DOWN" as const)), provide.value(clock, 0)],
   });
-  const r = await domain.item.create({ input: { n: 1 }, actor: { id: "usr_1" as never, role: "MEMBER" } });
-  expect(Result.unwrapError(r)).toEqual({ step: "swallow", error: "DOWN" });
+};
+
+test("check が返した port の失敗が、rule の失敗になる", async () => {
+  const r = await failingRule("pass", (e) => e).item.create({ input: { n: 1 }, actor: member });
+  expect(Result.unwrapError(r)).toEqual({ step: "pass", error: "DOWN" });
+});
+
+test("check は port の失敗を別の値にして返せる", async () => {
+  const r = await failingRule("mapped", () => "UNAVAILABLE" as const).item.create({ input: { n: 1 }, actor: member });
+  expect(Result.unwrapError(r)).toEqual({ step: "mapped", error: "UNAVAILABLE" });
 });
 
 test("prototype の名前の項目も schema にない項目として失敗する", async () => {
-  const domain = bind([modelRules(item, { save: [twice("a")] })], {
+  const domain = bind([modelRules(item).save(ruleset(twice("a")))], {
     providers: [provide.value(lookup, 1), provide.value(uncachedLookup, 1), provide.value(clock, 0)],
   });
   const r = await domain.item.create({
-    input: { n: "x", constructor: 1 } as never,
-    actor: { id: "usr_1" as never, role: "MEMBER" },
+    // @ts-expect-error 型に合わない入力を渡したときの実行時の振る舞いを確かめる
+    input: { n: "x", constructor: 1 },
+    actor: member,
   });
   expect(Result.unwrapError(r)).toMatchObject({
     step: "input",
     error: { issues: [{ path: ["constructor"] }, { path: [{ key: "n" }] }] },
   });
 });
-
-const member = { id: "usr_1" as never, role: "MEMBER" } as const;
 
 const stored = { id: "i1", n: 5 };
 const findItem = port("findItem").of<(id: string) => { id: string; n: number } | null, "DB_DOWN">();
@@ -107,7 +129,7 @@ const seenNow = rule(item.save, {
   when: always,
   check: ({ now }) => (now === 42 ? Result.succeed() : Result.fail("WRONG_NOW")),
 });
-const itemRules = modelRules(item, { load: findItem, save: [seenNow, assignId], delete: [] });
+const itemRules = modelRules(item).load(findItem).save(ruleset(seenNow).add(assignId)).delete(ruleset(alwaysAllow));
 const itemDomain = (load: () => Result.Result<{ id: string; n: number } | null, "DB_DOWN">) =>
   bind([itemRules], { providers: [provide(findItem, load), provide.value(clock, 42)] }).item;
 
@@ -119,7 +141,8 @@ test("時計の provider の値が now として rule に渡る", async () => {
 test("update は id がなければ input で失敗し、load を呼ばない", async () => {
   let loaded = false;
   const r = await itemDomain(() => ((loaded = true), Result.succeed(stored))).update({
-    input: { n: 1 } as never,
+    // @ts-expect-error id のない入力を、型を通さずに渡したときの実行時の振る舞いを確かめる
+    input: { n: 1 },
     actor: member,
   });
   expect(Result.unwrapError(r)).toMatchObject({ step: "input", error: { issues: [{ path: ["id"] }] } });
@@ -153,14 +176,16 @@ test("rule で昇格した actor が封をした値に入る", async () => {
     when: always,
     check: () => Result.succeed({ actor: promoted, next: { id: "x" } }),
   });
-  const domain = bind([modelRules(item, { save: [promote] })], { providers: [provide.value(clock, 0)] });
+  const domain = bind([modelRules(item).save(ruleset(promote))], { providers: [provide.value(clock, 0)] });
   expect(open(Result.unwrap(await domain.item.create({ input: { n: 1 }, actor: member }))).actor).toBe(promoted);
 });
 
 test("when が当たらない rule は check を呼ばず、状態を変えない", async () => {
   let called = false;
   const never = rule(item.save, { name: "never", when: () => false, check: () => ((called = true), Result.fail("X")) });
-  const domain = bind([modelRules(item, { save: [never, assignId] })], { providers: [provide.value(clock, 0)] });
+  const domain = bind([modelRules(item).save(ruleset(never).add(assignId))], {
+    providers: [provide.value(clock, 0)],
+  });
   expect(open(Result.unwrap(await domain.item.create({ input: { n: 1 }, actor: member }))).next).toEqual({
     id: "new",
     n: 1,
@@ -168,13 +193,10 @@ test("when が当たらない rule は check を呼ばず、状態を変えな�
   expect(called).toBe(false);
 });
 
-test("宣言後に元の配列を変更しても、検査済みの rule が実行される", async () => {
-  const save: [typeof assignId] = [assignId];
-  const set = modelRules(item, { save });
-  save.pop();
-  const domain = bind([set], { providers: [provide.value(clock, 0)] });
-  const result = await domain.item.create({ input: { n: 1 }, actor: member });
-  expect(open(Result.unwrap(result)).next).toEqual({ id: "new", n: 1 });
+test("add は元の ruleset を変えず、新しい ruleset を返す", () => {
+  const base = ruleset(assignId);
+  base.add(rule(item.save, { name: "other", when: always, check: () => Result.succeed() }));
+  expect(plan(modelRules(item).save(base)).save?.map((r) => r.name)).toEqual(["id"]);
 });
 
 test("不正な入力は時計を呼ぶ前に input で失敗する", async () => {
@@ -186,13 +208,14 @@ test("不正な入力は時計を呼ぶ前に input で失敗する", async () =
       }),
     ],
   });
-  const result = await domain.item.update({ input: { n: 1 } as never, actor: member });
+  // @ts-expect-error id のない入力を、型を通さずに渡したときの実行時の振る舞いを確かめる
+  const result = await domain.item.update({ input: { n: 1 }, actor: member });
   expect(Result.unwrapError(result)).toMatchObject({ step: "input" });
 });
 
 test("同名の別宣言の provider では port を満たせない", () => {
   const otherLookup = port("lookup").of<(n: number) => string>();
-  const set = modelRules(item, { save: [twice("a")] });
+  const set = modelRules(item).save(ruleset(twice("a")));
   expect(() =>
     bind([set], {
       providers: [provide.value(otherLookup, "wrong"), provide.value(uncachedLookup, 1), provide.value(clock, 0)],
@@ -207,9 +230,13 @@ test("cached は元の宣言の provider を使う", async () => {
     name: "read",
     when: always,
     requires: { cachedRaw },
-    check: async ({ next }, { cachedRaw }) => Result.succeed({ next: { id: String(await cachedRaw(next.n)) } }),
+    check: async ({ next }, { cachedRaw }) =>
+      Result.pipe(
+        await cachedRaw(next.n),
+        Result.map((n) => ({ next: { id: String(n) } })),
+      ),
   });
-  const domain = bind([modelRules(item, { save: [read] })], {
+  const domain = bind([modelRules(item).save(ruleset(read))], {
     providers: [provide(raw, (n) => Result.succeed(n + 1)), provide.value(clock, 0)],
   });
   const result = await domain.item.create({ input: { n: 2 }, actor: member });
@@ -227,15 +254,15 @@ test("load は入力スキーマで変換された id を受け取る", async ()
   const load = port("loadTransformed").of<(id: number) => { id: number }>();
   const wrongLoad = port("wrongLoad").of<(id: string) => { id: number }>();
   // @ts-expect-error load に渡る id は変換済みの number
-  modelRules(transformed, { load: wrongLoad, delete: [] });
-  const domain = bind([modelRules(transformed, { load, delete: [] })], {
+  modelRules(transformed).load(wrongLoad).delete(ruleset(alwaysAllow));
+  const domain = bind([modelRules(transformed).load(load).delete(ruleset(alwaysAllow))], {
     providers: [provide(load, (id) => Result.succeed({ id })), provide.value(clock, 0)],
   });
   const result = await domain.transformed.delete({ input: { id: "42" }, actor: member });
   expect(open(Result.unwrap(result)).pre.id).toBe(42);
 });
 
-test("save は更新で引き継いだ永続化済みの値と検証済みの入力を扱える", async () => {
+test("load の返り値は、入力の型にも代入できなければならない", () => {
   const appointment = model({
     name: "appointment",
     schema: {
@@ -243,36 +270,48 @@ test("save は更新で引き継いだ永続化済みの値と検証済みの入
       persisted: v.object({ id: v.string(), date: v.date() }),
     },
   });
-  const date = new Date("2026-11-24");
-  const find = port("findAppointment").of<(id: string) => { id: string; date: Date }>();
-  const stringOnly = rule(appointment.save.with<{ next: { date: string } }>(), {
-    name: "stringOnly",
-    when: always,
-    check: ({ next }) => Result.succeed({ next: { id: "new", date: new Date(next.date) } }),
-  });
-  // @ts-expect-error 更新で date を省略すると、永続化済みの Date が渡る
-  modelRules(appointment, { load: find, save: [stringOnly] });
-  modelRules(appointment, { save: [stringOnly] });
+  const find = port("findAppointment").of<(id: string) => { id: string; date: Date } | null>();
+  // @ts-expect-error 更新で date を省略すると、next の date に入力の型ではない Date が入る
+  modelRules(appointment).load(find);
+});
 
-  const normalize = rule(appointment.save, {
-    name: "normalize",
-    when: always,
-    check: ({ next }) =>
-      Result.succeed({
-        next: { id: next.id ?? "new", date: typeof next.date === "string" ? new Date(next.date) : next.date },
-      }),
+test("load は検証した id を受け取れなければならない", () => {
+  const item = model({
+    name: "item",
+    schema: { input: v.object({ id: v.optional(v.string()) }), persisted: v.object({ id: v.string() }) },
   });
-  const domain = bind([modelRules(appointment, { load: find, save: [normalize] })], {
-    providers: [provide(find, (id) => Result.succeed({ id, date })), provide.value(clock, 0)],
-  });
-  const created = await domain.appointment.create({ input: { date: "2026-11-24" }, actor: member });
-  const updated = await domain.appointment.update({ input: { id: "existing" }, actor: member });
-  expect(open(Result.unwrap(created)).next.date).toEqual(date);
-  expect(open(Result.unwrap(updated)).next.date).toBe(date);
+  const narrow = port("findNarrow").of<(id: "fixed") => { id: string } | null>();
+  // @ts-expect-error 検証した id は string で、"fixed" しか受け取らない load には渡せない
+  modelRules(item).load(narrow);
+  modelRules(item).load(port("findWide").of<(id: string | number) => { id: string } | null>());
 });
 
 test("model の入力スキーマは id を必須にできない", () => {
   const schema = { input: v.object({ id: v.string() }), persisted: v.object({ id: v.string() }) };
   // @ts-expect-error create は入力から id を受け取らない
   model({ name: "requiredId", schema });
+});
+
+test("同じメソッドを2回書くことと、load を save よりあとに書くことは型エラー", () => {
+  const save = ruleset(twice("a"));
+  // @ts-expect-error save は1回だけ書ける
+  modelRules(item).load(findItem).save(save).save(save);
+  // @ts-expect-error delete は1回だけ書ける
+  modelRules(item).load(findItem).delete(ruleset(alwaysAllow)).delete(ruleset(alwaysAllow));
+  expectTypeOf(modelRules(item).save(save)).not.toHaveProperty("load");
+});
+
+test("bind には、長さの決まった rule の組の tuple だけを渡せる", () => {
+  const sets = [modelRules(item).save(ruleset(twice("a")))];
+  const providers = [provide.value(lookup, 1), provide.value(uncachedLookup, 1), provide.value(clock, 0)] as const;
+  // @ts-expect-error 配列は要素が無いことがあり、型にあるメソッドが値に無いことがある
+  expect(() => bind(sets, { providers })).not.toThrow();
+});
+
+test("あるかどうか分からない線路は、rule の組に渡せない", () => {
+  const save = ruleset(twice("a"));
+  const maybe = [save, undefined][Number(false)];
+  // @ts-expect-error 渡したかどうかが型で決まらないと、メソッドがあるかも型で決まらない
+  modelRules(item).save(maybe);
+  modelRules(item).save(save);
 });

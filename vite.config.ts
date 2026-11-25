@@ -72,39 +72,16 @@ export default defineConfig({
           "typescript/ban-ts-comment": ["error", { "ts-expect-error": "allow-with-description", "ts-ignore": true }],
           // rule の check や provider が throw したときの振る舞いを確かめるため、throw を書く
           "strict/no-throw": "off",
-          // brand 付きの id や、わざと型に合わない値を作って渡す
-          "typescript/consistent-type-assertions": "off",
-          "typescript/no-unsafe-type-assertion": "off",
-          "typescript/no-unsafe-assignment": "off",
           // README の例と同じく、actor の絞り込みに型述語を使う
           "strict/no-type-predicate": "off",
+          // 封をした値を作り直しても open できないことを、spread で作り直して確かめる
+          "typescript/no-misused-spread": "off",
         },
       },
       {
         // ts-expect-error のコメントだけで確かめる型のテストは、実行時の assertion を持たない
         files: ["test/types.ts", "test/engine.test.ts"],
         rules: { "vitest/expect-expect": "off" },
-      },
-      // ── 実装の例外:そのファイルが何であるかによって、ルールが守る性質が別の形で保たれるもの ──
-      {
-        // 復帰できない異常(provider の重複・不足、時刻を返さない clock、偽造された値)は throw で止める
-        files: ["src/bind.ts", "src/seal.ts"],
-        rules: { "strict/no-throw": "off" },
-      },
-      {
-        // check には port の成功の値だけを渡すため、port の失敗は throw で check を抜け、ここで Result に戻す
-        files: ["src/port.ts"],
-        rules: { "strict/no-throw": "off", "strict/no-try-catch": "off", "typescript/only-throw-error": "off" },
-      },
-      {
-        // 型の上の情報と実行時の値をつなぐ変換を集めた module。ここ以外では型 assertion を書かない
-        files: ["src/erased.ts"],
-        rules: {
-          "typescript/consistent-type-assertions": "off",
-          "typescript/no-unsafe-type-assertion": "off",
-          // 型引数は「どの型として扱い直すか」の指定で、引数からは推論しない
-          "typescript/no-unnecessary-type-parameters": "off",
-        },
       },
     ],
     options: {

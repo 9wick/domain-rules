@@ -17,6 +17,7 @@ import {
   port,
   pre,
   rule,
+  ruleset,
   type Persisted,
   type Value,
 } from "../../src/index.ts";
@@ -106,7 +107,8 @@ export const uniqueSlugInBlog = rule(article.save, {
   when: changed("slug"),
   check: async (s, { findArticlesInBlog }) => {
     const articles = await findArticlesInBlog(s.next.blogId);
-    return articles.some((a) => a.slug === s.next.slug && a.id !== s.pre?.id)
+    if (Result.isFailure(articles)) return articles;
+    return articles.value.some((a) => a.slug === s.next.slug && a.id !== s.pre?.id)
       ? Result.fail("DUPLICATED_SLUG")
       : Result.succeed();
   },
@@ -174,7 +176,8 @@ export const reviewerExists = rule(article.save, {
       return Result.succeed({ next: { reviewerId: pre.reviewerId } });
     }
     const reviewerId = await requireExistingUser(next.reviewerId);
-    return Result.succeed({ next: { reviewerId } });
+    if (Result.isFailure(reviewerId)) return reviewerId;
+    return Result.succeed({ next: { reviewerId: reviewerId.value } });
   },
 });
 
@@ -187,7 +190,8 @@ export const blogExists = rule(article.save, {
       return Result.succeed({ next: { blogId: pre.blogId } });
     }
     const blog = await findBlog(next.blogId);
-    return blog ? Result.succeed({ next: { blogId: blog.id } }) : Result.fail("BLOG_NOT_FOUND");
+    if (Result.isFailure(blog)) return blog;
+    return blog.value ? Result.succeed({ next: { blogId: blog.value.id } }) : Result.fail("BLOG_NOT_FOUND");
   },
 });
 
@@ -197,21 +201,27 @@ export const blogAcceptsPosts = rule(article.save.with<{ next: { blogId: BlogIdE
   when: changed("status", { next: "PUBLISHED" }),
   check: async ({ next }, { findBlog }) => {
     const blog = await findBlog(next.blogId);
-    return blog?.acceptsPosts === true ? Result.succeed() : Result.fail("BLOG_CLOSED");
+    if (Result.isFailure(blog)) return blog;
+    return blog.value?.acceptsPosts === true ? Result.succeed() : Result.fail("BLOG_CLOSED");
   },
 });
 
-export const existingArticleId = rule(article.save.with<{ pre: ExistingArticle | null }>(), {
+export const existingArticleId = rule(article.save, {
   name: "既存の記事の id",
   when: always,
-  check: ({ pre }) => Result.succeed({ next: { id: pre ? pre.id : null } }),
+  check: ({ pre }) => Result.succeed({ next: { id: pre?.id } }),
 });
 
-export const articleIdAssigned = rule(article.save.with<{ next: { id: ArticleIdExisted | null } }>(), {
+export const articleIdAssigned = rule(article.save.with<{ next: { id: Article["id"] | undefined } }>(), {
   name: "新しい記事に id を付ける",
   requires: { newArticleId },
   when: always,
-  check: async ({ next }, { newArticleId }) => Result.succeed({ next: { id: next.id ?? (await newArticleId()) } }),
+  check: async ({ next }, { newArticleId }) => {
+    if (next.id !== undefined) return Result.succeed({ next: { id: next.id } });
+    const id = await newArticleId();
+    if (Result.isFailure(id)) return id;
+    return Result.succeed({ next: { id: id.value } });
+  },
 });
 
 export const isMember = (a: AppActor): a is MemberActor => a.role === "MEMBER" || a.role === "ADMIN";
@@ -225,27 +235,26 @@ const memberOnly = {
 export const memberCanSave = rule(article.save, memberOnly);
 export const memberCanDelete = rule(article.delete, memberOnly);
 
-export const articleRules = modelRules(article, {
-  load: findArticleById,
-  save: [
-    memberCanSave,
-    statusChangesAreAllowed,
-    articleImmutableFields,
-    blogExists,
-    reviewerExists,
-    authorIsNotReviewer,
-    uniqueSlugInBlog,
-    publishAtInFuture,
-    onlyReviewerPublishes,
-    onlyAuthorChangesReviewer,
-    slugLockedAfterPublish,
-    publishedIsApproved,
-    blogAcceptsPosts,
-    existingArticleId,
-    articleIdAssigned,
-  ],
-  delete: [memberCanDelete, onlyDraftIsDeletable],
-});
+export const articleRules = modelRules(article)
+  .load(findArticleById)
+  .save(
+    ruleset(memberCanSave)
+      .add(statusChangesAreAllowed)
+      .add(articleImmutableFields)
+      .add(blogExists)
+      .add(reviewerExists)
+      .add(authorIsNotReviewer)
+      .add(uniqueSlugInBlog)
+      .add(publishAtInFuture)
+      .add(onlyReviewerPublishes)
+      .add(onlyAuthorChangesReviewer)
+      .add(slugLockedAfterPublish)
+      .add(publishedIsApproved)
+      .add(blogAcceptsPosts)
+      .add(existingArticleId)
+      .add(articleIdAssigned),
+  )
+  .delete(ruleset(memberCanDelete).add(onlyDraftIsDeletable));
 
 export const previewArticle = action({
   name: "previewArticle",
@@ -262,7 +271,8 @@ export const targetArticleExists = rule(previewArticle.decide, {
   when: always,
   check: async ({ input }, { findArticle }) => {
     const article = await findArticle(input.blogId, input.articleId);
-    return article ? Result.succeed({ article }) : Result.fail("ARTICLE_NOT_FOUND");
+    if (Result.isFailure(article)) return article;
+    return article.value ? Result.succeed({ article: article.value }) : Result.fail("ARTICLE_NOT_FOUND");
   },
 });
 
@@ -290,6 +300,6 @@ export const canPreview = rule(previewArticle.decide.with<{ article: ExistingArt
 });
 
 export const previewArticleRules = actionRules(previewArticle, {
-  rules: [targetArticleExists, notArchived, canPreview],
+  rules: ruleset(targetArticleExists).add(notArchived).add(canPreview),
   output: ({ article, viewerRole }) => ({ article, viewerRole }),
 });

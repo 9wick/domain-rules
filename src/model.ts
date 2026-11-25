@@ -1,53 +1,41 @@
 import type { StandardSchemaV1 } from "@standard-schema/spec";
-import { withPhantom, type Phantom } from "./erased.ts";
 import type { TrackKind } from "./when.ts";
 
 // アプリケーションが module augmentation で actor の型を登録する
 export interface Register {}
 export type Actor = Register extends { actor: infer A } ? A : unknown;
 
-export type Simplify<T> = { [K in keyof T]: T[K] };
+declare const trackState: unique symbol;
 
-// check の成功の値を状態に重ねる。next だけは項目ごとに重ね、ほかの名前は置き換えるか足す
-export type Overlay<S, O> = S extends unknown
-  ? O extends unknown
-    ? [O] extends [void | undefined | null]
-      ? S
-      : Simplify<{
-          [K in keyof S | keyof O]: K extends keyof O
-            ? K extends "next"
-              ? K extends keyof S
-                ? Simplify<Omit<S[K], keyof O[K]> & O[K]>
-                : O[K]
-              : O[K]
-            : K extends keyof S
-              ? S[K]
-              : never;
-        }>
-    : never
-  : never;
-
-export type Track<K extends TrackKind, T extends string, S> = {
+// rule をどの線路に置くかと、その線路で rule が受け取る状態の型を表す
+export class Track<K extends TrackKind, T extends string, S> {
+  declare readonly [trackState]: S;
   readonly kind: K;
   readonly target: T;
-  with<R>(): Track<K, T, Overlay<S, R>>;
-} & Phantom<S>;
 
-export const track = <K extends TrackKind, T extends string, S>(kind: K, target: T): Track<K, T, S> =>
-  withPhantom<Track<K, T, S>>(Object.freeze({ kind, target, with: <R>() => track<K, T, Overlay<S, R>>(kind, target) }));
+  constructor(kind: K, target: T) {
+    this.kind = kind;
+    this.target = target;
+    Object.freeze(this);
+  }
 
-export type ObjectSchema = StandardSchemaV1 & { readonly entries: Readonly<Record<string, StandardSchemaV1>> };
+  // 前の rule が昇格させた状態を前提にする
+  with<R>(): Track<K, T, S & R> {
+    return new Track<K, T, S & R>(this.kind, this.target);
+  }
+}
 
-export type Model<
-  N extends string = string,
-  I extends ObjectSchema = ObjectSchema,
-  P extends StandardSchemaV1 = StandardSchemaV1,
-> = {
+// 項目ごとの schema。更新のときは、入力にある項目だけをその項目の schema で検証する
+export type Entries<Out> = { readonly [K in keyof Out]-?: StandardSchemaV1<unknown, Out[K]> };
+export type ObjectSchema<In = unknown, Out = unknown> = StandardSchemaV1<In, Out> & { readonly entries: Entries<Out> };
+
+// schema の型を入力・出力の型に分けて持つ。検証の結果の型が、型引数からそのまま決まる
+export type Model<N extends string = string, In = unknown, Out = unknown, P = unknown> = {
   readonly kind: "model";
   readonly name: N;
-  readonly schema: { readonly input: I; readonly persisted: P };
-  readonly save: Track<"save", N, SaveStates<StandardSchemaV1.InferOutput<P>, StandardSchemaV1.InferOutput<I>>>;
-  readonly delete: Track<"delete", N, DeleteState<StandardSchemaV1.InferOutput<P>>>;
+  readonly schema: { readonly input: ObjectSchema<In, Out>; readonly persisted: StandardSchemaV1<unknown, P> };
+  readonly save: Track<"save", N, SaveState<P | null, Out>>;
+  readonly delete: Track<"delete", N, DeleteState<P>>;
 };
 
 export type SaveState<Pre, Next> = {
@@ -56,15 +44,6 @@ export type SaveState<Pre, Next> = {
   readonly actor: Actor;
   readonly now: number;
 };
-type UpdatedValue<Pre, Input> = Simplify<
-  {
-    [K in keyof Pre]: Pre[K] | (K extends keyof Input ? Input[K] : never);
-  } & Partial<Omit<Input, keyof Pre>>
->;
-
-export type SaveStates<Pre, Input> =
-  | SaveState<null, Input>
-  | (Pre extends unknown ? SaveState<Pre, UpdatedValue<Pre, Input>> : never);
 
 export type DeleteState<Pre> = { readonly pre: Pre; readonly next: null; readonly actor: Actor; readonly now: number };
 
@@ -72,42 +51,43 @@ export type Value<M extends Model> = StandardSchemaV1.InferOutput<M["schema"]["i
 export type Persisted<M extends Model> = StandardSchemaV1.InferOutput<M["schema"]["persisted"]>;
 export type InputOf<M extends Model> = Partial<StandardSchemaV1.InferInput<M["schema"]["input"]>>;
 
-type OptionalInputId<I extends ObjectSchema> =
-  StandardSchemaV1.InferInput<I> extends { readonly id: unknown }
-    ? { readonly "model の入力スキーマの id は省略可能でなければならない": true }
-    : unknown;
+type OptionalInputId<In> = In extends { readonly id: unknown }
+  ? { readonly "model の入力スキーマの id は省略可能でなければならない": true }
+  : unknown;
 
-export const model = <const N extends string, I extends ObjectSchema, P extends StandardSchemaV1>(def: {
+export const model = <const N extends string, In, Out, P>(def: {
   readonly name: N;
-  readonly schema: { readonly input: I & OptionalInputId<I>; readonly persisted: P };
-}): Model<N, I, P> =>
+  readonly schema: {
+    readonly input: StandardSchemaV1<In, Out> & { readonly entries: NoInfer<Entries<Out>> } & NoInfer<
+        OptionalInputId<In>
+      >;
+    readonly persisted: StandardSchemaV1<unknown, P>;
+  };
+}): Model<N, In, Out, P> =>
   Object.freeze({
     kind: "model",
     name: def.name,
     schema: def.schema,
-    save: track<"save", N, SaveStates<StandardSchemaV1.InferOutput<P>, StandardSchemaV1.InferOutput<I>>>(
-      "save",
-      def.name,
-    ),
-    delete: track<"delete", N, DeleteState<StandardSchemaV1.InferOutput<P>>>("delete", def.name),
+    save: new Track<"save", N, SaveState<P | null, Out>>("save", def.name),
+    delete: new Track<"delete", N, DeleteState<P>>("delete", def.name),
   });
 
-export type Action<N extends string = string, I extends StandardSchemaV1 = StandardSchemaV1> = {
+export type Action<N extends string = string, In = unknown, Out = unknown> = {
   readonly kind: "action";
   readonly name: N;
-  readonly input: I;
-  readonly decide: Track<"decide", N, DecideState<StandardSchemaV1.InferOutput<I>>>;
+  readonly input: StandardSchemaV1<In, Out>;
+  readonly decide: Track<"decide", N, DecideState<Out>>;
 };
 
 export type DecideState<I> = { readonly input: I; readonly actor: Actor; readonly now: number };
 
-export const action = <const N extends string, I extends StandardSchemaV1>(def: {
+export const action = <const N extends string, In, Out>(def: {
   readonly name: N;
-  readonly input: I;
-}): Action<N, I> =>
+  readonly input: StandardSchemaV1<In, Out>;
+}): Action<N, In, Out> =>
   Object.freeze({
     kind: "action",
     name: def.name,
     input: def.input,
-    decide: track<"decide", N, DecideState<StandardSchemaV1.InferOutput<I>>>("decide", def.name),
+    decide: new Track<"decide", N, DecideState<Out>>("decide", def.name),
   });

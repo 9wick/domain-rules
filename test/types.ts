@@ -1,8 +1,10 @@
 import { Result } from "@praha/byethrow";
+import * as v from "valibot";
 import { describe, expectTypeOf, test } from "vite-plus/test";
 import {
   actor,
   always,
+  alwaysAllow,
   bind,
   changed,
   clock,
@@ -11,9 +13,15 @@ import {
   port,
   provide,
   rule,
+  ruleset,
   type Persistable,
+  type Port,
+  type Provider,
 } from "../src/index.ts";
 import {
+  ArticleIdNewSchema,
+  UserIdExistedSchema,
+  UserIdSchema,
   article,
   articleIdAssigned,
   articleRules,
@@ -28,6 +36,8 @@ import {
   onlyDraftIsDeletable,
   previewArticleRules,
   reviewerExists,
+  type Article,
+  type ArticleId,
   type ArticleIdExisted,
   type ArticleValue,
   type ArticleIdNew,
@@ -42,7 +52,7 @@ describe("型", () => {
   test("束ねたメソッドの返り値は、昇格した型を持つ封をした値", async () => {
     const r = await domain.article.update({
       input: { id: "art_1", status: "PUBLISHED" },
-      actor: { id: "usr_1" as never, role: "MEMBER" },
+      actor: { id: v.parse(UserIdSchema, "usr_1"), role: "MEMBER" },
     });
     if (Result.isFailure(r)) {
       expectTypeOf(r.error.step).toEqualTypeOf<
@@ -50,7 +60,7 @@ describe("型", () => {
         | "load"
         | "記事を変更できるのはメンバーだけ"
         | "status は許可された変化だけ"
-        | "作成後に変えられない項目: blogId, authorId"
+        | `作成後に変えられない項目: ${string}`
         | "ブログが存在する"
         | "レビュアーが存在する"
         | "著者とレビュアーは別の人"
@@ -75,7 +85,7 @@ describe("型", () => {
   });
 
   test("rule の失敗の値に、check の失敗と port の失敗が入る", async () => {
-    const r = await domain.article.create({ input: {}, actor: { id: "usr_1" as never, role: "MEMBER" } });
+    const r = await domain.article.create({ input: {}, actor: { id: v.parse(UserIdSchema, "usr_1"), role: "MEMBER" } });
     if (Result.isFailure(r) && r.error.step === "レビュアーが存在する") {
       expectTypeOf(r.error.error).toEqualTypeOf<
         "USER_NOT_FOUND" | { readonly type: "INFRA"; readonly cause: unknown }
@@ -86,7 +96,7 @@ describe("型", () => {
   test("action は output の値を返す", async () => {
     const r = await domain.previewArticle.decide({
       input: { blogId: "blg_1", articleId: "art_1" },
-      actor: { id: "usr_1" as never, role: "MEMBER" },
+      actor: { id: v.parse(UserIdSchema, "usr_1"), role: "MEMBER" },
     });
     if (Result.isSuccess(r)) {
       expectTypeOf(open(r.value).value.viewerRole).toEqualTypeOf<"author" | "reviewer">();
@@ -94,41 +104,42 @@ describe("型", () => {
   });
 
   test("前提の型が成り立たない並びは型エラー", () => {
-    modelRules(article, {
-      load: findArticleById,
+    ruleset(memberCanSave)
       // @ts-expect-error blogAcceptsPosts は blogExists のあとでなければならない
-      save: [memberCanSave, blogAcceptsPosts, blogExists, reviewerExists, existingArticleId, articleIdAssigned],
-    });
+      .add(blogAcceptsPosts);
+    ruleset(memberCanSave).add(blogExists).add(blogAcceptsPosts);
   });
 
   test("永続化の型にならない並びは型エラー", () => {
-    modelRules(article, {
-      load: findArticleById,
+    modelRules(article)
+      .load(findArticleById)
       // @ts-expect-error reviewerExists がないと next.reviewerId が UserId のまま
-      save: [blogExists, existingArticleId, articleIdAssigned],
-    });
-    modelRules(article, {
-      load: findArticleById,
+      .save(ruleset(blogExists).add(existingArticleId).add(articleIdAssigned));
+    modelRules(article)
+      .load(findArticleById)
       // @ts-expect-error articleIdAssigned がないと next.id に null が残る
-      save: [blogExists, reviewerExists, existingArticleId],
-    });
-    modelRules(article, {
-      load: findArticleById,
-      save: [blogExists, reviewerExists, existingArticleId, articleIdAssigned],
-    });
+      .save(ruleset(blogExists).add(reviewerExists).add(existingArticleId));
+    modelRules(article)
+      .load(findArticleById)
+      .save(ruleset(blogExists).add(reviewerExists).add(existingArticleId).add(articleIdAssigned));
   });
 
   test("線路の違う rule は並べられない", () => {
-    modelRules(article, {
-      load: findArticleById,
+    ruleset(memberCanSave)
       // @ts-expect-error 削除の rule を保存の並びに置いている
-      save: [onlyDraftIsDeletable, blogExists, reviewerExists, existingArticleId, articleIdAssigned],
-    });
+      .add(onlyDraftIsDeletable);
+  });
+
+  test("alwaysAllow だけの delete は、確かめずに削除できるメソッドを作る", () => {
+    const set = modelRules(article).load(findArticleById).delete(ruleset(alwaysAllow));
+    const bound = bind([set], { providers: [provide.value(clock, 0), provide.value(findArticleById, null)] });
+    expectTypeOf(bound.article).toHaveProperty("delete");
+    expectTypeOf(bound.article).not.toHaveProperty("create");
   });
 
   test("delete には load が要る", () => {
-    // @ts-expect-error load がない
-    modelRules(article, { delete: [onlyDraftIsDeletable] });
+    expectTypeOf(modelRules(article)).not.toHaveProperty("delete");
+    expectTypeOf(modelRules(article).load(findArticleById)).toHaveProperty("delete");
   });
 
   test("使えない線路の when は型エラー", () => {
@@ -150,20 +161,49 @@ describe("型", () => {
     const maybe = rule(article.save, {
       name: "たまに昇格",
       when: changed("reviewerId"),
-      check: ({ next }) => Result.succeed({ next: { reviewerId: next.reviewerId as UserIdExisted } }),
+      check: ({ next }) => Result.succeed({ next: { reviewerId: v.parse(UserIdExistedSchema, next.reviewerId) } }),
     });
-    modelRules(article, {
-      load: findArticleById,
+    modelRules(article)
+      .load(findArticleById)
       // @ts-expect-error 当たらないときに reviewerId が UserId のまま残る
-      save: [blogExists, maybe, existingArticleId, articleIdAssigned],
+      .save(ruleset(blogExists).add(maybe).add(existingArticleId).add(articleIdAssigned));
+  });
+
+  test("load の型を前提にする線路は、その型から始める", () => {
+    const existingOnly = rule(article.save.with<{ pre: ExistingArticle | null }>(), {
+      name: "既存の記事だけ",
+      when: always,
+      check: ({ pre }) => {
+        expectTypeOf(pre?.id).toExtend<ArticleIdExisted | undefined>();
+        return Result.succeed();
+      },
     });
+    const save = ruleset(existingOnly)
+      .add(blogExists)
+      .add(reviewerExists)
+      .add(existingArticleId)
+      .add(articleIdAssigned);
+    modelRules(article).load(findArticleById).save(save);
+    modelRules(article)
+      .load(port("findAny").of<(id: ArticleId) => Article | null>())
+      // @ts-expect-error 永続化の型を返す load では、pre が ExistingArticle にならない
+      .save(save);
+  });
+
+  test("状態の項目を別の型に置き換える rule は足せない", () => {
+    const replace = rule(article.save, {
+      name: "置き換え",
+      when: always,
+      check: () => Result.succeed({ next: { publishAt: "now" } }),
+    });
+    // @ts-expect-error publishAt は number で、string に置き換えられない
+    ruleset(replace);
   });
 
   test("provider が足りなければ型エラー", () => {
-    const set = modelRules(article, {
-      load: findArticleById,
-      save: [blogExists, reviewerExists, existingArticleId, articleIdAssigned],
-    });
+    const set = modelRules(article)
+      .load(findArticleById)
+      .save(ruleset(blogExists).add(reviewerExists).add(existingArticleId).add(articleIdAssigned));
     const run = () => {
       // @ts-expect-error findBlog などの provider がない
       bind([set], { providers: [provide(clock, () => 0)] });
@@ -172,8 +212,8 @@ describe("型", () => {
           provide.value(clock, 0),
           provide.value(findArticleById, null),
           provide.value(findBlog, null),
-          provide.value(requireExistingUser, "usr_1" as UserIdExisted),
-          provide.value(newArticleId, "art_1" as ArticleIdNew),
+          provide.value(requireExistingUser, v.parse(UserIdExistedSchema, "usr_1")),
+          provide.value(newArticleId, v.parse(ArticleIdNewSchema, "art_1")),
         ],
       });
     };
@@ -185,6 +225,39 @@ describe("型", () => {
     provide(p, (n) => Result.succeed(String(n)));
     // @ts-expect-error 結果の型が違う
     provide(p, () => Result.succeed(1));
+  });
+
+  test("port を広い型に代入して、宣言と違う型の実装を登録することはできない", () => {
+    const p = port("p").of<(n: number) => string, "E">();
+    // @ts-expect-error 型引数が違う port の型には代入できない
+    const widened: Port<"p", [number], unknown, unknown> = p;
+    expectTypeOf(widened).not.toBeNever();
+    // @ts-expect-error 実装を広い型で受け取る provider の型にも代入できない
+    const providable: { readonly provider: (impl: (n: number) => Result.Result<unknown, unknown>) => unknown } = p;
+    expectTypeOf(providable).not.toBeNever();
+  });
+
+  test("provider は port の provider からしか作れない", () => {
+    const p = port("p").of<(n: number) => string>();
+    // @ts-expect-error 同じ形の object では provider を作れない
+    const forged: Provider<"p"> = { name: "p", registerIn: () => undefined };
+    expectTypeOf(forged).not.toBeNever();
+    expectTypeOf(provide(p, (n) => Result.succeed(String(n)))).toEqualTypeOf<Provider<"p">>();
+  });
+
+  test("check が受け取る port は requires の値からしか決まらない", () => {
+    const p = port("p").of<(n: number) => string>();
+    rule<"save", "article", unknown, "x", typeof always, Result.Result<void, never>, { readonly p: typeof p }>(
+      article.save,
+      // @ts-expect-error port の型を明示して requires を省くと、check が受け取る port の値がない
+      { name: "x", when: always, check: () => Result.succeed() },
+    );
+    const ports: Readonly<Record<string, typeof p>> = { p };
+    // @ts-expect-error index signature の record では、型にある key が値にないことがある
+    rule(article.save, { name: "y", requires: ports, when: always, check: () => Result.succeed() });
+    const optional: { readonly p?: typeof p } = {};
+    // @ts-expect-error 省略できる key は、型にあるのに値にないことがある
+    rule(article.save, { name: "z", requires: optional, when: always, check: () => Result.succeed() });
   });
 
   test("with で前提を付けない rule の pre は永続化の型", () => {
