@@ -6,7 +6,7 @@ import {
   and,
   cached,
   changed,
-  domain,
+  domainDefinitionKit,
   immutable,
   modelRules,
   next,
@@ -37,7 +37,7 @@ export type AppActor = { readonly id: UserId; readonly role: "GUEST" | "MEMBER" 
 export type MemberActor = AppActor & { readonly role: "MEMBER" | "ADMIN" };
 export const isAdmin = (a: AppActor) => a.role === "ADMIN";
 
-const { model, action, actor } = domain<{ actor: AppActor }>();
+const { model, action, actor } = domainDefinitionKit<{ actor: AppActor }>();
 
 export const ArticleIdSchema = v.pipe(v.string(), v.startsWith("art_"), v.brand("ArticleId"));
 export const ArticleIdExistedSchema = v.pipe(ArticleIdSchema, v.brand("ArticleIdExisted"));

@@ -14,8 +14,8 @@ type MissingProviders<Sets extends readonly RuleSet[], Ps extends readonly Provi
   Ps[number]["name"]
 >;
 
-// bind の返り値の型。名前を付けて受け渡すときに使う
-export type Bound<Sets extends readonly RuleSet[]> = ReturnType<typeof bind<Sets, readonly Provider[]>>;
+// bind の返り値の型。domain 層へのアクセス obj で、名前を付けて受け渡すときに使う
+export type Domain<Sets extends readonly RuleSet[]> = ReturnType<typeof bind<Sets, readonly Provider[]>>;
 
 export function bind<const Sets extends readonly RuleSet[], const Ps extends readonly Provider[]>(
   sets: Sets & UniqueNames<Sets>,
