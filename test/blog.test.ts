@@ -1,4 +1,5 @@
 import { Result } from "@praha/byethrow";
+import * as v from "valibot";
 import { describe, expect, test } from "vite-plus/test";
 import { bind, clock, open, plan, provide, type Provider } from "../src/index.ts";
 import {
@@ -10,29 +11,32 @@ import {
   newArticleId,
   previewArticleRules,
   requireExistingUser,
+  ArticleIdExistedSchema,
+  ArticleIdNewSchema,
+  BlogIdExistedSchema,
+  UserIdExistedSchema,
+  UserIdSchema,
   type AppActor,
-  type ArticleIdNew,
   type Blog,
   type ExistingArticle,
-  type UserIdExisted,
 } from "./blog/domain.ts";
 
 const NOW = 1_700_000_000_000;
-const author: AppActor = { id: "usr_author" as never, role: "MEMBER" };
-const reviewer: AppActor = { id: "usr_reviewer" as never, role: "MEMBER" };
-const guest: AppActor = { id: "usr_guest" as never, role: "GUEST" };
+const author: AppActor = { id: v.parse(UserIdSchema, "usr_author"), role: "MEMBER" };
+const reviewer: AppActor = { id: v.parse(UserIdSchema, "usr_reviewer"), role: "MEMBER" };
+const guest: AppActor = { id: v.parse(UserIdSchema, "usr_guest"), role: "GUEST" };
 
 const draft: ExistingArticle = {
-  id: "art_1" as never,
-  blogId: "blg_1" as never,
+  id: v.parse(ArticleIdExistedSchema, "art_1"),
+  blogId: v.parse(BlogIdExistedSchema, "blg_1"),
   status: "DRAFT",
-  authorId: "usr_author" as never,
-  reviewerId: "usr_reviewer" as never,
+  authorId: v.parse(UserIdSchema, "usr_author"),
+  reviewerId: v.parse(UserIdExistedSchema, "usr_reviewer"),
   slug: "hello",
   publishAt: NOW + 1000,
   approvedAt: NOW,
 };
-const openBlog: Blog = { id: "blg_1" as never, acceptsPosts: true };
+const openBlog: Blog = { id: v.parse(BlogIdExistedSchema, "blg_1"), acceptsPosts: true };
 
 const setup = (
   overrides: { existing?: ExistingArticle | null; articles?: ExistingArticle[]; blog?: Blog | null } = {},
@@ -45,20 +49,19 @@ const setup = (
       return Result.succeed(value);
     };
   const providers = [
-    provide(
-      findArticleById,
-      record("findArticleById", overrides.existing === undefined ? draft : overrides.existing) as never,
-    ),
-    provide(newArticleId, record("newArticleId", "art_new" as ArticleIdNew)),
+    provide(findArticleById, record("findArticleById", overrides.existing === undefined ? draft : overrides.existing)),
+    provide(newArticleId, record("newArticleId", v.parse(ArticleIdNewSchema, "art_new"))),
     provide(requireExistingUser, (id) => {
       calls.push(`requireExistingUser(${id})`);
       return Promise.resolve(
-        id.startsWith("usr_") ? Result.succeed(id as UserIdExisted) : Result.fail("USER_NOT_FOUND" as const),
+        id.startsWith("usr_")
+          ? Result.succeed(v.parse(UserIdExistedSchema, id))
+          : Result.fail("USER_NOT_FOUND" as const),
       );
     }),
-    provide(findBlog, record("findBlog", overrides.blog === undefined ? openBlog : overrides.blog) as never),
-    provide(findArticlesInBlog, record("findArticlesInBlog", overrides.articles ?? []) as never),
-    provide(findArticle, record("findArticle", overrides.existing === undefined ? draft : overrides.existing) as never),
+    provide(findBlog, record("findBlog", overrides.blog === undefined ? openBlog : overrides.blog)),
+    provide(findArticlesInBlog, record("findArticlesInBlog", overrides.articles ?? [])),
+    provide(findArticle, record("findArticle", overrides.existing === undefined ? draft : overrides.existing)),
     provide(clock, () => NOW),
   ] as const;
   return { domain: bind([articleRules, previewArticleRules], { providers }), calls };
@@ -88,14 +91,15 @@ describe("create", () => {
     const r = await domain.article.create({ input: { ...newArticle, slug: "", publishAt: 1.5 }, actor: author });
     expect(Result.unwrapError(r).step).toBe("input");
     expect(Result.unwrapError(r).error).toMatchObject({
-      issues: [{ path: expect.anything() }, { path: expect.anything() }],
+      issues: [{ path: [{ key: "slug" }] }, { path: [{ key: "publishAt" }] }],
     });
     expect(calls).toEqual([]);
   });
 
   test("schema にない項目と id は受け付けない", async () => {
     const { domain } = setup();
-    const r = await domain.article.create({ input: { ...newArticle, extra: 1, id: "art_x" } as never, actor: author });
+    // @ts-expect-error schema にない項目と id を、型を通さずに渡したときの実行時の振る舞いを確かめる
+    const r = await domain.article.create({ input: { ...newArticle, extra: 1, id: "art_x" }, actor: author });
     expect(Result.unwrapError(r)).toMatchObject({
       step: "input",
       error: { issues: [{ path: ["extra"] }, { path: ["id"] }] },
@@ -113,7 +117,7 @@ describe("create", () => {
     const failing = bind([articleRules], {
       providers: [
         provide(findArticleById, () => Result.succeed(null)),
-        provide(newArticleId, () => Result.succeed("art_new" as ArticleIdNew)),
+        provide(newArticleId, () => Result.succeed(v.parse(ArticleIdNewSchema, "art_new"))),
         provide(requireExistingUser, () => Result.fail("USER_NOT_FOUND" as const)),
         provide(findBlog, () => Result.succeed(openBlog)),
         provide(findArticlesInBlog, () => Result.succeed([])),
@@ -250,8 +254,8 @@ describe("封をした値", () => {
 describe("bind", () => {
   const base: readonly Provider[] = [
     provide.value(findArticleById, null),
-    provide.value(newArticleId, "art_1" as ArticleIdNew),
-    provide.value(requireExistingUser, "usr_1" as UserIdExisted),
+    provide.value(newArticleId, v.parse(ArticleIdNewSchema, "art_1")),
+    provide.value(requireExistingUser, v.parse(UserIdExistedSchema, "usr_1")),
     provide.value(findBlog, openBlog),
     provide.value(findArticlesInBlog, []),
     provide.value(clock, NOW),

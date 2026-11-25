@@ -14,6 +14,7 @@ import {
   ruleset,
   always,
 } from "../src/index.ts";
+import { UserIdSchema, type AppActor } from "./blog/domain.ts";
 
 const appointment = model({
   name: "appointment",
@@ -29,6 +30,7 @@ const appointment = model({
     persisted: v.object({ id: v.string(), date: v.date() }),
   },
 });
+const actor: AppActor = { id: v.parse(UserIdSchema, "usr_1"), role: "MEMBER" };
 const find = port("findAppointment").of<(id: string) => { id: string; date: Date } | null>();
 const keepId = rule(appointment.save, {
   name: "id",
@@ -43,9 +45,9 @@ test("入力の文字列を schema で Date に変換すれば、DB が Date の
   });
   const moved = await domain.appointment.update({
     input: { id: "a1", date: "2026-02-01T00:00:00Z" },
-    actor: undefined as never,
+    actor,
   });
   expect(open(Result.unwrap(moved)).next.date).toEqual(new Date("2026-02-01T00:00:00Z"));
-  const kept = await domain.appointment.update({ input: { id: "a1" }, actor: undefined as never });
+  const kept = await domain.appointment.update({ input: { id: "a1" }, actor });
   expect(open(Result.unwrap(kept)).next.date).toBe(stored.date);
 });

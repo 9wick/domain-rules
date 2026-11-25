@@ -68,7 +68,7 @@ group("changed", () => {
 const isDraft = (v: { status: string }) => v.status === "DRAFT";
 
 group("ほかの when", () => {
-  test.each([
+  const calls: readonly (readonly [string, (s: S) => boolean, S, boolean])[] = [
     ["always", always, state("DRAFT", "DRAFT"), true],
     ["onCreate は新規作成", onCreate, state(null, "DRAFT"), true],
     ["onCreate は更新では偽", onCreate, state("DRAFT", "DRAFT"), false],
@@ -87,8 +87,9 @@ group("ほかの when", () => {
     ["or", or(onCreate, next(isDraft)), state("PUBLISHED", "DRAFT"), true],
     ["or はどれも偽なら偽", or(onCreate, next(isDraft)), state("DRAFT", "PUBLISHED"), false],
     ["手書きの関数", describe("下書きのまま", (s: S) => s.next.status === "DRAFT"), state("DRAFT", "DRAFT"), true],
-  ] as const)("%s", (_, when, s, expected) => {
-    expect((when as (s: S) => boolean)(s)).toBe(expected);
+  ];
+  test.each(calls)("%s", (_, when, s, expected) => {
+    expect(when(s)).toBe(expected);
   });
 
   test("組み合わせた when の説明は、組み合わせた形を保つ", () => {

@@ -1,4 +1,5 @@
 import { Result } from "@praha/byethrow";
+import * as v from "valibot";
 import { describe, expectTypeOf, test } from "vite-plus/test";
 import {
   actor,
@@ -18,6 +19,9 @@ import {
   type Provider,
 } from "../src/index.ts";
 import {
+  ArticleIdNewSchema,
+  UserIdExistedSchema,
+  UserIdSchema,
   article,
   articleIdAssigned,
   articleRules,
@@ -48,7 +52,7 @@ describe("型", () => {
   test("束ねたメソッドの返り値は、昇格した型を持つ封をした値", async () => {
     const r = await domain.article.update({
       input: { id: "art_1", status: "PUBLISHED" },
-      actor: { id: "usr_1" as never, role: "MEMBER" },
+      actor: { id: v.parse(UserIdSchema, "usr_1"), role: "MEMBER" },
     });
     if (Result.isFailure(r)) {
       expectTypeOf(r.error.step).toEqualTypeOf<
@@ -81,7 +85,7 @@ describe("型", () => {
   });
 
   test("rule の失敗の値に、check の失敗と port の失敗が入る", async () => {
-    const r = await domain.article.create({ input: {}, actor: { id: "usr_1" as never, role: "MEMBER" } });
+    const r = await domain.article.create({ input: {}, actor: { id: v.parse(UserIdSchema, "usr_1"), role: "MEMBER" } });
     if (Result.isFailure(r) && r.error.step === "レビュアーが存在する") {
       expectTypeOf(r.error.error).toEqualTypeOf<
         "USER_NOT_FOUND" | { readonly type: "INFRA"; readonly cause: unknown }
@@ -92,7 +96,7 @@ describe("型", () => {
   test("action は output の値を返す", async () => {
     const r = await domain.previewArticle.decide({
       input: { blogId: "blg_1", articleId: "art_1" },
-      actor: { id: "usr_1" as never, role: "MEMBER" },
+      actor: { id: v.parse(UserIdSchema, "usr_1"), role: "MEMBER" },
     });
     if (Result.isSuccess(r)) {
       expectTypeOf(open(r.value).value.viewerRole).toEqualTypeOf<"author" | "reviewer">();
@@ -157,7 +161,7 @@ describe("型", () => {
     const maybe = rule(article.save, {
       name: "たまに昇格",
       when: changed("reviewerId"),
-      check: ({ next }) => Result.succeed({ next: { reviewerId: next.reviewerId as UserIdExisted } }),
+      check: ({ next }) => Result.succeed({ next: { reviewerId: v.parse(UserIdExistedSchema, next.reviewerId) } }),
     });
     modelRules(article)
       .load(findArticleById)
@@ -208,8 +212,8 @@ describe("型", () => {
           provide.value(clock, 0),
           provide.value(findArticleById, null),
           provide.value(findBlog, null),
-          provide.value(requireExistingUser, "usr_1" as UserIdExisted),
-          provide.value(newArticleId, "art_1" as ArticleIdNew),
+          provide.value(requireExistingUser, v.parse(UserIdExistedSchema, "usr_1")),
+          provide.value(newArticleId, v.parse(ArticleIdNewSchema, "art_1")),
         ],
       });
     };

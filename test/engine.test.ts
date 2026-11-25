@@ -16,6 +16,9 @@ import {
   rule,
   ruleset,
 } from "../src/index.ts";
+import { UserIdSchema, type AppActor } from "./blog/domain.ts";
+
+const member: AppActor = { id: v.parse(UserIdSchema, "usr_1"), role: "MEMBER" };
 
 const item = model({
   name: "item",
@@ -48,9 +51,9 @@ test("cached の port は1回の呼び出しの中でだけ、同じ引数の結
       provide(clock, () => 0),
     ],
   });
-  await domain.item.create({ input: { n: 1 }, actor: { id: "usr_1" as never, role: "MEMBER" } });
+  await domain.item.create({ input: { n: 1 }, actor: member });
   expect(calls).toEqual(["lookup(1)", "uncached(1)", "uncached(1)"]);
-  await domain.item.create({ input: { n: 1 }, actor: { id: "usr_1" as never, role: "MEMBER" } });
+  await domain.item.create({ input: { n: 1 }, actor: member });
   expect(calls.filter((c) => c === "lookup(1)")).toHaveLength(2);
 });
 
@@ -70,9 +73,7 @@ test("check が throw した例外は握りつぶさない", async () => {
     },
   });
   const domain = bind([modelRules(item).save(ruleset(boom))], { providers: [provide.value(clock, 0)] });
-  await expect(
-    domain.item.create({ input: { n: 1 }, actor: { id: "usr_1" as never, role: "MEMBER" } }),
-  ).rejects.toThrow("bug");
+  await expect(domain.item.create({ input: { n: 1 }, actor: member })).rejects.toThrow("bug");
 });
 
 test("check が port の失敗を catch して成功を返しても、port の失敗で止まる", async () => {
@@ -89,7 +90,7 @@ test("check が port の失敗を catch して成功を返しても、port の�
   const domain = bind([modelRules(item).save(ruleset(swallow))], {
     providers: [provide(failing, () => Result.fail("DOWN" as const)), provide.value(clock, 0)],
   });
-  const r = await domain.item.create({ input: { n: 1 }, actor: { id: "usr_1" as never, role: "MEMBER" } });
+  const r = await domain.item.create({ input: { n: 1 }, actor: member });
   expect(Result.unwrapError(r)).toEqual({ step: "swallow", error: "DOWN" });
 });
 
@@ -98,16 +99,15 @@ test("prototype の名前の項目も schema にない項目として失敗す�
     providers: [provide.value(lookup, 1), provide.value(uncachedLookup, 1), provide.value(clock, 0)],
   });
   const r = await domain.item.create({
-    input: { n: "x", constructor: 1 } as never,
-    actor: { id: "usr_1" as never, role: "MEMBER" },
+    // @ts-expect-error 型に合わない入力を渡したときの実行時の振る舞いを確かめる
+    input: { n: "x", constructor: 1 },
+    actor: member,
   });
   expect(Result.unwrapError(r)).toMatchObject({
     step: "input",
     error: { issues: [{ path: ["constructor"] }, { path: [{ key: "n" }] }] },
   });
 });
-
-const member = { id: "usr_1" as never, role: "MEMBER" } as const;
 
 const stored = { id: "i1", n: 5 };
 const findItem = port("findItem").of<(id: string) => { id: string; n: number } | null, "DB_DOWN">();
@@ -133,7 +133,8 @@ test("時計の provider の値が now として rule に渡る", async () => {
 test("update は id がなければ input で失敗し、load を呼ばない", async () => {
   let loaded = false;
   const r = await itemDomain(() => ((loaded = true), Result.succeed(stored))).update({
-    input: { n: 1 } as never,
+    // @ts-expect-error id のない入力を、型を通さずに渡したときの実行時の振る舞いを確かめる
+    input: { n: 1 },
     actor: member,
   });
   expect(Result.unwrapError(r)).toMatchObject({ step: "input", error: { issues: [{ path: ["id"] }] } });
@@ -199,7 +200,8 @@ test("不正な入力は時計を呼ぶ前に input で失敗する", async () =
       }),
     ],
   });
-  const result = await domain.item.update({ input: { n: 1 } as never, actor: member });
+  // @ts-expect-error id のない入力を、型を通さずに渡したときの実行時の振る舞いを確かめる
+  const result = await domain.item.update({ input: { n: 1 }, actor: member });
   expect(Result.unwrapError(result)).toMatchObject({ step: "input" });
 });
 

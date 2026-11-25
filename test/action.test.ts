@@ -2,9 +2,10 @@ import { Result } from "@praha/byethrow";
 import * as v from "valibot";
 import { expect, test } from "vite-plus/test";
 import { action, actionRules, always, bind, clock, open, plan, provide, rule, ruleset } from "../src/index.ts";
+import { UserIdSchema, type AppActor } from "./blog/domain.ts";
 
 const download = action({ name: "download", input: v.object({ fileId: v.pipe(v.string(), v.minLength(1)) }) });
-const member = { id: "usr_1" as never, role: "MEMBER" } as const;
+const member: AppActor = { id: v.parse(UserIdSchema, "usr_1"), role: "MEMBER" };
 
 const allowed = rule(download.decide, {
   name: "メンバーだけ",
