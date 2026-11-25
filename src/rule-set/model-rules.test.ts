@@ -1,20 +1,9 @@
 import { Result } from "@praha/byethrow";
 import * as v from "valibot";
 import { expect, test } from "vite-plus/test";
-import {
-  alwaysAllow,
-  bind,
-  clock,
-  model,
-  modelRules,
-  open,
-  port,
-  provide,
-  rule,
-  ruleset,
-  always,
-} from "../src/index.ts";
-import { UserIdSchema, type AppActor } from "./blog/domain.ts";
+import { alwaysAllow, bind, clock, model, modelRules, open, port, provide, rule, ruleset, always } from "../index.ts";
+import { UserIdSchema, type AppActor } from "../../test/blog/domain.ts";
+import { item, lookup, twice, uncachedLookup } from "../testing/fixtures.ts";
 
 const appointment = model({
   name: "appointment",
@@ -50,4 +39,11 @@ test("入力の文字列を schema で Date に変換すれば、DB が Date の
   expect(open(Result.unwrap(moved)).next.date).toEqual(new Date("2026-02-01T00:00:00Z"));
   const kept = await domain.appointment.update({ input: { id: "a1" }, actor });
   expect(open(Result.unwrap(kept)).next.date).toBe(stored.date);
+});
+
+test("load がない model の rule の組は create だけを持つ", () => {
+  const domain = bind([modelRules(item).save(ruleset(twice("a")))], {
+    providers: [provide.value(lookup, 1), provide.value(uncachedLookup, 1), provide.value(clock, 0)],
+  });
+  expect(Object.keys(domain.item)).toEqual(["create"]);
 });

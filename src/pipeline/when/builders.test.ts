@@ -1,5 +1,5 @@
 import { describe as group, expect, test } from "vite-plus/test";
-import { actor, always, and, changed, describe, next, not, onCreate, or, pre } from "../src/index.ts";
+import { actor, always, and, changed, describe, next, not, onCreate, or, pre } from "../../index.ts";
 
 type S = { pre: { status: string } | null; next: { status: string }; actor: { role: string } };
 const state = (p: string | null, n: string, role = "MEMBER"): S => ({

@@ -66,7 +66,7 @@ export default defineConfig({
     overrides: [
       // ── テストの方針:テストでだけ許すもの ──
       {
-        files: ["test/**/*.ts"],
+        files: ["test/**/*.ts", "src/**/*.test.ts", "src/**/*.test-d.ts", "src/testing/**/*.ts"],
         rules: {
           // 型の契約テストは「コンパイルできないこと」を ts-expect-error のコメントで確かめる。理由の説明は必須にする
           "typescript/ban-ts-comment": ["error", { "ts-expect-error": "allow-with-description", "ts-ignore": true }],
@@ -80,7 +80,7 @@ export default defineConfig({
       },
       {
         // ts-expect-error のコメントだけで確かめる型のテストは、実行時の assertion を持たない
-        files: ["test/types.ts", "test/engine.test.ts"],
+        files: ["**/*.test-d.ts"],
         rules: { "vitest/expect-expect": "off" },
       },
     ],
