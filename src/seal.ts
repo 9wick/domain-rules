@@ -1,4 +1,5 @@
 import type { Action, Actor, Model, Persisted } from "./model.ts";
+import { Panic } from "./panic.ts";
 
 declare const sealedAs: unique symbol;
 
@@ -15,7 +16,7 @@ class Sealed<Kind extends string, Target extends string, Op extends string, C> {
 
   static contents<C>(s: Sealed<string, string, string, C>): C {
     // 型の上では封をした値しか渡せないが、スプレッドで作り直した値は実行時にも拒む
-    if (!(#contents in s)) throw new Error("open: メソッドが作った封をした値ではありません");
+    if (!(#contents in s)) throw new Panic("open: メソッドが作った封をした値ではありません");
     return s.#contents;
   }
 }

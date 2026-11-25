@@ -1,5 +1,6 @@
 import { Result } from "@praha/byethrow";
 import { mapValues } from "as-free";
+import { Panic } from "./panic.ts";
 
 declare const portTypes: unique symbol;
 
@@ -10,7 +11,7 @@ export type Invocation = { readonly scope: object; readonly now: number };
 
 const register = <I>(impls: WeakMap<object, I>, scope: object, impl: I, name: string): void => {
   // 復帰できない異常: 同じ port の provider を同じ bind に2つ渡している
-  if (impls.has(scope)) throw new Error(`bind: port "${name}" の provider が重複しています`);
+  if (impls.has(scope)) throw new Panic(`bind: port "${name}" の provider が重複しています`);
   impls.set(scope, impl);
 };
 
@@ -65,7 +66,7 @@ export class Port<N extends string, in out A extends readonly unknown[], in out 
   readonly callIn = async (invocation: Invocation, args: A): Promise<Result.Result<T, E>> => {
     const impl = this.#slots.impls.get(invocation.scope);
     // bind が provider の不足を確かめてから呼ぶので、ここに来るのは壊れたときだけ
-    if (impl === undefined) throw new Error(`port "${this.name}" の provider がありません`);
+    if (impl === undefined) throw new Panic(`port "${this.name}" の provider がありません`);
     if (!this.cached) return impl(...args);
     // 同じ引数の呼び出しを1回の呼び出しの中で使い回す
     const memo = this.#slots.memos.get(invocation) ?? new Map<string, Promise<Result.Result<T, E>>>();

@@ -13,7 +13,29 @@ const directive = /^\s*(?:oxlint|eslint)-(?:disable|enable)/;
 export default definePlugin({
   meta: { name: "strict" },
   rules: {
-    "no-throw": selectorRule("ThrowStatement", "throw ではなく Result の失敗で返す。"),
+    "no-throw": defineRule({
+      meta: {
+        type: "problem",
+        messages: {
+          forbidden: "throw できるのは復帰できない異常の Panic だけ。失敗は Result で返す。",
+        },
+      },
+      create: (context) => {
+        // 同じ名前の別の class で抜けられないよう、panic.ts から import した Panic だけを認める
+        let imported = false;
+        return {
+          "ImportDeclaration[source.value=/(^|\\/)panic\\.ts$/] ImportSpecifier[imported.name='Panic'][local.name='Panic']":
+            () => {
+              imported = true;
+            },
+          "ThrowStatement:not([argument.type='NewExpression'][argument.callee.name='Panic'])": (node: Node) =>
+            context.report({ node, messageId: "forbidden" }),
+          "ThrowStatement[argument.callee.name='Panic']": (node: Node) => {
+            if (!imported) context.report({ node, messageId: "forbidden" });
+          },
+        };
+      },
+    }),
     "no-try-catch": selectorRule("TryStatement", "try-catch ではなく Result.try で Result に変換する。"),
     "no-type-predicate": selectorRule(
       "TSTypePredicate",
