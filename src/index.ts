@@ -1,38 +1,18 @@
-export {
-  action,
-  model,
-  type Action,
-  type Actor,
-  type Model,
-  type Persisted,
-  type Register,
-  type Value,
-} from "./model.ts";
-export { cached, clock, port, provide, type Clock, type Port, type Provider } from "./port.ts";
-export { alwaysAllow, immutable, rule, type Rule } from "./rule.ts";
-export {
-  actionRules,
-  modelRules,
-  plan,
-  type ActionRules,
-  type InputFailure,
-  type LoadFailure,
-  type ModelRules,
-} from "./rules.ts";
-export { ruleset, type PlannedRule, type Ruleset } from "./ruleset.ts";
+export { action, type Action } from "./definition/action.ts";
+export type { Actor, Register } from "./definition/actor.ts";
+export { model, type Model, type Persisted, type Value } from "./definition/model.ts";
+export { clock, type Clock } from "./port/clock.ts";
+export { cached, port, type Port } from "./port/port.ts";
+export { provide, type Provider } from "./port/provider.ts";
+export { alwaysAllow, immutable } from "./pipeline/builtin-rules.ts";
+export { rule, type Rule } from "./pipeline/rule.ts";
+export { ruleset, type PlannedRule, type Ruleset } from "./pipeline/ruleset.ts";
+export { actor, and, changed, describe, next, not, onCreate, or, pre } from "./pipeline/when/builders.ts";
+export { always } from "./pipeline/when/step.ts";
+export { type When, type WhenDescription } from "./pipeline/when/when.ts";
+export { open, type Decision, type Deletable, type Persistable } from "./method/seal.ts";
+export type { InputFailure } from "./method/validate.ts";
+export { actionRules, type ActionRules } from "./rule-set/action-rules.ts";
+export { modelRules, type LoadFailure, type ModelRules } from "./rule-set/model-rules.ts";
+export { plan } from "./rule-set/rule-set.ts";
 export { bind, type Bound } from "./bind.ts";
-export { open, type Decision, type Deletable, type Persistable } from "./seal.ts";
-export {
-  actor,
-  always,
-  and,
-  changed,
-  describe,
-  next,
-  not,
-  onCreate,
-  or,
-  pre,
-  type When,
-  type WhenDescription,
-} from "./when.ts";

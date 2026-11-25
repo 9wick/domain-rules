@@ -1,25 +1,21 @@
-import { Result } from "@praha/byethrow";
+import type { Actor } from "../definition/actor.ts";
+import type { DeleteState, Model, Persisted, SaveState, Value } from "../definition/model.ts";
+import type { BindCtx } from "../method/context.ts";
 import {
-  actionMethods,
   createMethod,
   deleteMethod,
   updateMethod,
   upsertMethod,
-  type BindCtx,
   type CreateMethod,
-  type DecideMethod,
   type DeleteRun,
-  type InputFailure,
   type LoadFailureOf,
   type SaveRun,
-} from "./methods.ts";
-import type { Action, Actor, DecideState, DeleteState, Model, Persisted, SaveState, Value } from "./model.ts";
-import type { AnyPort, Port, PortArgs, PortError, PortValue } from "./port.ts";
-import type { Decider, PlannedRule, RulesetError, RulesetOut, RunnableRuleset, RulesetPorts } from "./ruleset.ts";
+} from "../method/model-methods.ts";
+import type { PlannedRule, RulesetError, RulesetOut, RunnableRuleset, RulesetPorts } from "../pipeline/ruleset.ts";
+import type { AnyPort, Port, PortArgs, PortError, PortValue } from "../port/port.ts";
 
 type ActorOf<S> = S extends { readonly actor: infer A } ? A : never;
 
-export type { InputFailure };
 export type LoadFailure<L> = LoadFailureOf<PortError<L>>;
 
 export type Existing<L> = [L] extends [never] ? never : Exclude<PortValue<L>, null>;
@@ -52,12 +48,14 @@ type PersistedGuard<M extends Model, End> = [End] extends [never]
     : { readonly "最後の next が永続化の型にならない": End extends { readonly next: infer X } ? X : never };
 
 export type AnyRunnable = RunnableRuleset<never, unknown, unknown, string>;
-export type AnyDecider = Decider<never, unknown, unknown, string>;
 
 declare const setPorts: unique symbol;
 
+// model の rule の組が使う port の名前
+export type ModelRulesPorts<S> = S extends { readonly [setPorts]: infer PN } ? PN : never;
+
 type Methods<Ms> = (ctx: BindCtx) => Ms;
-type Plans = { readonly save?: readonly PlannedRule[]; readonly delete?: readonly PlannedRule[] };
+export type Plans = { readonly save?: readonly PlannedRule[]; readonly delete?: readonly PlannedRule[] };
 
 // bind に渡せる model の rule の組。メソッドの型 Ms は、load・save・delete を書くたびに、書いたものから決まる
 export type ModelRules<N extends string = string, Ms = unknown, PN extends string = string> = {
@@ -225,61 +223,5 @@ export class ModelRulesLoaded<
 
 export const modelRules = <N extends string, In, Out, P>(m: Model<N, In, Out, P>): ModelRulesStart<N, In, Out, P> =>
   new ModelRulesStart(m);
-
-export type ActionRules<A extends Action = Action, Rs extends AnyDecider = AnyDecider, Ms = unknown> = {
-  readonly kind: "actionRules";
-  readonly name: A["name"];
-  readonly action: A;
-  readonly rules: Rs;
-  readonly resolveIn: (ctx: BindCtx) => Ms;
-};
-
-type Decided<End extends { readonly actor: unknown }, T> = { readonly value: T; readonly actor: End["actor"] };
-
-const actorOf = <X extends { readonly actor: unknown }>(x: X): X["actor"] => x.actor;
-
-// output は線路の最後の step で、最後の状態から返す値を組み立てる
-export function actionRules<N extends string, In, Out, D, E, PN extends string, T>(
-  a: Action<N, In, Out>,
-  def: {
-    readonly rules: RunnableRuleset<DecideState<Out>, D, E, PN>;
-    readonly output: (s: DecideState<Out> & D) => T;
-  },
-): ActionRules<
-  Action<N, In, Out>,
-  Decider<DecideState<Out>, Decided<DecideState<Out> & D, T>, E, PN>,
-  { readonly decide: DecideMethod<N, In, Out, T, (DecideState<Out> & D)["actor"], E> }
-> {
-  const { rules, output } = def;
-  const decided: Decider<DecideState<Out>, Decided<DecideState<Out> & D, T>, E, PN> = {
-    ...rules,
-    run: async (s, call) => {
-      const r = await rules.run(s, call);
-      return Result.isFailure(r) ? r : Result.succeed({ value: output(r.value), actor: actorOf(r.value) });
-    },
-  };
-  return Object.freeze({
-    kind: "actionRules",
-    name: a.name,
-    action: a,
-    rules: Object.freeze(decided),
-    resolveIn: (ctx: BindCtx) =>
-      actionMethods<N, In, Out, T, (DecideState<Out> & D)["actor"], E>(ctx, a.input, decided),
-  });
-}
-
-export type RuleSet = ModelRules | ActionRules;
-
-export type RuleSetPorts<S> = S extends { readonly kind: "modelRules"; readonly [setPorts]: infer PN }
-  ? PN
-  : S extends { readonly kind: "actionRules"; readonly rules: infer Rs }
-    ? RulesetPorts<Rs>
-    : never;
-
-export function plan(set: ModelRules): Plans;
-export function plan(set: ActionRules): { readonly rules: readonly PlannedRule[] };
-export function plan(set: RuleSet) {
-  return set.kind === "actionRules" ? { rules: set.rules.plan } : set.plans;
-}
 
 export type { Actor };

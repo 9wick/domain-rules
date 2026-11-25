@@ -1,29 +1,6 @@
 import type { StandardSchemaV1 } from "@standard-schema/spec";
-import type { TrackKind } from "./when.ts";
-
-// アプリケーションが module augmentation で actor の型を登録する
-export interface Register {}
-export type Actor = Register extends { actor: infer A } ? A : unknown;
-
-declare const trackState: unique symbol;
-
-// rule をどの線路に置くかと、その線路で rule が受け取る状態の型を表す
-export class Track<K extends TrackKind, T extends string, S> {
-  declare readonly [trackState]: S;
-  readonly kind: K;
-  readonly target: T;
-
-  constructor(kind: K, target: T) {
-    this.kind = kind;
-    this.target = target;
-    Object.freeze(this);
-  }
-
-  // 前の rule が昇格させた状態を前提にする
-  assuming<R>(): Track<K, T, S & R> {
-    return new Track<K, T, S & R>(this.kind, this.target);
-  }
-}
+import type { Actor } from "./actor.ts";
+import { Track } from "./track.ts";
 
 // 項目ごとの schema。更新のときは、入力にある項目だけをその項目の schema で検証する
 export type Entries<Out> = { readonly [K in keyof Out]-?: StandardSchemaV1<unknown, Out[K]> };
@@ -70,24 +47,4 @@ export const model = <const N extends string, In, Out, P>(def: {
     schema: def.schema,
     onSave: new Track<"save", N, SaveState<P | null, Out>>("save", def.name),
     onDelete: new Track<"delete", N, DeleteState<P>>("delete", def.name),
-  });
-
-export type Action<N extends string = string, In = unknown, Out = unknown> = {
-  readonly kind: "action";
-  readonly name: N;
-  readonly input: StandardSchemaV1<In, Out>;
-  readonly onDecide: Track<"decide", N, DecideState<Out>>;
-};
-
-export type DecideState<I> = { readonly input: I; readonly actor: Actor; readonly now: number };
-
-export const action = <const N extends string, In, Out>(def: {
-  readonly name: N;
-  readonly input: StandardSchemaV1<In, Out>;
-}): Action<N, In, Out> =>
-  Object.freeze({
-    kind: "action",
-    name: def.name,
-    input: def.input,
-    onDecide: new Track<"decide", N, DecideState<Out>>("decide", def.name),
   });

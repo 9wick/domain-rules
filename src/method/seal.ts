@@ -1,5 +1,7 @@
-import type { Action, Actor, Model, Persisted } from "./model.ts";
-import { Panic } from "./panic.ts";
+import type { Action } from "../definition/action.ts";
+import type { Actor } from "../definition/actor.ts";
+import type { Model, Persisted } from "../definition/model.ts";
+import { Panic } from "../shared/panic.ts";
 
 declare const sealedAs: unique symbol;
 

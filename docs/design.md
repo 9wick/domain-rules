@@ -37,6 +37,20 @@
 | `provide`     | ポートへの実装の割り当て                        | 実装関数または固定値 (`provide.value`)               |
 | `bind`        | ルール定義とプロバイダーを結合し実行 API を生成 | —                                                    |
 
+### ソースの構成
+
+`src/` は部品の層ごとにディレクトリを分け、import は下の層から上の層への一方向だけにします。公開する API は `src/index.ts` にまとめます。
+
+| ディレクトリ  | 内容                                                                              |
+| ------------- | --------------------------------------------------------------------------------- |
+| `shared/`     | どの層からも使う部品(`Panic`、名前の重複を弾く型)                                 |
+| `definition/` | `model` / `action` と、ルールを置く線路 (`Track`)、`actor` の型                   |
+| `port/`       | `port` / `cached`、`clock`、`provide`、1 回の呼び出し (`Invocation`)              |
+| `pipeline/`   | `when`、`rule`、組み込みルール、`ruleset`                                         |
+| `method/`     | 入力の検証、`create` / `update` / `delete` / `decide` の実装、封をした値と `open` |
+| `rule-set/`   | `modelRules` / `actionRules` と `plan`                                            |
+| `bind.ts`     | ルール定義とプロバイダーを結合する                                                |
+
 ### アプリケーション内の配置
 
 | レイヤー      | 配置場所                             | 役割                                                                                   |
