@@ -14,5 +14,5 @@ export type { InputFailure } from "./method/validate.ts";
 export { actionRules, type ActionRules } from "./rule-set/action-rules.ts";
 export { modelRules, type LoadFailure, type ModelRules } from "./rule-set/model-rules.ts";
 export { plan } from "./rule-set/rule-set.ts";
-export { bind, type Bound } from "./bind.ts";
-export { domain, type DomainTypes } from "./domain.ts";
+export { bind, type Domain } from "./bind.ts";
+export { domainDefinitionKit, type DomainTypes } from "./domain-definition-kit.ts";
