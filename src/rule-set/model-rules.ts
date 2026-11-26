@@ -14,10 +14,16 @@ import {
   type LoadRun,
   type SaveRun,
 } from "../method/model-methods.ts";
-import { resolvePorts, unwrapPorts, type PortFns, type Requires, type StrictRecord } from "../pipeline/requires.ts";
-import type { Checked, CheckTools, FailureOf, SuccessOf } from "../pipeline/rule.ts";
-import type { PlannedRule, RulesetError, RulesetOut, RunnableRuleset, RulesetPorts } from "../pipeline/ruleset.ts";
-import { safeTryWith } from "../pipeline/safe-try.ts";
+import { withPorts, type CheckTools, type PortFns, type Requires, type StrictRecord } from "../pipeline/requires.ts";
+import type { Checked, FailureOf, SuccessOf } from "../pipeline/rule.ts";
+import type {
+  PlannedRule,
+  portNames,
+  RulesetError,
+  RulesetOut,
+  RunnableRuleset,
+  RulesetPorts,
+} from "../pipeline/ruleset.ts";
 import type { AnyPort, NoPorts, PortNames } from "../port/port.ts";
 import type { Invocation } from "../port/invocation.ts";
 
@@ -41,10 +47,8 @@ const loadRun = <KO extends { readonly id?: unknown }, Act, Q extends Requires, 
 ): LoadRun<KO, Act, Pre, LE> => {
   const fetch: (args: Args<LoadInput<KO>, Act>, ports: PortFns<Q>, tools: CheckTools<Q>) => Checked<Pre, LE> =
     def.fetch;
-  return {
-    run: async (args, invocation: Invocation): Promise<Result.Result<Pre, LE>> =>
-      fetch(args, resolvePorts(requires, invocation), { safeTry: safeTryWith(unwrapPorts(requires, invocation)) }),
-  };
+  const step = withPorts(requires, fetch);
+  return { run: async (args, invocation: Invocation): Promise<Result.Result<Pre, LE>> => step(args, invocation) };
 };
 
 // 保存の線路の最後の状態は、next が永続化の型になっていなければならない
@@ -62,11 +66,6 @@ type ReparseGuard<VI, VO> = [VO] extends [VI]
 // update と delete は id で既存の値を指すので、load を書くには key の schema に id が要る
 type KeyHasId<KO> = "id" extends keyof KO ? unknown : { readonly "key の schema に id が要る": never };
 
-declare const setPorts: unique symbol;
-
-// model の rule の組が使う port の名前
-export type ModelRulesPorts<S> = S extends { readonly [setPorts]: infer PN } ? PN : never;
-
 type Methods<Ms> = (ctx: BindCtx) => Ms;
 export type PlannedLoad = { readonly ports: readonly string[] };
 export type Plans = {
@@ -75,12 +74,31 @@ export type Plans = {
   readonly delete?: readonly PlannedRule[];
 };
 
+// 書いた load・save・delete。plan と ports はこれだけから作り、別々に積み上げない
+type Parts = {
+  readonly load?: { readonly ports: readonly AnyPort[] };
+  readonly save?: { readonly plan: readonly PlannedRule[]; readonly ports: readonly AnyPort[] };
+  readonly delete?: { readonly plan: readonly PlannedRule[]; readonly ports: readonly AnyPort[] };
+};
+
+const planOf = ({ load, save, delete: del }: Parts): Plans => ({
+  ...(load === undefined ? {} : { load: { ports: load.ports.map((p) => p.name) } }),
+  ...(save === undefined ? {} : { save: save.plan }),
+  ...(del === undefined ? {} : { delete: del.plan }),
+});
+
+const portsOf = ({ load, save, delete: del }: Parts): readonly AnyPort[] => [
+  ...(load?.ports ?? []),
+  ...(save?.ports ?? []),
+  ...(del?.ports ?? []),
+];
+
 // bind に渡せる model の rule の組。メソッドの型 Ms は、load・save・delete を書くたびに、書いたものから決まる
 export type ModelRules<N extends string = string, Ms = unknown, PN extends string = string> = {
-  readonly [setPorts]: PN;
+  readonly [portNames]: PN;
   readonly kind: "modelRules";
   readonly name: N;
-  readonly plans: Plans;
+  readonly plan: Plans;
   readonly ports: readonly AnyPort[];
   readonly resolveIn: Methods<Ms>;
 };
@@ -89,17 +107,17 @@ type CreateStart<Out, Act> = SaveState<null, Out, Act>;
 
 // これ以上メソッドを足せない rule の組
 class ModelRulesDone<N extends string, Ms, PN extends string> implements ModelRules<N, Ms, PN> {
-  declare readonly [setPorts]: PN;
+  declare readonly [portNames]: PN;
   readonly kind = "modelRules";
   readonly name: N;
-  readonly plans: Plans;
+  readonly plan: Plans;
   readonly ports: readonly AnyPort[];
   readonly resolveIn: Methods<Ms>;
 
-  constructor(name: N, plans: Plans, ports: readonly AnyPort[], resolveIn: Methods<Ms>) {
+  constructor(name: N, parts: Parts, resolveIn: Methods<Ms>) {
     this.name = name;
-    this.plans = plans;
-    this.ports = ports;
+    this.plan = planOf(parts);
+    this.ports = portsOf(parts);
     this.resolveIn = resolveIn;
     Object.freeze(this);
   }
@@ -107,11 +125,11 @@ class ModelRulesDone<N extends string, Ms, PN extends string> implements ModelRu
 
 // load を書く前の rule の組。load を書かずに save を書くと、create だけを持つ
 export class ModelRulesStart<N extends string, KI, KO, VI, VO, P, Act> implements ModelRules<N, {}, never> {
-  declare readonly [setPorts]: never;
+  declare readonly [portNames]: never;
   readonly kind = "modelRules";
   readonly name: N;
   readonly model: Model<N, KI, KO, VI, VO, P, Act>;
-  readonly plans: Plans = {};
+  readonly plan: Plans = {};
   readonly ports: readonly AnyPort[] = [];
   readonly resolveIn: Methods<{}> = () => Object.freeze({});
 
@@ -136,12 +154,10 @@ export class ModelRulesStart<N extends string, KI, KO, VI, VO, P, Act> implement
     def: LoadDef<O, Act, Q, R, Pre, LE> & KeyHasId<O>,
   ): ModelRulesLoaded<N, KI, O, VI, VO, P, Act, Pre, LE, PortNames<Q>, {}> {
     const requires: Q = getOrEmpty<"requires", Q & StrictRecord<Q>>(def, "requires");
-    const ports: readonly AnyPort[] = Object.values(requires);
     return new ModelRulesLoaded<N, KI, O, VI, VO, P, Act, Pre, LE, PortNames<Q>, {}>(
       this.model,
       loadRun<O, Act, Q, R, Pre, LE>(def, requires),
-      { load: { ports: ports.map((p) => p.name) } },
-      ports,
+      { load: { ports: Object.values(requires) } },
       this.resolveIn,
     );
   }
@@ -157,9 +173,7 @@ export class ModelRulesStart<N extends string, KI, KO, VI, VO, P, Act> implement
       SaveRun<never, NoInfer<ValueOf<KO, VO>>, NoInfer<P>, NoInfer<Act>, NoInfer<SA>, NoInfer<SE>>,
   ): ModelRulesDone<N, { readonly create: CreateMethod<N, KI, KO, VI, VO, P, Act, SA, SE> }, RulesetPorts<Save>> {
     const create = createMethod<N, KI, KO, VI, VO, P, Act, SA, SE>(this.model, rules);
-    return new ModelRulesDone(this.name, { save: rules.plan }, rules.ports, (ctx: BindCtx) =>
-      Object.freeze({ create: create(ctx) }),
-    );
+    return new ModelRulesDone(this.name, { save: rules }, (ctx: BindCtx) => Object.freeze({ create: create(ctx) }));
   }
 }
 
@@ -177,27 +191,28 @@ export class ModelRulesLoaded<
   PN extends string,
   Ms,
 > implements ModelRules<N, Ms, PN> {
-  declare readonly [setPorts]: PN;
+  declare readonly [portNames]: PN;
   readonly kind = "modelRules";
   readonly name: N;
   readonly model: Model<N, KI, KO, VI, VO, P, Act>;
   readonly load: LoadRun<KO, Act, Pre, LE>;
-  readonly plans: Plans;
+  readonly plan: Plans;
   readonly ports: readonly AnyPort[];
   readonly resolveIn: Methods<Ms>;
+  readonly #parts: Parts;
 
   constructor(
     model: Model<N, KI, KO, VI, VO, P, Act>,
     load: LoadRun<KO, Act, Pre, LE>,
-    plans: Plans,
-    ports: readonly AnyPort[],
+    parts: Parts,
     resolveIn: Methods<Ms>,
   ) {
     this.name = model.name;
     this.model = model;
     this.load = load;
-    this.plans = plans;
-    this.ports = ports;
+    this.#parts = parts;
+    this.plan = planOf(parts);
+    this.ports = portsOf(parts);
     this.resolveIn = resolveIn;
     Object.freeze(this);
   }
@@ -237,7 +252,7 @@ export class ModelRulesLoaded<
       LE,
       PN | RulesetPorts<Save>,
       ReturnType<typeof methods>
-    >(model, load, { ...this.plans, save: rules.plan }, [...this.ports, ...rules.ports], methods);
+    >(model, load, { ...this.#parts, save: rules }, methods);
     function methods(ctx: BindCtx) {
       return Object.freeze({ ...resolveIn(ctx), create: create(ctx), update: update(ctx), upsert: upsert(ctx) });
     }
@@ -256,8 +271,7 @@ export class ModelRulesLoaded<
     return new ModelRulesLoaded<N, KI, KO, VI, VO, P, Act, Pre, LE, PN | RulesetPorts<Del>, ReturnType<typeof methods>>(
       model,
       load,
-      { ...this.plans, delete: rules.plan },
-      [...this.ports, ...rules.ports],
+      { ...this.#parts, delete: rules },
       methods,
     );
     function methods(ctx: BindCtx) {

@@ -1,18 +1,11 @@
-import type { PlannedRule, RulesetPorts } from "../pipeline/ruleset.ts";
-import type { ActionRules } from "./action-rules.ts";
-import type { ModelRules, ModelRulesPorts, Plans } from "./model-rules.ts";
+import type { ActionPlan, ActionRules } from "./action-rules.ts";
+import type { ModelRules, Plans } from "./model-rules.ts";
 
-// bind に渡せる rule の組
+// bind に渡せる rule の組。どちらも name・plan・ports・resolveIn を同じ形で持つ
 export type RuleSet = ModelRules | ActionRules;
 
-export type RuleSetPorts<S> = S extends { readonly kind: "modelRules" }
-  ? ModelRulesPorts<S>
-  : S extends { readonly kind: "actionRules"; readonly rules: infer Rs }
-    ? RulesetPorts<Rs>
-    : never;
-
 export function plan(set: ModelRules): Plans;
-export function plan(set: ActionRules): { readonly rules: readonly PlannedRule[] };
+export function plan(set: ActionRules): ActionPlan;
 export function plan(set: RuleSet) {
-  return set.kind === "actionRules" ? { rules: set.rules.plan } : set.plans;
+  return set.plan;
 }

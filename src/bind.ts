@@ -4,11 +4,12 @@ import type { BindCtx } from "./method/context.ts";
 import { clock } from "./port/clock.ts";
 import type { Invocation } from "./port/invocation.ts";
 import type { Provider } from "./port/provider.ts";
-import type { RuleSet, RuleSetPorts } from "./rule-set/rule-set.ts";
+import type { RulesetPorts } from "./pipeline/ruleset.ts";
+import type { RuleSet } from "./rule-set/rule-set.ts";
 import { Panic } from "./shared/panic.ts";
 import type { UniqueNames } from "./shared/unique-names.ts";
 
-type RequiredPorts<Sets extends readonly RuleSet[]> = RuleSetPorts<Sets[number]> | "clock";
+type RequiredPorts<Sets extends readonly RuleSet[]> = RulesetPorts<Sets[number]> | "clock";
 type MissingProviders<Sets extends readonly RuleSet[], Ps extends readonly Provider[]> = Exclude<
   RequiredPorts<Sets>,
   Ps[number]["name"]
@@ -42,8 +43,7 @@ export function bind<const Sets extends readonly RuleSet[], const Ps extends rea
 
 const requiredPorts = (
   set: RuleSet,
-): readonly { readonly name: string; readonly providedIn: (scope: object) => boolean }[] =>
-  set.kind === "modelRules" ? [clock, ...set.ports] : [clock, ...set.rules.ports];
+): readonly { readonly name: string; readonly providedIn: (scope: object) => boolean }[] => [clock, ...set.ports];
 
 const invocation = (scope: object): Invocation => {
   const now = clock.nowIn(scope);
