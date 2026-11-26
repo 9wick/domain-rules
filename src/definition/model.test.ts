@@ -3,7 +3,8 @@ import { expect, test } from "vite-plus/test";
 import { defineModel } from "./model.ts";
 
 const schema = {
-  input: v.object({ id: v.optional(v.string()), n: v.number() }),
+  key: v.object({ id: v.optional(v.string()) }),
+  value: v.object({ n: v.number() }),
   persisted: v.object({ id: v.string(), n: v.number() }),
 };
 
