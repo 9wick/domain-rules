@@ -88,14 +88,15 @@ export type ExistingArticle = Omit<Article, "id"> & { id: ArticleIdExisted }; //
 
 ルールを定義するときは、第 1 引数に「どの対象・どの操作フェーズのルールか」を表す値を渡します。パイプラインを流れる初期状態の型はフェーズごとに異なります。
 
-| 操作フェーズ     | 指定する値                | 初期状態の型                                               |
-| ---------------- | ------------------------- | ---------------------------------------------------------- |
-| モデルの保存     | `article.onSave`          | `{ pre: Article \| null, next: ArticleValue, actor, now }` |
-| モデルの削除     | `article.onDelete`        | `{ pre: Article, next: null, actor, now }`                 |
-| アクションの判定 | `previewArticle.onDecide` | `{ input, actor, now }`                                    |
+| 操作フェーズ     | 指定する値                | 初期状態の型                                                      |
+| ---------------- | ------------------------- | ----------------------------------------------------------------- |
+| モデルの保存     | `article.onSave`          | `{ pre: Article \| null, next: ArticleValue, input, actor, now }` |
+| モデルの削除     | `article.onDelete`        | `{ pre: Article, next: null, actor, now }`                        |
+| アクションの判定 | `previewArticle.onDecide` | `{ input, actor, now }`                                           |
 
 - **`pre`**: DB から読み込んだ既存の値（`load` の `fetch` が成功として返した値）。新規作成時は `null` です。ルール定義時点では `load` が未定のため、`pre` の型は `Persisted<M>` になります。`fetch` のより具体的な返り値型（例: `ExistingArticle`）を前提としたい場合は `.assuming<...>()` を付け、パイプラインの先頭に配置します（開始状態がその型を満たすかを `modelRules` が検査します）。
 - **`next`**: 変更後の値。更新時は既存値に入力値をマージしたオブジェクトです（型は `ArticleValue` ですが、入力で省略されたフィールドには既存値が引き継がれます）。
+- **`input`**（保存のみ）: 呼び出し時に指定した項目だけを持つ、検証済みの入力（`Partial<ArticleValue>`）。`next` が既存値と同じでも、その項目を指定したかどうかは `input` で分かります。新規作成時は入力全体です。ルールは `input` を書き換えられません（`check` が `input` を返すと `ruleset.add()` で型エラーになります）。
 - **`now`**: 呼び出し開始時の時刻（`clock` プロバイダーが返す数値）。1 回の実行中は固定値です。
 
 ### 前段ルールの型昇格を前提にする (`assuming`)
@@ -241,21 +242,23 @@ export const isApproved = (a: ArticleValue) => a.approvedAt !== null;
 
 ### 組み込みの `when` ビルダー
 
-| 用途                                                         | 書き方                                                                                | 利用できるフェーズ   |
-| ------------------------------------------------------------ | ------------------------------------------------------------------------------------- | -------------------- |
-| 常に適用する                                                 | `always`                                                                              | すべて               |
-| 新規作成時のみ                                               | `onCreate`                                                                            | `onSave`             |
-| フィールドが変化したとき（新規作成時も含む）                 | `changed("slug")`                                                                     | `onSave`             |
-| 指定値から別の値へ変化したとき（新規作成時は除外）           | `changed("status", { pre: "DRAFT" })`                                                 | `onSave`             |
-| 指定値へ変化したとき（新規作成時にその値で始まる場合も含む） | `changed("status", { next: "PUBLISHED" })`                                            | `onSave`             |
-| 指定値から指定値へ変化したとき                               | `changed("status", { pre: "DRAFT", next: "PUBLISHED" })`                              | `onSave`             |
-| 変更後の値が述語を満たすとき                                 | `next(isPublished)`                                                                   | `onSave`             |
-| 既存の値が述語を満たすとき（新規作成時は除外）               | `pre(isDraft)`                                                                        | `onSave`, `onDelete` |
-| 操作者 (`actor`) が述語を満たすとき                          | `actor(isAdmin)`、`actor((a, s: { next: ArticleValue }) => a.id === s.next.authorId)` | すべて               |
-| 論理演算での合成                                             | `and(...)`、`or(...)`、`not(...)`                                                     | すべて               |
-| カスタム条件関数                                             | `(s) => boolean`                                                                      | すべて               |
+| 用途                                                              | 書き方                                                                                | 利用できるフェーズ   |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------- | -------------------- |
+| 常に適用する                                                      | `always`                                                                              | すべて               |
+| 新規作成時のみ                                                    | `onCreate`                                                                            | `onSave`             |
+| フィールドが変化したとき（新規作成時も含む）                      | `changed("slug")`                                                                     | `onSave`             |
+| 指定値から別の値へ変化したとき（新規作成時は除外）                | `changed("status", { pre: "DRAFT" })`                                                 | `onSave`             |
+| 指定値へ変化したとき（新規作成時にその値で始まる場合も含む）      | `changed("status", { next: "PUBLISHED" })`                                            | `onSave`             |
+| 指定値から指定値へ変化したとき                                    | `changed("status", { pre: "DRAFT", next: "PUBLISHED" })`                              | `onSave`             |
+| 呼び出し時にフィールドを指定したとき（値が同じでも、`null` でも） | `given("serial")`                                                                     | `onSave`             |
+| 変更後の値が述語を満たすとき                                      | `next(isPublished)`                                                                   | `onSave`             |
+| 既存の値が述語を満たすとき（新規作成時は除外）                    | `pre(isDraft)`                                                                        | `onSave`, `onDelete` |
+| 操作者 (`actor`) が述語を満たすとき                               | `actor(isAdmin)`、`actor((a, s: { next: ArticleValue }) => a.id === s.next.authorId)` | すべて               |
+| 論理演算での合成                                                  | `and(...)`、`or(...)`、`not(...)`                                                     | すべて               |
+| カスタム条件関数                                                  | `(s) => boolean`                                                                      | すべて               |
 
 - 使えないフェーズや存在しないフィールド名を指定すると、コンパイルエラーになります。
+- `changed` は値の変化を、`given` は「その項目を更新する」という呼び出し側の意思を見ます。既存値と同じ値を指定したとき、`changed` は偽、`given` は真です。「未設定のときだけ設定できる」のように、同じ値での指定も弾きたいルールには `given` を使います。
 - `actor` 述語の第 2 引数（状態 `s`）は型推論できないため、参照する場合は上記のように型注釈を書きます。
 - `changed` の変化判定および `immutable` の比較は `Object.is` で行います。配列やオブジェクトのフィールドは、中身が同じでも別参照なら「変化した」とみなされます。複数フィールドにまたがる条件は `pre(述語)` と `next(述語)` を `and` 等で組み合わせてください。
 - `when` には `{ kind: "changed", ... }` のようなメタデータが付与され、`plan()` で構造を可視化できます。手書きの関数にも `describe("公開済みの記事", (s) => ...)` で説明を付けられます。

@@ -17,11 +17,14 @@ type Narrowing<S, O> = {
       ? S[K]
       : unknown;
 };
-// 状態の項目は、より狭い型にだけ変えられる。別の型に置き換えると、重ねた状態の型と実際の値がずれる
+// 状態の項目は、より狭い型にだけ変えられる。別の型に置き換えると、重ねた状態の型と実際の値がずれる。
+// input は呼び出し時の意思なので変えさせない。Partial なので、狭めたつもりの値で項目が消えても型では気づけない
 type NarrowGuard<S, O> = [O] extends [object]
-  ? O extends Narrowing<S, O>
-    ? unknown
-    : { readonly 状態の項目を別の型に置き換えている: O }
+  ? "input" extends keyof O
+    ? { readonly 呼び出し時の入力は変えられない: O }
+    : O extends Narrowing<S, O>
+      ? unknown
+      : { readonly 状態の項目を別の型に置き換えている: O }
   : unknown;
 
 export type StepFailure<N, E> = { readonly step: N; readonly error: E };

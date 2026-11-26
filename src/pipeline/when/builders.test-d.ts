@@ -1,6 +1,7 @@
 import { expectTypeOf, test } from "vite-plus/test";
+import type { SaveState } from "../../definition/model.ts";
 import type { When } from "./when.ts";
-import { actor, and, changed, next, pre } from "./builders.ts";
+import { actor, and, changed, given, next, pre } from "./builders.ts";
 
 type Item = { readonly status: string };
 
@@ -27,4 +28,14 @@ test("actor の型は述語の引数から決まり、状態の actor に求め�
   admin({ actor: { role: "ADMIN" } });
   // @ts-expect-error actor の型が述語の引数と合わない
   admin({ actor: { name: "x" } });
+});
+
+test("given は保存の線路だけで使え、next にない項目名は型エラー", () => {
+  type Saving = SaveState<Item | null, Item, unknown>;
+  const status: When<"save", Saving> = given("status");
+  // @ts-expect-error given は削除の線路で使えない
+  const onDelete: When<"delete", Saving> = given("status");
+  // @ts-expect-error title は Item にない
+  const unknownField: When<"save", Saving> = given("title");
+  expectTypeOf([status, onDelete, unknownField]).not.toBeNever();
 });

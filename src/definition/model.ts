@@ -14,9 +14,11 @@ export type Model<N extends string = string, In = unknown, Out = unknown, P = un
   readonly onDelete: Track<"delete", N, DeleteState<P, Act>>;
 };
 
+// input は呼び出し時に指定した項目だけを持つ。next と同じ値でも、指定したことは input でしか分からない
 export type SaveState<Pre, Next, Act> = {
   readonly pre: Pre;
   readonly next: Next;
+  readonly input: Readonly<Partial<Next>>;
   readonly actor: Act;
   readonly now: number;
 };
