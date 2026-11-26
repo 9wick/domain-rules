@@ -17,8 +17,8 @@ import type { WhenParam } from "./when/when.ts";
 
 export type Checked<V, E> = Result.Result<V, E> | Promise<Result.Result<V, E>>;
 export type CheckResult = Checked<unknown, unknown>;
-type SuccessOf<R> = Awaited<R> extends infer X ? (X extends Result.Success<infer V> ? V : never) : never;
-type FailureOf<R> = Awaited<R> extends infer X ? (X extends Result.Failure<infer E> ? E : never) : never;
+export type SuccessOf<R> = Awaited<R> extends infer X ? (X extends Result.Success<infer V> ? V : never) : never;
+export type FailureOf<R> = Awaited<R> extends infer X ? (X extends Result.Failure<infer E> ? E : never) : never;
 
 // check の第3引数。port の Result を if で取り出す代わりに、yield* で取り出して書くための道具
 export type CheckTools<P extends Requires> = { readonly safeTry: SafeTry<UnwrappedPortFns<P>> };
