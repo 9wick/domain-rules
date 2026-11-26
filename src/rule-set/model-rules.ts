@@ -54,6 +54,11 @@ type PersistedGuard<M extends Model, End> = [End] extends [never]
     ? unknown
     : { readonly "最後の next が永続化の型にならない": End extends { readonly next: infer X } ? X : never };
 
+// update は重ねた next をもう一度 schema に通すので、schema はモデルの値もそのまま受け付けなければならない
+type ReparseGuard<In, Out> = [Out] extends [In]
+  ? unknown
+  : { readonly "update で next を schema に通すため、schema.input はモデルの値も受け付けなければならない": Out };
+
 declare const setPorts: unique symbol;
 
 // model の rule の組が使う port の名前
@@ -200,6 +205,7 @@ export class ModelRulesLoaded<
     this: ModelRulesLoaded<N, In, Out, P, Act, Pre, LE, PN, Ms & { readonly create?: never }>,
     rules: Save &
       PersistedGuard<Model<N, In, Out, P, Act>, SaveState<Pre | null, Out, Act> & RulesetOut<NoInfer<Save>>> &
+      ReparseGuard<In, Out> &
       SaveRun<NoInfer<Pre>, NoInfer<Out>, NoInfer<P>, NoInfer<Act>, NoInfer<SA>, NoInfer<SE>>,
   ) {
     const { model, load, resolveIn } = this;

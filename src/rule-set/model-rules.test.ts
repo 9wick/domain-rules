@@ -116,17 +116,21 @@ test("fetch も rule の check と同じく、safeTry で port の失敗を止�
   });
 });
 
-test("入力の文字列を schema で Date に変換すれば、Date の項目を持つ model にも load を書ける", async () => {
+test("文字列を Date に変換し、Date もそのまま受け付ける schema なら、Date の項目を持つ model を更新できる", async () => {
   const appointment = defineModel<Operator>()({
     name: "appointment",
     schema: {
       input: v.object({
         id: v.optional(v.string()),
-        date: v.pipe(
-          v.string(),
-          v.isoTimestamp(),
-          v.transform((s) => new Date(s)),
-        ),
+        // update では重ねた next をもう一度通すので、変換後の Date も受け付ける
+        date: v.union([
+          v.date(),
+          v.pipe(
+            v.string(),
+            v.isoTimestamp(),
+            v.transform((s) => new Date(s)),
+          ),
+        ]),
       }),
       persisted: v.object({ id: v.string(), date: v.date() }),
     },

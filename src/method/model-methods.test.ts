@@ -139,7 +139,7 @@ describe("update", () => {
     const numbered = defineModel<Operator>()({
       name: "numbered",
       schema: {
-        input: v.object({ id: v.optional(v.pipe(v.string(), v.transform(Number))) }),
+        input: v.object({ id: v.optional(v.union([v.number(), v.pipe(v.string(), v.transform(Number))])) }),
         persisted: v.object({ id: v.number() }),
       },
     });
@@ -154,6 +154,58 @@ describe("update", () => {
       actor: operator,
     });
     expect(open(Result.unwrap(r)).pre.id).toBe(42);
+  });
+});
+
+describe("項目をまたぐ検証", () => {
+  type Range = { id: string; from: number; to: number };
+  type RangeValue = { id?: string | undefined; from: number; to: number };
+  const ranged = defineModel<Operator>()({
+    name: "ranged",
+    schema: {
+      input: v.pipe(
+        v.object({ id: v.optional(v.string()), from: v.number(), to: v.number() }),
+        v.check((r) => r.from <= r.to, "from は to 以下"),
+      ),
+      persisted: v.object({ id: v.string(), from: v.number(), to: v.number() }),
+    },
+  });
+  const existing: Range = { id: "r1", from: 1, to: 5 };
+  const passThrough: SaveRun<Range, RangeValue, Range, Operator, Operator, never> = {
+    run: async (s) =>
+      Result.succeed({ next: { id: s.next.id ?? "new", from: s.next.from, to: s.next.to }, actor: s.actor }),
+  };
+  const setup = () => {
+    const load: string[] = [];
+    const find: LoadRun<RangeValue, Operator, Range, never> = {
+      run: async ({ input }) => (load.push(input.id), Result.succeed(existing)),
+    };
+    const update = updateMethod(ranged, find, passThrough)({ invocation: () => ({ scope: {}, now: 0 }) });
+    return { load, update };
+  };
+
+  test("create でも update でも、モデルの schema に書いた検証が効く", async () => {
+    const create = createMethod(ranged, passThrough)({ invocation: () => ({ scope: {}, now: 0 }) });
+    const created = await create({ input: { from: 9, to: 5 }, actor: operator });
+    // 抜粋の from だけを変えても、既存の to と重ねた next で確かめる
+    const updated = await setup().update({ input: { id: "r1", from: 9 }, actor: operator });
+    expect([Result.unwrapError(created), Result.unwrapError(updated)]).toMatchObject([
+      { step: "input", error: { issues: [{ message: "from は to 以下" }] } },
+      { step: "input", error: { issues: [{ message: "from は to 以下" }] } },
+    ]);
+  });
+
+  test("重ねた next が schema を満たせば、既存の値を引き継いで通る", async () => {
+    const r = await setup().update({ input: { id: "r1", from: 3 }, actor: operator });
+    expect(open(Result.unwrap(r)).next).toEqual({ id: "r1", from: 3, to: 5 });
+  });
+
+  test("項目単体で不正な抜粋は、既存の値を取得する前に失敗する", async () => {
+    const { load, update } = setup();
+    // @ts-expect-error 型に合わない入力を渡したときの実行時の振る舞いを確かめる
+    const r = await update({ input: { id: "r1", from: "x" }, actor: operator });
+    expect(Result.unwrapError(r)).toMatchObject({ step: "input", error: { issues: [{ path: ["from"] }] } });
+    expect(load).toEqual([]);
   });
 });
 

@@ -3,7 +3,7 @@ import type { DeleteState, Model, SaveState } from "../definition/model.ts";
 import type { Invocation } from "../port/invocation.ts";
 import type { Args, BindCtx } from "./context.ts";
 import { seal, type Deletable, type Persistable } from "./seal.ts";
-import { inputFailure, validatePartial, validateWhole, type InputFailure, type State } from "./validate.ts";
+import { checkWhole, inputFailure, validatePartial, validateWhole, type InputFailure, type State } from "./validate.ts";
 
 export type LoadFailureOf<LE> = { readonly step: "load"; readonly error: LE };
 
@@ -78,6 +78,7 @@ const createIn = async <N extends string, In, Out, P, Act, A, E>(
   );
 };
 
+// 取得の前に抜粋を項目ごとに検証し、項目単体で不正な入力では DB を引かない
 const loadExisting = async <N extends string, In, Out extends { readonly id?: unknown }, P, Act, Pre, LE>(
   ctx: BindCtx,
   model: Model<N, In, Out, P, Act>,
@@ -95,7 +96,7 @@ const loadExisting = async <N extends string, In, Out extends { readonly id?: un
   return Result.succeed({ inv, pre: pre.value, validated: validated.value });
 };
 
-// 更新では、既存の値に入力を重ねて next にする。既存の値の型は入力の型に代入できるので、重ねた値も入力の型になる
+// 更新では、既存の値に入力を重ねて next にし、create と同じくモデルの schema 全体で確かめる。既存の値の型は入力の型に代入できるので、重ねた値も入力の型になる
 const updateIn = async <N extends string, In, Out extends { readonly id?: unknown }, P, Act, Pre extends Out, LE, A, E>(
   ctx: BindCtx,
   model: Model<N, In, Out, P, Act>,
@@ -109,6 +110,8 @@ const updateIn = async <N extends string, In, Out extends { readonly id?: unknow
   const { inv, pre, validated } = existing.value;
   const base: Out = pre;
   const next: Out = { ...base, ...validated };
+  const whole = await checkWhole(model.schema.input, next);
+  if (whole.type === "Failure") return whole;
   const r = await saveWith(rules, inv, pre, next, validated, actor);
   if (r.type === "Failure") return r;
   return Result.succeed(
