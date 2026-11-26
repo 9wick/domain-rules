@@ -77,18 +77,34 @@ test("メソッドは load で読んだ既存の値から、save の線路を通
 });
 
 test("delete の線路は呼び出し時の入力を受け取り、given で指定した項目だけを確かめられる", async () => {
-  const sameN = rule(item.onDelete, {
-    name: "指定した n が既存の値と同じ",
-    when: given("n"),
-    check: ({ pre, input }) => (input.n === pre.n ? Result.succeed() : Result.fail("N_MISMATCH" as const)),
+  // delete の入力は key だけなので、id 以外の key の項目で指定の有無を確かめる
+  const owned = defineModel<Operator>()({
+    name: "owned",
+    schema: {
+      key: v.object({ id: v.optional(v.string()), owner: v.optional(v.string()) }),
+      value: v.object({ n: v.number() }),
+      persisted: v.object({ id: v.string(), owner: v.string(), n: v.number() }),
+    },
   });
-  const { delete: remove } = loaded().delete(ruleset(sameN)).resolveIn(ctxWith(stored));
+  const findOwned = port("findOwned").of<(id: string) => { id: string; owner: string; n: number }>();
+  const ownedStored = { id: "i1", owner: "alice", n: 1 };
+  const sameOwner = rule(owned.onDelete, {
+    name: "指定した owner が既存の値と同じ",
+    when: given("owner"),
+    check: ({ pre, input }) => (input.owner === pre.owner ? Result.succeed() : Result.fail("OWNER_MISMATCH" as const)),
+  });
+  const scope = {};
+  findOwned.valued(ownedStored).registerIn(scope);
+  const { delete: remove } = modelRules(owned)
+    .load({ requires: { findOwned }, fetch: ({ input }, { findOwned }) => findOwned(input.id) })
+    .delete(ruleset(sameOwner))
+    .resolveIn({ invocation: () => ({ scope, now: 0 }) });
   const unspecified = await remove({ input: { id: "i1" }, actor: operator });
-  expect(open(Result.unwrap(unspecified)).pre).toEqual(stored);
-  const matched = await remove({ input: { id: "i1", n: 1 }, actor: operator });
-  expect(open(Result.unwrap(matched)).pre).toEqual(stored);
-  const mismatched = await remove({ input: { id: "i1", n: 2 }, actor: operator });
-  expect(Result.unwrapError(mismatched)).toEqual({ step: "指定した n が既存の値と同じ", error: "N_MISMATCH" });
+  expect(open(Result.unwrap(unspecified)).pre).toEqual(ownedStored);
+  const matched = await remove({ input: { id: "i1", owner: "alice" }, actor: operator });
+  expect(open(Result.unwrap(matched)).pre).toEqual(ownedStored);
+  const mismatched = await remove({ input: { id: "i1", owner: "bob" }, actor: operator });
+  expect(Result.unwrapError(mismatched)).toEqual({ step: "指定した owner が既存の値と同じ", error: "OWNER_MISMATCH" });
 });
 
 test("取得ステップは id 以外の値も取得条件に使え、その失敗が load の失敗になる", async () => {
