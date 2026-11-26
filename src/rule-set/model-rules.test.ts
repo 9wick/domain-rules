@@ -93,6 +93,29 @@ test("取得ステップは id 以外の値も取得条件に使え、その失�
   expect(Result.unwrapError(other)).toEqual({ step: "load", error: "NOT_OWNED" });
 });
 
+test("fetch も rule の check と同じく、safeTry で port の失敗を止められる", async () => {
+  const findOwner = port("findOwner").of<(id: string) => string, "NO_OWNER">();
+  const scope = {};
+  findItem.valued(stored).registerIn(scope);
+  findOwner.provider((id) => (id === "i1" ? Result.succeed("op") : Result.fail("NO_OWNER"))).registerIn(scope);
+  const { update } = modelRules(item)
+    .load({
+      requires: { findOwner, findItem },
+      fetch: ({ input }, _, { safeTry }) =>
+        safeTry(async function* ({ findOwner, findItem }) {
+          yield* findOwner(input.id);
+          return Result.succeed(yield* findItem(input.id));
+        }),
+    })
+    .save(save)
+    .resolveIn({ invocation: () => ({ scope, now: 0 }) });
+  expect(open(Result.unwrap(await update({ input: { id: "i1" }, actor: operator }))).pre).toEqual(stored);
+  expect(Result.unwrapError(await update({ input: { id: "i2" }, actor: operator }))).toEqual({
+    step: "load",
+    error: "NO_OWNER",
+  });
+});
+
 test("入力の文字列を schema で Date に変換すれば、Date の項目を持つ model にも load を書ける", async () => {
   const appointment = defineModel<Operator>()({
     name: "appointment",
