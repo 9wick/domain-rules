@@ -96,7 +96,7 @@ const failedIssues = (
 ): StandardSchemaV1.Issue[] => rs.flatMap((r) => (Array.isArray(r) ? r : r.type === "Failure" ? r.error : []));
 
 const isEntry = (model: AnyModel<unknown, unknown>, key: string) =>
-  Object.hasOwn(model.schema.key.entries, key) || Object.hasOwn(model.schema.value.entries, key);
+  Object.hasOwn(model.entries.key, key) || Object.hasOwn(model.entries.value, key);
 
 const createIn = async <N extends string, KI, KO, VI, VO, P, Act, A, E>(
   ctx: BindCtx,
@@ -107,8 +107,8 @@ const createIn = async <N extends string, KI, KO, VI, VO, P, Act, A, E>(
 ) => {
   const { key, value } = model.schema;
   const unknown = unknownKeys(input, (k) => k !== "id" && isEntry(model, k));
-  const k = await validateWhole(key, pickEntries(key.entries, input));
-  const v = await validateWhole(value, pickEntries(value.entries, input));
+  const k = await validateWhole(key, pickEntries(model.entries.key, input));
+  const v = await validateWhole(value, pickEntries(model.entries.value, input));
   const issues = failedIssues(unknown, k, v);
   if (issues.length > 0 || k.type === "Failure" || v.type === "Failure") return Result.fail(inputFailure(issues));
   const next: ValueOf<KO, VO> = { ...k.value, ...v.value };
@@ -163,10 +163,10 @@ const updateIn = async <
 ) => {
   const { key, value } = model.schema;
   const unknown = unknownKeys(input, (k) => isEntry(model, k));
-  const patch = await validatePartial(value.entries, pickEntries(value.entries, input));
+  const patch = await validatePartial(model.entries.value, pickEntries(model.entries.value, input));
   const existing = await loadByKey(
     ctx,
-    await validateWhole(key, pickEntries(key.entries, input)),
+    await validateWhole(key, pickEntries(model.entries.key, input)),
     load,
     failedIssues(unknown, patch),
     actor,
@@ -176,7 +176,7 @@ const updateIn = async <
   const { inv, pre } = existing.value;
   const base: ValueOf<KO, VO> = pre;
   const next: ValueOf<KO, VO> = { ...base, ...patch.value };
-  const whole = await checkWhole(value, pickEntries(value.entries, next));
+  const whole = await checkWhole(value, pickEntries(model.entries.value, next));
   if (whole.type === "Failure") return whole;
   const given = pickFrom(next, [...Object.keys(existing.value.key), ...Object.keys(patch.value)]);
   const r = await saveWith(rules, inv, pre, next, given, actor);
@@ -233,10 +233,10 @@ export const deleteMethod =
   async ({ input, actor }) => {
     const { key } = model.schema;
     const fields: State = input;
-    const unknown = unknownKeys(fields, (k) => Object.hasOwn(key.entries, k));
+    const unknown = unknownKeys(fields, (k) => Object.hasOwn(model.entries.key, k));
     const existing = await loadByKey(
       ctx,
-      await validateWhole(key, pickEntries(key.entries, fields)),
+      await validateWhole(key, pickEntries(model.entries.key, fields)),
       load,
       unknown,
       actor,

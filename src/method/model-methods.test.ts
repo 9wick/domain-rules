@@ -1,5 +1,6 @@
 import { Result } from "@praha/byethrow";
 import * as v from "valibot";
+import { z } from "zod";
 import { describe, expect, test } from "vite-plus/test";
 import { defineModel, type DeleteState, type SaveState } from "../definition/model.ts";
 import type { Args, BindCtx } from "./context.ts";
@@ -288,5 +289,48 @@ describe("delete", () => {
       { step: "input", error: { issues: [{ path: [{ key: "tenantId" }] }] } },
     ]);
     expect([calls.load.length, seen.length]).toEqual([0, 0]);
+  });
+});
+
+describe("Zod の schema", () => {
+  type Range = { id: string; from: number; to: number };
+  type RangeValue = { id?: string | undefined } & { from: number; to: number };
+  const ranged = defineModel<Operator>()({
+    name: "ranged",
+    schema: {
+      key: z.object({ id: z.string().optional() }),
+      value: z.object({ from: z.number(), to: z.number() }).refine((r) => r.from <= r.to, "from は to 以下"),
+      persisted: z.object({ id: z.string(), from: z.number(), to: z.number() }),
+    },
+  });
+  const existing: Range = { id: "r1", from: 1, to: 5 };
+  const passThrough: SaveRun<Range, RangeValue, Range, Operator, Operator, never> = {
+    run: async (s) => Result.succeed({ next: { ...s.next, id: s.next.id ?? "new" }, actor: s.actor }),
+  };
+  const ctx: BindCtx = { invocation: () => ({ scope: {}, now: 0 }) };
+  const find: LoadRun<{ id?: string | undefined }, Operator, Range, never> = {
+    run: async () => Result.succeed(existing),
+  };
+
+  test("create は shape の項目で入力を分け、schema にない項目は受け付けない", async () => {
+    const create = createMethod(ranged, passThrough)(ctx);
+    const created = await create({ input: { from: 1, to: 2 }, actor: operator });
+    // @ts-expect-error schema にない項目を渡したときの実行時の振る舞いを確かめる
+    const extra = await create({ input: { from: 1, to: 2, extra: 1 }, actor: operator });
+    expect(open(Result.unwrap(created)).next).toEqual({ id: "new", from: 1, to: 2 });
+    expect(Result.unwrapError(extra)).toMatchObject({ step: "input", error: { issues: [{ path: ["extra"] }] } });
+  });
+
+  test("update は差分の項目を shape の項目の schema で検証し、既存の値と重ねた値に refine をかける", async () => {
+    const update = updateMethod(ranged, find, passThrough)(ctx);
+    const passed = await update({ input: { id: "r1", from: 3 }, actor: operator });
+    // @ts-expect-error 型に合わない入力を渡したときの実行時の振る舞いを確かめる
+    const badField = await update({ input: { id: "r1", from: "x" }, actor: operator });
+    const crossed = await update({ input: { id: "r1", from: 9 }, actor: operator });
+    expect(open(Result.unwrap(passed)).next).toEqual({ id: "r1", from: 3, to: 5 });
+    expect([Result.unwrapError(badField), Result.unwrapError(crossed)]).toMatchObject([
+      { step: "input", error: { issues: [{ path: ["from"] }] } },
+      { step: "input", error: { issues: [{ message: "from は to 以下" }] } },
+    ]);
   });
 });

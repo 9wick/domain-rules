@@ -14,7 +14,7 @@
 ## 前提
 
 - TypeScript
-- [Standard Schema](https://github.com/standard-schema/spec) 準拠のスキーマライブラリ（例: Valibot）
+- スキーマライブラリ: [Zod](https://zod.dev)（v4）または [Valibot](https://valibot.dev)（v1）
 - [`@praha/byethrow`](https://github.com/praha-inc/byethrow)（成功・失敗を `Result` / `ResultAsync` で表現。`{ type: "Success", value }` / `{ type: "Failure", error }` の形を受け渡すだけなので、バージョンは問いません）
 
 ## インストール

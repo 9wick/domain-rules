@@ -84,7 +84,7 @@ export type ExistingArticle = Omit<Article, "id"> & { id: ArticleIdExisted }; //
 ```
 
 - **`schema.key`**: モデルを特定する項目のスキーマです。`id` に加えて、`tenantId` のように既存の値を探すのに必ず要る項目を書きます。key の項目はどの操作でも入力に必要で、`update` と `delete` では key 全体を検証してから `fetch` に渡します。`id` は `create` では採番前で入力にないので、省略可能にしておく必要があります（`update` と `delete` では必須として扱います）。key の項目は `update` で変えられません。
-- **`schema.value`**: モデルが持つ項目のスキーマです。required と optional は、完成したモデルの値にその項目が必ずあるかどうかを表します。`create` では value 全体を検証します。`update` では value は差分なので、既存の値を取得する前に、入力に含まれた項目だけを各項目のスキーマで検証します。そのため、トップレベルが `entries` を持つオブジェクトスキーマ（Valibot の `v.object` 等）である必要があります。オブジェクト全体に付けた検証（`v.pipe(v.object(...), v.check(...))` で書く「開始は終了より前」など）は、作成時は入力の value 全体に、更新時は既存の値に差分を重ねた値にかかるので、作成と更新の両方で効きます。
+- **`schema.value`**: モデルが持つ項目のスキーマです。required と optional は、完成したモデルの値にその項目が必ずあるかどうかを表します。`create` では value 全体を検証します。`update` では value は差分なので、既存の値を取得する前に、入力に含まれた項目だけを各項目のスキーマで検証します。そのため、トップレベルはオブジェクトスキーマ（Valibot の `v.object`、Zod の `z.object`）である必要があります。オブジェクト全体に付けた検証（Valibot の `v.pipe(v.object(...), v.check(...))` や Zod の `z.object(...).refine(...)` で書く「開始は終了より前」など）は、作成時は入力の value 全体に、更新時は既存の値に差分を重ねた値にかかるので、作成と更新の両方で効きます。
   - key と value に同じ項目は書けません（`model` が型エラーになります）。
   - 更新では、既存の値から引き継いだ変換後の値もこのスキーマに通します。そのため `update` を作るモデル（`.load()` の後に `.save()` を書くモデル）では、スキーマが変換後の値もそのまま受け付ける必要があり、受け付けないと `.save()` が型エラーになります。たとえば文字列を `Date` に変換するなら、`v.union([v.date(), v.pipe(v.string(), v.isoTimestamp(), v.transform((s) => new Date(s)))])` のように `Date` も受け付けます。型が変わらない変換（`trim` など）は、変換後の値にもう一度かけても同じ値になるものにしてください。
 - **`schema.persisted`**: 永続化時の型を決めるためのスキーマです。key と value より強い型（存在確認済み Brand 型など）を持たせられます。ライブラリはこのスキーマで実行時の検証を行いません（未確認の入力に Brand が付くのを防ぐため）。保存パイプラインの終端で `next` がこの型になっていることをコンパイル時に検査します。
@@ -437,7 +437,7 @@ export const articleRules = modelRules(article)
 
 ## 永続化を伴わない操作を定義する (`action` / `actionRules`)
 
-プレビュー閲覧やダウンロード可否判定など、DB への保存を伴わない操作は `action` として定義します。`action` の入力スキーマは任意の Standard Schema 準拠スキーマが使えます。
+プレビュー閲覧やダウンロード可否判定など、DB への保存を伴わない操作は `action` として定義します。`action` の入力スキーマには Zod または Valibot のスキーマが使えます。
 
 ```ts
 import { actionRules, cached, port, rule, ruleset, always } from "domain-rules";

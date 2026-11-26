@@ -1,9 +1,20 @@
 import type { StandardSchemaV1 } from "@standard-schema/spec";
+import { Panic } from "../shared/panic.ts";
 import { Track } from "./track.ts";
 
 // 項目ごとの schema。更新のときは、入力にある項目だけをその項目の schema で検証する
 export type Entries<Out> = { readonly [K in keyof Out]-?: StandardSchemaV1<unknown, Out[K]> };
-export type ObjectSchema<In = unknown, Out = unknown> = StandardSchemaV1<In, Out> & { readonly entries: Entries<Out> };
+// 項目ごとの schema の置き場所はライブラリで違う。Valibot は entries、Zod は shape に置く
+type FieldsOf<E> =
+  | { readonly entries: E; readonly shape?: undefined }
+  | { readonly shape: E; readonly entries?: undefined };
+
+// 型で entries か shape を必須にしているので、どちらも無いのは型を外した呼び出しだけ
+const entriesOf = <E>(schema: FieldsOf<E>): E => {
+  const entries = schema.entries ?? schema.shape;
+  if (entries === undefined) throw new Panic("defineModel: key と value の schema には entries か shape が必要です");
+  return entries;
+};
 
 // 線路に載るモデルの値は key と value を合わせたもの
 export type ValueOf<KO, VO> = KO & VO;
@@ -21,10 +32,11 @@ export type Model<
   readonly kind: "model";
   readonly name: N;
   readonly schema: {
-    readonly key: ObjectSchema<KI, KO>;
-    readonly value: ObjectSchema<VI, VO>;
+    readonly key: StandardSchemaV1<KI, KO>;
+    readonly value: StandardSchemaV1<VI, VO>;
     readonly persisted: StandardSchemaV1<unknown, P>;
   };
+  readonly entries: { readonly key: Entries<KO>; readonly value: Entries<VO> };
   readonly onSave: Track<"save", N, SaveState<P | null, ValueOf<KO, VO>, Act>>;
   readonly onDelete: Track<"delete", N, DeleteState<P, KO, Act>>;
 };
@@ -84,12 +96,12 @@ export const defineModel =
   <const N extends string, KI, KO, VI, VO, P>(def: {
     readonly name: N;
     readonly schema: {
-      readonly key: StandardSchemaV1<KI, KO> & { readonly entries: NoInfer<Entries<KO>> } & NoInfer<
-          NoDefault<KI, KO> & OptionalId<KI>
-        >;
-      readonly value: StandardSchemaV1<VI, VO> & { readonly entries: NoInfer<Entries<VO>> } & NoInfer<
-          NoDefault<VI, VO> & Disjoint<KO, VO>
-        >;
+      readonly key: StandardSchemaV1<KI, KO> &
+        NoInfer<FieldsOf<Entries<KO>>> &
+        NoInfer<NoDefault<KI, KO> & OptionalId<KI>>;
+      readonly value: StandardSchemaV1<VI, VO> &
+        NoInfer<FieldsOf<Entries<VO>>> &
+        NoInfer<NoDefault<VI, VO> & Disjoint<KO, VO>>;
       readonly persisted: StandardSchemaV1<unknown, P>;
     };
   }): Model<N, KI, KO, VI, VO, P, Act> =>
@@ -97,6 +109,7 @@ export const defineModel =
       kind: "model",
       name: def.name,
       schema: def.schema,
+      entries: { key: entriesOf<Entries<KO>>(def.schema.key), value: entriesOf<Entries<VO>>(def.schema.value) },
       onSave: new Track<"save", N, SaveState<P | null, ValueOf<KO, VO>, Act>>("save", def.name),
       onDelete: new Track<"delete", N, DeleteState<P, KO, Act>>("delete", def.name),
     });
