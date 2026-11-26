@@ -1,4 +1,4 @@
-import { Result } from "@praha/byethrow";
+import * as Result from "../shared/result.ts";
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 import type { Action, DecideState } from "../definition/action.ts";
 import type { Decider } from "../pipeline/ruleset.ts";
@@ -23,10 +23,10 @@ export const actionMethods = <N extends string, In, Out, Act, T, A, E>(
 ): { readonly decide: DecideMethod<N, In, Out, Act, T, A, E> } => {
   const decide: DecideMethod<N, In, Out, Act, T, A, E> = async ({ input: value, actor }) => {
     const validated = await validate(input, value);
-    if (Result.isFailure(validated)) return Result.fail(inputFailure(validated.error));
+    if (validated.type === "Failure") return Result.fail(inputFailure(validated.error));
     const inv = ctx.invocation();
     const r = await rules.run({ input: validated.value, actor, now: inv.now }, inv);
-    if (Result.isFailure(r)) return r;
+    if (r.type === "Failure") return r;
     return Result.succeed(seal<"decision", N, "decide", { readonly value: T; readonly actor: A }>(r.value));
   };
   return Object.freeze({ decide });

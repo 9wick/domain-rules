@@ -30,18 +30,15 @@
     "prepare": "vp config"
   },
   "dependencies": {
-    "@standard-schema/spec": "1.1.0",
-    "as-free": "0.0.2-beta.1"
+    "@standard-schema/spec": "1.1.0"
   },
   "devDependencies": {
     "@praha/byethrow": "0.13.0",
+    "as-free": "0.0.2",
     "typescript": "7.0.2",
     "valibot": "1.5.0",
     "vite-plus": "catalog:",
     "vitest": "catalog:"
-  },
-  "peerDependencies": {
-    "@praha/byethrow": "0.13.0"
   },
   "packageManager": "pnpm@12.18.0"
 }

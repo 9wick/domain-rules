@@ -1,4 +1,4 @@
-import { Result } from "@praha/byethrow";
+import * as Result from "../shared/result.ts";
 import { getOrEmpty, type OmittableIfEmpty } from "as-free";
 import type { Track, TrackKind } from "../definition/track.ts";
 import type { Invocation } from "../port/invocation.ts";

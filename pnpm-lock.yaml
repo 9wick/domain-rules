@@ -182,13 +182,13 @@ importers:
       '@standard-schema/spec':
         specifier: 1.1.0
         version: 1.1.0
-      as-free:
-        specifier: 0.0.2-beta.1
-        version: 0.0.2-beta.1
     devDependencies:
       '@praha/byethrow':
         specifier: 0.13.0
         version: 0.13.0(typescript@7.0.2)
+      as-free:
+        specifier: 0.0.2
+        version: 0.0.2
       typescript:
         specifier: 7.0.2
         version: 7.0.2
@@ -890,8 +890,8 @@ packages:
   aria-query@5.3.0:
     resolution: {integrity: sha512-b0P0sZPKtyu8HkeRAfCq0IfURZK+SuwMjY1UXGBU27wpAiTwQAIlq56IbIO+ytk/JjS1fMR14ee5WBBfKi5J6A==}
 
-  as-free@0.0.2-beta.1:
-    resolution: {integrity: sha512-0mKrxK2KgN95WBfB2sL/+D0D1LXxWe0cq0Nla5bAaSjVSDTDv3pqzBF5OYm/n4KDpy9d9mRRFvXXRTT8ZeIceg==}
+  as-free@0.0.2:
+    resolution: {integrity: sha512-nLc9tBQe9amEwbQFOoeVgkfvVdQeR3366YDH+KmnBMR9HIx2nh1RoTuwqnXG5COvL9mm4vHbmTGYPKiFSgomNg==}
 
   assertion-error@2.0.1:
     resolution: {integrity: sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==}
@@ -1645,7 +1645,7 @@ snapshots:
     dependencies:
       dequal: 2.0.3
 
-  as-free@0.0.2-beta.1: {}
+  as-free@0.0.2: {}
 
   assertion-error@2.0.1: {}
 
