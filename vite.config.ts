@@ -3,6 +3,8 @@ import { defineConfig } from "vite-plus";
 export default defineConfig({
   pack: {
     entry: { index: "src/index.ts" },
+    // require で読み込む利用者のため CJS も出す
+    format: ["esm", "cjs"],
     dts: true,
     deps: {
       // 小さな自前のユーティリティなので dist に取り込み、利用者の依存を増やさない。ほかの依存が紛れ込んだらビルドを止める

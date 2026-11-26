@@ -23,7 +23,7 @@
 pnpm add domain-rules@beta @praha/byethrow
 ```
 
-ESM 専用パッケージです（`.d.mts` 型定義同梱）。
+ESM と CommonJS の両方で使えます（`import` は `.mjs` / `.d.mts`、`require` は `.cjs` / `.d.cts` を読み込みます）。
 
 ## クイックスタート
 
