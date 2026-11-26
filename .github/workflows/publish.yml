@@ -1,0 +1,73 @@
+name: Publish
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [closed]
+    branches: [release]
+
+permissions:
+  contents: write # to tag staging versions and record the release
+  id-token: write # npm trusted publishing
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: ${{ github.event_name == 'push' || github.event.pull_request.merged == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - id: release
+        uses: 9wick/release-flow/resolve@651af2d82c4ebad0fe0b74808d43c57a168dd49e # v1
+        with:
+          production-branch: release
+          staging-branch: main
+          staging-prerelease: beta
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.release.outputs.sha }}
+          persist-credentials: false
+
+      # A shared cache could inject code into what gets published
+      - uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
+        with:
+          node-version: "24"
+
+      - run: vp check
+      - run: vp run test
+
+      - name: Pack
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          npm pkg set "version=$VERSION"
+          vp run build
+          vp pm pack --out package.tgz
+
+      # A re-run after a failure past this step must not try to publish the same version again
+      - name: Publish to npm
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          DIST_TAG: ${{ steps.release.outputs.environment == 'prod' && 'latest' || 'beta' }}
+        run: |
+          if npm view "domain-rules@$VERSION" version > /dev/null 2>&1; then
+            echo "domain-rules@$VERSION is already published"
+          else
+            npm publish package.tgz --tag "$DIST_TAG" --provenance
+          fi
+
+      # The tag is the record of what is released, and the next release PR's version builds on it
+      - name: Record the release
+        if: ${{ steps.release.outputs.environment == 'prod' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.release.outputs.tag }}
+          SHA: ${{ steps.release.outputs.sha }}
+          NOTES: ${{ steps.release.outputs.notes }}
+        run: gh release view "$TAG" > /dev/null 2>&1 || gh release create "$TAG" --target "$SHA" --title "$TAG" --notes "$NOTES"

@@ -1,0 +1,27 @@
+name: Release check
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+    branches: [release]
+
+permissions:
+  contents: read
+  pull-requests: write # to fill in the defaults when a PR opens or leaves draft
+
+concurrency:
+  group: release-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Release version and notes
+    # People are still writing while the PR is a draft
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: 9wick/release-flow/check@651af2d82c4ebad0fe0b74808d43c57a168dd49e # v1
+        with:
+          production-branch: release
+          staging-branch: main

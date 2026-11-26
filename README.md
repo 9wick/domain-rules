@@ -2,7 +2,7 @@
 
 データの作成・更新・削除やアクション実行前のビジネスルールを小さな単位で定義し、必要なデータだけを取得・検証して、「検証済みであること」を TypeScript の型で保証するライブラリです。
 
-> **Status**: 試作段階です（npm 未公開）。より実践的な定義例は [test/blog/domain.ts](test/blog/domain.ts) にあり、型検査とテストで動作を確認しています。
+> **Status**: 試作段階です。main の最新は npm の `beta` タグで公開しています。より実践的な定義例は [test/blog/domain.ts](test/blog/domain.ts) にあり、型検査とテストで動作を確認しています。
 
 ## 何ができるか
 
@@ -16,6 +16,14 @@
 - TypeScript
 - [Standard Schema](https://github.com/standard-schema/spec) 準拠のスキーマライブラリ（例: Valibot）
 - [`@praha/byethrow`](https://github.com/praha-inc/byethrow)（成功・失敗を `Result` / `ResultAsync` で表現）
+
+## インストール
+
+```bash
+pnpm add domain-rules@beta @praha/byethrow
+```
+
+ESM 専用パッケージです（`.d.mts` 型定義同梱）。
 
 ## クイックスタート
 
@@ -115,4 +123,4 @@ if (Result.isSuccess(result)) {
 
 ## License
 
-未定
+MIT
