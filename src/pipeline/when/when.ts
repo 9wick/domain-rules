@@ -13,6 +13,7 @@ export type WhenDescription =
       readonly pre?: Match | undefined;
       readonly next?: Match | undefined;
     }
+  | { readonly kind: "given"; readonly field: string }
   | { readonly kind: "next" }
   | { readonly kind: "pre" }
   | { readonly kind: "actor" }

@@ -1,5 +1,5 @@
 import { describe as group, expect, test } from "vite-plus/test";
-import { actor, and, changed, describe, next, not, onCreate, or, pre } from "./builders.ts";
+import { actor, and, changed, describe, given, next, not, onCreate, or, pre } from "./builders.ts";
 import { always } from "./step.ts";
 
 type S = { pre: { status: string } | null; next: { status: string }; actor: { role: string } };
@@ -64,6 +64,36 @@ group("changed", () => {
       expect(when(state(p, n))).toBe(expected);
     });
   }
+});
+
+group("given", () => {
+  type G = {
+    pre: { status: string | null } | null;
+    next: { status: string | null };
+    input: { status?: string | null };
+  };
+  const updated = (p: string | null, input: G["input"]): G => ({
+    pre: { status: p },
+    next: { status: p, ...input },
+    input,
+  });
+  test.each<[string, G, boolean]>([
+    ["指定しなければ偽", updated("DRAFT", {}), false],
+    ["既存と同じ値を指定しても真", updated("DRAFT", { status: "DRAFT" }), true],
+    ["null を指定しても真", updated("DRAFT", { status: null }), true],
+    ["新規作成で指定すれば真", { pre: null, next: { status: "DRAFT" }, input: { status: "DRAFT" } }, true],
+  ])("%s", (_, s, expected) => {
+    expect(given("status")(s)).toBe(expected);
+  });
+
+  test("同じ値を指定したとき、changed は偽で given は真", () => {
+    const s = updated("DRAFT", { status: "DRAFT" });
+    expect([changed("status")(s), given("status")(s)]).toEqual([false, true]);
+  });
+
+  test("説明は指定を見る項目を持つ", () => {
+    expect(given("status").description).toEqual({ kind: "given", field: "status" });
+  });
 });
 
 const isDraft = (v: { status: string }) => v.status === "DRAFT";

@@ -62,7 +62,7 @@ describe("create", () => {
     const { rules, seen } = recordingSave();
     const r = await createMethod(item, rules)(ctx)({ input: { n: 1 }, actor: operator });
     expect(open(Result.unwrap(r))).toEqual({ pre: null, next: { id: "new", n: 1 }, actor: operator });
-    expect(seen).toEqual([{ pre: null, next: { n: 1 }, actor: operator, now: 42 }]);
+    expect(seen).toEqual([{ pre: null, next: { n: 1 }, input: { n: 1 }, actor: operator, now: 42 }]);
   });
 
   test("不正な入力は、呼び出しを作る前に input で失敗する", async () => {
@@ -97,6 +97,19 @@ describe("update", () => {
     const { ctx, calls, loadItem } = contextWith(() => Result.succeed(stored));
     await updateMethod(item, loadItem, recordingSave().rules)(ctx)({ input: { id: "i1", n: 9 }, actor: operator });
     expect(calls.load).toEqual([{ input: { id: "i1", n: 9 }, actor: operator }]);
+  });
+
+  test("線路の input は指定した項目だけを持ち、既存の値と同じ値でも指定したことが残る", async () => {
+    const { ctx, loadItem } = contextWith(() => Result.succeed(stored));
+    const { rules, seen } = recordingSave();
+    const update = updateMethod(item, loadItem, rules)(ctx);
+    await update({ input: { id: "i1" }, actor: operator });
+    await update({ input: { id: "i1", n: stored.n }, actor: operator });
+    expect(seen.map((s) => [s.input, s.next])).toEqual([
+      [{ id: "i1" }, stored],
+      [{ id: "i1", n: 5 }, stored],
+    ]);
+    expect(seen.every((s) => Object.isFrozen(s.input))).toBe(true);
   });
 
   test("入力にない項目は既存の値を残す", async () => {

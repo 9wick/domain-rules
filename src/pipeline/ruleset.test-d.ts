@@ -62,3 +62,14 @@ test("状態の項目を別の型に置き換える rule は足せない", () =>
   // @ts-expect-error n は number | null で、string に置き換えられない
   ruleset(replace);
 });
+
+test("呼び出し時の input を重ねる rule は足せない", () => {
+  type Saving = { readonly input: { readonly n?: number | null } };
+  const rewrite = rule(new Track<"save", "item", Saving>("save", "item"), {
+    name: "入力を書き換える",
+    when: always,
+    check: () => Result.succeed({ input: {} }),
+  });
+  // @ts-expect-error input は呼び出し時の意思なので、狭める形でも変えられない
+  ruleset(rewrite);
+});

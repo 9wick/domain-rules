@@ -51,9 +51,10 @@ const saveWith = async <Pre, Out, P, Act, A, E>(
   inv: Invocation,
   pre: Pre | null,
   next: Out,
+  input: Partial<Out>,
   actor: Act,
 ) => {
-  const r = await rules.run({ pre, next, actor, now: inv.now }, inv);
+  const r = await rules.run({ pre, next, input: Object.freeze({ ...input }), actor, now: inv.now }, inv);
   if (r.type === "Failure") return r;
   return Result.succeed({ next: Object.freeze(r.value.next), actor: r.value.actor });
 };
@@ -67,7 +68,7 @@ const createIn = async <N extends string, In, Out, P, Act, A, E>(
 ) => {
   const next = await validateWhole(model.schema.input, input);
   if (next.type === "Failure") return next;
-  const r = await saveWith(rules, ctx.invocation(), null, next.value, actor);
+  const r = await saveWith(rules, ctx.invocation(), null, next.value, next.value, actor);
   if (r.type === "Failure") return r;
   return Result.succeed(
     seal<"persistable", N, "create", { readonly pre: null; readonly next: Readonly<P>; readonly actor: A }>({
@@ -108,7 +109,7 @@ const updateIn = async <N extends string, In, Out extends { readonly id?: unknow
   const { inv, pre, validated } = existing.value;
   const base: Out = pre;
   const next: Out = { ...base, ...validated };
-  const r = await saveWith(rules, inv, pre, next, actor);
+  const r = await saveWith(rules, inv, pre, next, validated, actor);
   if (r.type === "Failure") return r;
   return Result.succeed(
     seal<"persistable", N, "update", { readonly pre: Readonly<Pre>; readonly next: Readonly<P>; readonly actor: A }>({
