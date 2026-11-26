@@ -105,7 +105,7 @@
 - **Ports and Adapters / Effect `Context.Tag`**: 必要な外部能力を型付きタグとして宣言し、実装を外から注入する設計。
 - **Event-B / Design by Contract**: 不変条件と操作のガード条件を分離して記述する考え方。
 - **Parse, don't validate** (Alexis King): 検証を通過したデータをより強い型へ変換し、未検証データの混入をコンパイル時に防ぐアプローチ。
-- **Standard Schema**: スキーマライブラリ非依存の共通検証インターフェース。
+- **Standard Schema**: 値の検証はこの共通インターフェースで呼ぶ。ただし更新で項目ごとに検証するため、オブジェクトスキーマの項目を Valibot の `entries` / Zod の `shape` から読んでおり、対応するのは Zod と Valibot だけ。
 
 ---
 

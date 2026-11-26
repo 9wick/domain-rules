@@ -1,5 +1,6 @@
 import * as v from "valibot";
-import { expectTypeOf, test } from "vite-plus/test";
+import { z } from "zod";
+import { describe, expectTypeOf, test } from "vite-plus/test";
 import { defineModel, type DeleteState, type ModelActor, type SaveState } from "./model.ts";
 import type { Track } from "./track.ts";
 
@@ -54,4 +55,30 @@ test("key と value に同じ項目は書けない", () => {
   };
   // @ts-expect-error next でどちらの値が残るかが決まらない
   defineModel<Operator>()({ name: "overlapped", schema });
+});
+
+describe("Zod の schema", () => {
+  test("Zod の object も key と value に書け、線路の状態はその出力の型になる", () => {
+    const zodItem = defineModel<Operator>()({
+      name: "zodItem",
+      schema: {
+        key: z.object({ id: z.string().optional() }),
+        value: z.object({ n: z.number() }),
+        persisted: z.object({ id: z.string(), n: z.number() }),
+      },
+    });
+    expectTypeOf(zodItem.onSave).toEqualTypeOf<
+      Track<"save", "zodItem", SaveState<Stored | null, { id?: string | undefined } & { n: number }, Operator>>
+    >();
+  });
+
+  test("Zod でも optional に既定値は書けない", () => {
+    const schema = {
+      key: z.object({ id: z.string().optional() }),
+      value: z.object({ status: z.string().default("DRAFT") }),
+      persisted: z.object({ id: z.string(), status: z.string() }),
+    };
+    // @ts-expect-error 既定値はルールで next に入れる
+    defineModel<Operator>()({ name: "defaulted", schema });
+  });
 });
