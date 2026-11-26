@@ -31,7 +31,8 @@ test("線路の失敗はそのまま返し、output は呼ばない", async () =
   expect(Result.unwrapError(r)).toEqual({ step: "メンバーだけ", error: "FORBIDDEN" });
 });
 
-test("rule の組は action の名前と線路の plan を持つ", () => {
-  expect([set.kind, set.name, set.action]).toEqual(["actionRules", "download", download]);
-  expect(set.rules.plan).toEqual([{ name: "メンバーだけ", when: { kind: "always" }, ports: [] }]);
+test("rule の組は action の名前と、線路の plan と ports を持つ", () => {
+  expect([set.kind, set.name]).toEqual(["actionRules", "download"]);
+  expect(set.plan).toEqual({ rules: [{ name: "メンバーだけ", when: { kind: "always" }, ports: [] }] });
+  expect(set.ports).toEqual([]);
 });

@@ -3,15 +3,7 @@ import { getOrEmpty, type OmittableIfEmpty } from "as-free";
 import type { Track, TrackKind } from "../definition/track.ts";
 import type { Invocation } from "../port/invocation.ts";
 import type { AnyPort, NoPorts } from "../port/port.ts";
-import {
-  resolvePorts,
-  unwrapPorts,
-  type PortFns,
-  type Requires,
-  type StrictRecord,
-  type UnwrappedPortFns,
-} from "./requires.ts";
-import { safeTryWith, type SafeTry } from "./safe-try.ts";
+import { withPorts, type CheckTools, type PortFns, type Requires, type StrictRecord } from "./requires.ts";
 import { conditionalStep, type ConditionalStep } from "./when/step.ts";
 import type { WhenParam } from "./when/when.ts";
 
@@ -20,17 +12,15 @@ export type CheckResult = Checked<unknown, unknown>;
 export type SuccessOf<R> = Awaited<R> extends infer X ? (X extends Result.Success<infer V> ? V : never) : never;
 export type FailureOf<R> = Awaited<R> extends infer X ? (X extends Result.Failure<infer E> ? E : never) : never;
 
-// check の第3引数。port の Result を if で取り出す代わりに、yield* で取り出して書くための道具
-export type CheckTools<P extends Requires> = { readonly safeTry: SafeTry<UnwrappedPortFns<P>> };
-
 declare const rulePorts: unique symbol;
+declare const ruleTrack: unique symbol;
 
 // rule は線路の1つの step。run の型がそのまま、受け取る状態・成功の値・失敗の型を表す。
 // P は requires に書いた port の record の型で、bind が provider の不足を型で確かめるために持つ
 export type Rule<K extends TrackKind, T extends string, N extends string, S, W extends WhenParam<K, S>, V, E, P> = {
   readonly kind: "rule";
-  // 線路の種類は型の上で rule と線路を合わせるためにある。どの線路にも置ける rule は持たない
-  readonly track?: { readonly kind: K; readonly target: T };
+  // 型の上で rule と線路を合わせるための印。実行時には持たない。どの線路にも置ける alwaysAllow は印を持たない
+  readonly [ruleTrack]?: { readonly kind: K; readonly target: T };
   readonly [rulePorts]?: P;
   readonly name: N;
   readonly ports: readonly AnyPort[];
@@ -51,7 +41,8 @@ export function rule<
   V = SuccessOf<R>,
   E = FailureOf<R>,
 >(
-  track: Track<K, T, S>,
+  // 線路は型を決めるためだけに受け取る
+  _track: Track<K, T, S>,
   // requires を省略できるのは、check が受け取る port がないときだけ
   def: {
     readonly name: N;
@@ -62,11 +53,10 @@ export function rule<
 ): Rule<K, T, N, S, W, V, E, NoInfer<P>> {
   const requires: P = getOrEmpty<"requires", P & StrictRecord<P>>(def, "requires");
   const check: (s: S, ports: PortFns<P>, tools: CheckTools<P>) => Checked<V, E> = def.check;
-  const run = async (s: S, invocation: Invocation): Promise<Result.Result<V, E>> =>
-    check(s, resolvePorts(requires, invocation), { safeTry: safeTryWith(unwrapPorts(requires, invocation)) });
+  const step = withPorts(requires, check);
+  const run = async (s: S, invocation: Invocation): Promise<Result.Result<V, E>> => step(s, invocation);
   return Object.freeze({
     kind: "rule",
-    track: { kind: track.kind, target: track.target },
     name: def.name,
     ports: Object.values(requires),
     when: Object.freeze(Object.assign((s: S) => def.when(s), { step: conditionalStep(def.when) }, def.when)),

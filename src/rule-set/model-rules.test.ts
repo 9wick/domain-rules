@@ -43,7 +43,7 @@ const loaded = () =>
 test("load を書かずに save を書いた rule の組は create だけを持つ", () => {
   const set = modelRules(item).save(save);
   expect(Object.keys(set.resolveIn(ctxWith(stored)))).toEqual(["create"]);
-  expect(set.plans).toEqual({ save: save.plan });
+  expect(set.plan).toEqual({ save: save.plan });
 });
 
 test("load と save を書くと create・update・upsert を、delete を書くと delete を持つ", () => {
@@ -51,7 +51,7 @@ test("load と save を書くと create・update・upsert を、delete を書く
   expect(Object.keys(saved.resolveIn(ctxWith(stored)))).toEqual(["create", "update", "upsert"]);
   const both = saved.delete(ruleset(alwaysAllow));
   expect(Object.keys(both.resolveIn(ctxWith(stored)))).toEqual(["create", "update", "upsert", "delete"]);
-  expect(both.plans).toEqual({
+  expect(both.plan).toEqual({
     load: { ports: ["findItem"] },
     save: save.plan,
     delete: ruleset(alwaysAllow).plan,

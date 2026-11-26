@@ -122,21 +122,31 @@ const createIn = async <N extends string, KI, KO, VI, VO, P, Act, A, E>(
   );
 };
 
-// 取得の前に key を検証し、不正な key では DB を引かない
-const loadByKey = async <KO extends { readonly id?: unknown }, Act, Pre, LE>(
-  ctx: BindCtx,
+// update と delete の入力を、取得の前に検証する。不正な入力では DB を引かない。
+// key 以外の項目の検証結果 rest も受け取り、key の問題とまとめて1つの input の失敗にする
+const parseKeyed = <KO extends { readonly id?: unknown }, Rest>(
   key: Result.Result<KO, StandardSchemaV1.Issue[]>,
-  load: LoadRun<KO, Act, Pre, LE>,
-  issues: readonly StandardSchemaV1.Issue[],
-  actor: Act,
-) => {
-  if (key.type === "Failure" || issues.length > 0) return Result.fail(inputFailure(failedIssues([...issues], key)));
+  rest: Result.Result<Rest, StandardSchemaV1.Issue[]>,
+  unknown: readonly StandardSchemaV1.Issue[],
+): Result.Result<{ readonly key: LoadInput<KO>; readonly rest: Rest }, InputFailure> => {
+  if (key.type === "Failure" || rest.type === "Failure" || unknown.length > 0) {
+    return Result.fail(inputFailure(failedIssues([...unknown], rest, key)));
+  }
   const { id } = key.value;
   if (id === undefined || id === null) return Result.fail(inputFailure([{ message: "id は必須です", path: ["id"] }]));
+  return Result.succeed({ key: { ...key.value, id }, rest: rest.value });
+};
+
+const loadByKey = async <KO extends { readonly id?: unknown }, Act, Pre, LE>(
+  ctx: BindCtx,
+  load: LoadRun<KO, Act, Pre, LE>,
+  key: LoadInput<KO>,
+  actor: Act,
+) => {
   const inv = ctx.invocation();
-  const pre = await load.run({ input: { ...key.value, id }, actor }, inv);
+  const pre = await load.run({ input: key, actor }, inv);
   if (pre.type === "Failure") return Result.fail<LoadFailureOf<LE>>({ step: "load", error: pre.error });
-  return Result.succeed({ inv, pre: pre.value, key: key.value });
+  return Result.succeed({ inv, pre: pre.value });
 };
 
 // 更新では、既存の値に差分を重ねて next にし、create と同じく value の schema 全体で確かめる。
@@ -162,23 +172,21 @@ const updateIn = async <
   actor: Act,
 ) => {
   const { key, value } = model.schema;
-  const unknown = unknownKeys(input, (k) => isEntry(model, k));
-  const patch = await validatePartial(model.entries.value, pickEntries(model.entries.value, input));
-  const existing = await loadByKey(
-    ctx,
+  const parsed = parseKeyed(
     await validateWhole(key, pickEntries(model.entries.key, input)),
-    load,
-    failedIssues(unknown, patch),
-    actor,
+    await validatePartial(model.entries.value, pickEntries(model.entries.value, input)),
+    unknownKeys(input, (k) => isEntry(model, k)),
   );
+  if (parsed.type === "Failure") return parsed;
+  const { key: keyed, rest: patch } = parsed.value;
+  const existing = await loadByKey(ctx, load, keyed, actor);
   if (existing.type === "Failure") return existing;
-  if (patch.type === "Failure") return Result.fail(inputFailure(patch.error));
   const { inv, pre } = existing.value;
   const base: ValueOf<KO, VO> = pre;
-  const next: ValueOf<KO, VO> = { ...base, ...patch.value };
+  const next: ValueOf<KO, VO> = { ...base, ...patch };
   const whole = await checkWhole(value, pickEntries(model.entries.value, next));
   if (whole.type === "Failure") return whole;
-  const given = pickFrom(next, [...Object.keys(existing.value.key), ...Object.keys(patch.value)]);
+  const given = pickFrom(next, [...Object.keys(keyed), ...Object.keys(patch)]);
   const r = await saveWith(rules, inv, pre, next, given, actor);
   if (r.type === "Failure") return r;
   return Result.succeed(
@@ -233,20 +241,17 @@ export const deleteMethod =
   async ({ input, actor }) => {
     const { key } = model.schema;
     const fields: State = input;
-    const unknown = unknownKeys(fields, (k) => Object.hasOwn(model.entries.key, k));
-    const existing = await loadByKey(
-      ctx,
+    const parsed = parseKeyed(
       await validateWhole(key, pickEntries(model.entries.key, fields)),
-      load,
-      unknown,
-      actor,
+      Result.succeed(undefined),
+      unknownKeys(fields, (k) => Object.hasOwn(model.entries.key, k)),
     );
+    if (parsed.type === "Failure") return parsed;
+    const keyed = parsed.value.key;
+    const existing = await loadByKey(ctx, load, keyed, actor);
     if (existing.type === "Failure") return existing;
     const { inv, pre } = existing.value;
-    const r = await rules.run(
-      { pre, next: null, input: Object.freeze({ ...existing.value.key }), actor, now: inv.now },
-      inv,
-    );
+    const r = await rules.run({ pre, next: null, input: Object.freeze({ ...keyed }), actor, now: inv.now }, inv);
     if (r.type === "Failure") return r;
     return Result.succeed(
       seal<"deletable", N, "delete", { readonly pre: Readonly<Pre>; readonly actor: A }>({
