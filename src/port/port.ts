@@ -1,4 +1,4 @@
-import { Result } from "@praha/byethrow";
+import * as Result from "../shared/result.ts";
 import { Panic } from "../shared/panic.ts";
 import type { Invocation } from "./invocation.ts";
 import { Provider, register } from "./provider.ts";
@@ -68,7 +68,7 @@ export class Port<N extends string, in out A extends readonly unknown[], in out 
     const name = this.name;
     return async function* (...args: A): AsyncGenerator<Result.Failure<E>, T> {
       const r = await call(args);
-      if (Result.isFailure(r)) {
+      if (r.type === "Failure") {
         yield r;
         // safeTry は失敗を受け取ったら generator を再開しないので、ここに来るのは壊れたときだけ
         throw new Panic(`port "${name}" の失敗を yield した後に再開されました`);

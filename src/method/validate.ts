@@ -1,4 +1,4 @@
-import { Result } from "@praha/byethrow";
+import * as Result from "../shared/result.ts";
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 import type { Entries, ObjectSchema } from "../definition/model.ts";
 
@@ -40,8 +40,8 @@ export const validateWhole = async <Out>(
   const defined = definedEntries(input);
   const unknown = unknownKeys(schema.entries, defined, (key) => key !== "id");
   const r = await validate(schema, defined);
-  const issues = [...unknown, ...(Result.isFailure(r) ? r.error : [])];
-  if (issues.length > 0 || Result.isFailure(r)) return Result.fail(inputFailure(issues));
+  const issues = [...unknown, ...(r.type === "Failure" ? r.error : [])];
+  if (issues.length > 0 || r.type === "Failure") return Result.fail(inputFailure(issues));
   return Result.succeed(r.value);
 };
 
@@ -56,7 +56,7 @@ export const validatePartial = async <Out>(
   for (const key in entries) {
     if (!Object.hasOwn(defined, key)) continue;
     const r = await validate(entries[key], defined[key], [key]);
-    if (Result.isFailure(r)) issues.push(...r.error);
+    if (r.type === "Failure") issues.push(...r.error);
     else out[key] = r.value;
   }
   return issues.length > 0 ? Result.fail(inputFailure(issues)) : Result.succeed(out);

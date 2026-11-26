@@ -1,4 +1,4 @@
-import { Result } from "@praha/byethrow";
+import * as Result from "../../shared/result.ts";
 import type { TrackKind } from "../../definition/track.ts";
 
 // undefined は「条件なし」を表すので比べる値に含めない。値は Object.is で比べる

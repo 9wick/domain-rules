@@ -1,4 +1,4 @@
-import { Result } from "@praha/byethrow";
+import * as Result from "../shared/result.ts";
 import type { TrackKind } from "../definition/track.ts";
 import type { Invocation } from "../port/invocation.ts";
 import type { AnyPort, PortNames, Ports } from "../port/port.ts";
@@ -71,10 +71,10 @@ export class Ruleset<K extends TrackKind, T extends string, In extends {}, D, E,
       [...this.ports, ...ports],
       async <X extends In>(s0: X, invocation: Invocation) => {
         const prev = await previous(s0, invocation);
-        if (Result.isFailure(prev)) return prev;
+        if (prev.type === "Failure") return prev;
         return step(prev.value, async (s) => {
           const out = await r.run(s, invocation);
-          return Result.isFailure(out) ? Result.fail({ step: r.name, error: out.error }) : out;
+          return out.type === "Failure" ? Result.fail({ step: r.name, error: out.error }) : out;
         });
       },
     );

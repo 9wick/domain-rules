@@ -1,4 +1,4 @@
-import { Result } from "@praha/byethrow";
+import * as Result from "../shared/result.ts";
 import type { Action, DecideState } from "../definition/action.ts";
 import { actionMethods, type DecideMethod } from "../method/action-method.ts";
 import type { BindCtx } from "../method/context.ts";
@@ -35,7 +35,7 @@ export function actionRules<N extends string, In, Out, Act, D, E, PN extends str
     ...rules,
     run: async (s, call) => {
       const r = await rules.run(s, call);
-      return Result.isFailure(r) ? r : Result.succeed({ value: output(r.value), actor: actorOf(r.value) });
+      return r.type === "Failure" ? r : Result.succeed({ value: output(r.value), actor: actorOf(r.value) });
     },
   };
   return Object.freeze({

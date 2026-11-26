@@ -1,4 +1,4 @@
-import type { Result } from "@praha/byethrow";
+import type * as Result from "../shared/result.ts";
 
 // 失敗を yield した時点で止め、その失敗を返す。最後まで進んだら body が return した Result を返す。
 // 返り値を Result の和集合のままにして、成功の値と失敗の型は rule が引く

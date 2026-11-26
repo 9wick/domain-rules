@@ -40,8 +40,5 @@
     "vite-plus": "catalog:",
     "vitest": "catalog:"
   },
-  "peerDependencies": {
-    "@praha/byethrow": "0.13.0"
-  },
   "packageManager": "pnpm@12.18.0"
 }
