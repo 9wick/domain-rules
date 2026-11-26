@@ -179,14 +179,15 @@ export const blogExists = rule(article.onSave, {
   name: "ブログが存在する",
   requires: { findBlog },
   when: always,
-  check: async ({ pre, next }, { findBlog }) => {
-    if (pre && pre.blogId === next.blogId) {
-      return Result.succeed({ next: { blogId: pre.blogId } });
-    }
-    const blog = await findBlog(next.blogId);
-    if (Result.isFailure(blog)) return blog;
-    return blog.value ? Result.succeed({ next: { blogId: blog.value.id } }) : Result.fail("BLOG_NOT_FOUND");
-  },
+  // port の Result を if で取り出す代わりに、safeTry の中で yield* で取り出す書き方
+  check: ({ pre, next }, _, { safeTry }) =>
+    safeTry(async function* ({ findBlog }) {
+      if (pre && pre.blogId === next.blogId) {
+        return Result.succeed({ next: { blogId: pre.blogId } });
+      }
+      const blog = yield* findBlog(next.blogId);
+      return blog ? Result.succeed({ next: { blogId: blog.id } }) : Result.fail("BLOG_NOT_FOUND");
+    }),
 });
 
 export const blogAcceptsPosts = rule(article.onSave.assuming<{ next: { blogId: BlogIdExisted } }>(), {

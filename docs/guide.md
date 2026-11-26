@@ -147,7 +147,7 @@ export const newArticleId = port("newArticleId").of<() => ArticleIdNew, InfraErr
 
 ## ルールを定義する (`rule`)
 
-`rule` はパイプラインの 1 ステップを定義します。外部ポートを使う場合は `requires` に指定し、`check` の第 2 引数から受け取ります。
+`rule` はパイプラインの 1 ステップを定義します。外部ポートを使う場合は `requires` に指定し、`check` の第 2 引数から受け取ります(第 3 引数の [`safeTry`](#port-の結果を-yield-で取り出す-safetry) でも受け取れます)。
 
 ```ts
 import { rule, always, onCreate, changed, next, pre, and, not } from "domain-rules";
@@ -185,6 +185,29 @@ export const onlyDraftIsDeletable = rule(article.onDelete, {
   check: () => Result.fail("NOT_DRAFT"),
 });
 ```
+
+### port の結果を `yield*` で取り出す (`safeTry`)
+
+port の `Result` を `if (Result.isFailure(...)) return ...` で毎回取り出す代わりに、`check` の第 3 引数の `safeTry` を使って書くこともできます。どちらの書き方を使ってもかまいません。
+
+```ts
+export const uniqueSlugInBlog = rule(article.onSave, {
+  name: "slug はブログ内で一意",
+  requires: { findArticlesInBlog },
+  when: changed("slug"),
+  check: (s, _, { safeTry }) =>
+    safeTry(async function* ({ findArticlesInBlog }) {
+      const articles = yield* findArticlesInBlog(s.next.blogId);
+      return articles.some((a) => a.slug === s.next.slug && a.id !== s.pre?.id)
+        ? Result.fail("DUPLICATED_SLUG")
+        : Result.succeed();
+    }),
+});
+```
+
+- `safeTry` の関数は `requires` に書いた port を受け取ります。`yield*` に渡すと、成功なら値を返し、失敗ならそこで止まってその失敗が `check` の結果になります。
+- 失敗の型は、`yield*` した port の失敗と、最後に返した `Result` の失敗を合わせたものになります。
+- 失敗で止まるときは generator を閉じるので、関数の中の `finally` や `using` の後始末は走ります。
 
 ### 組み込みヘルパー (`immutable` / `alwaysAllow`)
 
