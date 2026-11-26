@@ -61,6 +61,21 @@ export class Port<N extends string, in out A extends readonly unknown[], in out 
     (invocation: Invocation) =>
     (...args: A): Promise<Result.Result<T, E>> =>
       this.callIn(invocation, args);
+
+  // safeTry の中で yield* に渡す関数。失敗なら yield して safeTry に止めさせ、成功なら値を返す
+  readonly unwrapIn = (invocation: Invocation) => {
+    const call = (args: A) => this.callIn(invocation, args);
+    const name = this.name;
+    return async function* (...args: A): AsyncGenerator<Result.Failure<E>, T> {
+      const r = await call(args);
+      if (Result.isFailure(r)) {
+        yield r;
+        // safeTry は失敗を受け取ったら generator を再開しないので、ここに来るのは壊れたときだけ
+        throw new Panic(`port "${name}" の失敗を yield した後に再開されました`);
+      }
+      return r.value;
+    };
+  };
 }
 
 // 型引数を問わない port。型の上で port の一覧を持つためで、実装の登録や呼び出しには使えない

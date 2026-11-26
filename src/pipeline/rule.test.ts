@@ -59,3 +59,45 @@ test("when は判定と説明を保ち、当たらなければ状態を進めな
   );
   expect(Object.isFrozen(onlyPositive)).toBe(true);
 });
+
+test("check の safeTry は、yield* した port の失敗で止まり、その失敗を返す", async () => {
+  const failing = port("failing").of<() => number, "DOWN">();
+  const double = port("double").of<(n: number) => number>();
+  const scope = {};
+  failing.provider(() => Result.fail("DOWN")).registerIn(scope);
+  double.provider((n) => Result.succeed(n * 2)).registerIn(scope);
+  const events: string[] = [];
+  const stops = rule(track, {
+    name: "失敗で止まる",
+    requires: { failing, double },
+    when: always,
+    check: (_, __, { safeTry }) =>
+      safeTry(async function* ({ failing, double }) {
+        const d = yield* double(1);
+        events.push(`double ${d}`);
+        yield* failing();
+        events.push("unreachable");
+        return Result.succeed();
+      }),
+  });
+  expect(await stops.run({ n: 1 }, { scope, now: 0 })).toEqual(Result.fail("DOWN"));
+  expect(events).toEqual(["double 2"]);
+});
+
+test("check の safeTry は、最後まで進んだら body が返した Result を返す", async () => {
+  const double = port("double").of<(n: number) => number>();
+  const scope = {};
+  double.provider((n) => Result.succeed(n * 2)).registerIn(scope);
+  const r = rule(track, {
+    name: "最後まで進む",
+    requires: { double },
+    when: ({ n }: S) => n !== 0,
+    check: ({ n }, _, { safeTry }) =>
+      safeTry(async function* ({ double }) {
+        const d = yield* double(n);
+        return d > 2 ? Result.succeed({ doubled: d }) : Result.fail("SMALL");
+      }),
+  });
+  expect(await r.run({ n: 2 }, { scope, now: 0 })).toEqual(Result.succeed({ doubled: 4 }));
+  expect(await r.run({ n: 1 }, { scope, now: 0 })).toEqual(Result.fail("SMALL"));
+});

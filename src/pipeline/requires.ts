@@ -3,7 +3,15 @@ import type { Invocation } from "../port/invocation.ts";
 import type { AnyPort } from "../port/port.ts";
 
 // requires に書ける record。各 port が、1回の呼び出しから check に渡す関数を作れることを型で表す
-export type Requires = Readonly<Record<string, AnyPort & { readonly resolveIn: (invocation: Invocation) => unknown }>>;
+export type Requires = Readonly<
+  Record<
+    string,
+    AnyPort & {
+      readonly resolveIn: (invocation: Invocation) => unknown;
+      readonly unwrapIn: (invocation: Invocation) => unknown;
+    }
+  >
+>;
 
 type HasIndex<P> = string extends keyof P
   ? true
@@ -26,3 +34,8 @@ export type StrictRecord<P> =
 export const resolvePorts = <P extends Requires>(requires: P, invocation: Invocation) =>
   mapValues(requires, (p) => p.resolveIn(invocation));
 export type PortFns<P extends Requires> = ReturnType<typeof resolvePorts<P>>;
+
+// requires の port ごとに、safeTry の中で yield* に渡す関数を作る
+export const unwrapPorts = <P extends Requires>(requires: P, invocation: Invocation) =>
+  mapValues(requires, (p) => p.unwrapIn(invocation));
+export type UnwrappedPortFns<P extends Requires> = ReturnType<typeof unwrapPorts<P>>;

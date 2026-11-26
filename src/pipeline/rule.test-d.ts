@@ -43,3 +43,38 @@ test("check が受け取る port は requires の値からしか決まらない"
   // @ts-expect-error 省略できる key は、型にあるのに値にないことがある
   rule(track, { name: "z", requires: optional, when: always, check: () => Result.succeed() });
 });
+
+test("check の safeTry は、yield* した port の失敗と body が返した Result を合わせて run の型に残す", () => {
+  const a = port("a").of<(n: number) => string, "A_DOWN">();
+  const b = port("b").of<() => boolean, "B_DOWN">();
+  const r = rule(track, {
+    name: "x",
+    requires: { a, b },
+    when: always,
+    check: (s, _, { safeTry }) =>
+      safeTry(async function* ({ a, b }) {
+        const text = yield* a(s.n);
+        expectTypeOf(text).toEqualTypeOf<string>();
+        const ok = yield* b();
+        return ok ? Result.succeed({ text }) : Result.fail("NG" as const);
+      }),
+  });
+  expectTypeOf<Awaited<ReturnType<typeof r.run>>>().toEqualTypeOf<
+    Result.Result<{ readonly text: string }, "A_DOWN" | "B_DOWN" | "NG">
+  >();
+});
+
+test("safeTry で受け取れるのは requires に書いた port だけ", () => {
+  const a = port("a").of<() => string, "A_DOWN">();
+  rule(track, {
+    name: "x",
+    requires: { a },
+    when: always,
+    check: (_, __, { safeTry }) =>
+      safeTry(async function* (ports) {
+        expectTypeOf(ports).toEqualTypeOf<{ readonly a: () => AsyncGenerator<Result.Failure<"A_DOWN">, string> }>();
+        yield* ports.a();
+        return Result.succeed();
+      }),
+  });
+});

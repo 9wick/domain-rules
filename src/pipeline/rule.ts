@@ -3,7 +3,15 @@ import { getOrEmpty, type OmittableIfEmpty } from "as-free";
 import type { Track, TrackKind } from "../definition/track.ts";
 import type { Invocation } from "../port/invocation.ts";
 import type { AnyPort, NoPorts } from "../port/port.ts";
-import { resolvePorts, type PortFns, type Requires, type StrictRecord } from "./requires.ts";
+import {
+  resolvePorts,
+  unwrapPorts,
+  type PortFns,
+  type Requires,
+  type StrictRecord,
+  type UnwrappedPortFns,
+} from "./requires.ts";
+import { safeTryWith, type SafeTry } from "./safe-try.ts";
 import { conditionalStep, type ConditionalStep } from "./when/step.ts";
 import type { WhenParam } from "./when/when.ts";
 
@@ -11,6 +19,9 @@ export type Checked<V, E> = Result.Result<V, E> | Promise<Result.Result<V, E>>;
 export type CheckResult = Checked<unknown, unknown>;
 type SuccessOf<R> = Awaited<R> extends infer X ? (X extends Result.Success<infer V> ? V : never) : never;
 type FailureOf<R> = Awaited<R> extends infer X ? (X extends Result.Failure<infer E> ? E : never) : never;
+
+// check の第3引数。port の Result を if で取り出す代わりに、yield* で取り出して書くための道具
+export type CheckTools<P extends Requires> = { readonly safeTry: SafeTry<UnwrappedPortFns<P>> };
 
 declare const rulePorts: unique symbol;
 
@@ -46,13 +57,13 @@ export function rule<
     readonly name: N;
     readonly requires?: P & StrictRecord<P>;
     readonly when: W;
-    readonly check: (s: S, ports: PortFns<P>) => R & NoInfer<Checked<V, E>>;
+    readonly check: (s: S, ports: PortFns<P>, tools: CheckTools<P>) => R & NoInfer<Checked<V, E>>;
   } & OmittableIfEmpty<"requires", P & StrictRecord<P>>,
 ): Rule<K, T, N, S, W, V, E, NoInfer<P>> {
   const requires: P = getOrEmpty<"requires", P & StrictRecord<P>>(def, "requires");
-  const check: (s: S, ports: PortFns<P>) => Checked<V, E> = def.check;
+  const check: (s: S, ports: PortFns<P>, tools: CheckTools<P>) => Checked<V, E> = def.check;
   const run = async (s: S, invocation: Invocation): Promise<Result.Result<V, E>> =>
-    check(s, resolvePorts(requires, invocation));
+    check(s, resolvePorts(requires, invocation), { safeTry: safeTryWith(unwrapPorts(requires, invocation)) });
   return Object.freeze({
     kind: "rule",
     track: { kind: track.kind, target: track.target },
