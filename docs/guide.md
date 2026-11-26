@@ -88,6 +88,7 @@ export type ExistingArticle = Omit<Article, "id"> & { id: ArticleIdExisted }; //
   - key と value に同じ項目は書けません（`model` が型エラーになります）。
   - 更新では、既存の値から引き継いだ変換後の値もこのスキーマに通します。そのため `update` を作るモデル（`.load()` の後に `.save()` を書くモデル）では、スキーマが変換後の値もそのまま受け付ける必要があり、受け付けないと `.save()` が型エラーになります。たとえば文字列を `Date` に変換するなら、`v.union([v.date(), v.pipe(v.string(), v.isoTimestamp(), v.transform((s) => new Date(s)))])` のように `Date` も受け付けます。型が変わらない変換（`trim` など）は、変換後の値にもう一度かけても同じ値になるものにしてください。
 - **`schema.persisted`**: 永続化時の型を決めるためのスキーマです。key と value より強い型（存在確認済み Brand 型など）を持たせられます。ライブラリはこのスキーマで実行時の検証を行いません（未確認の入力に Brand が付くのを防ぐため）。保存パイプラインの終端で `next` がこの型になっていることをコンパイル時に検査します。
+- **検証の順番**: 各操作で key と value がどこで検証され、`persisted` の型になるまでの流れは [入力が永続化の型になるまで](#入力が永続化の型になるまで) を参照してください。
 - **既定値**: key と value の `v.optional` には既定値を書けません（`model` が型エラーになります）。省略したときの値は、`next` を昇格させるルールで入れます（例: `status: next.status ?? "DRAFT"`）。
 - **`id` の扱い**: `model` 自身は `id` の取得や採番を行いません。既存レコードの取得は `modelRules(...).load({ requires, fetch })` に書き、新規 ID の採番も他のフィールドと同様にルールで型を昇格させます。
 
@@ -575,6 +576,55 @@ const saved = await Result.pipe(
 - **`upsert`**: `input.id` が `undefined` なら `create`、指定されていれば `update` と同じステップを実行します。
 - **`delete`**: `merge` をスキップします（`next` は `null`）。`input` では key をスキーマ全体で検証します。value の項目や未知のキーがあれば失敗します。
 - **`decide`**: `load` と `merge` をスキップします。`input` ではアクションの入力スキーマ全体で検証します。
+
+### 入力が永続化の型になるまで
+
+呼び出しの入力が、どこでどの schema に検証され、`Persistable` / `Deletable` になるかを操作ごとに示します。矢印の `✗` は、その手前の段階で失敗したときの `step` です。
+
+```mermaid
+flowchart TD
+  %% Mermaid は後に書いた subgraph を左に置くので、左から create・update・delete になるよう逆順に書く
+  subgraph delete["delete"]
+    direction TB
+    d0["入力: key（id 必須）だけ"]
+    d1["key を schema.key 全体で検証<br/>（value の項目があれば失敗）"]
+    d2["fetch(key) → pre"]
+    d3["onDelete のルールを順に実行<br/>（input は key）"]
+    d4["Deletable"]
+    d0 --> d1 -->|"✗ input"| d2 -->|"✗ load"| d3 -->|"✗ ルール名"| d4
+  end
+
+  subgraph update["update"]
+    direction TB
+    u0["入力: key（id 必須）＋ value の差分"]
+    u1["key を schema.key 全体で検証<br/>差分を schema.value の entries で項目ごとに検証<br/>（DB を引く前）"]
+    u2["fetch(key) → pre"]
+    u3["next = pre ＋ 差分（key の項目は pre のまま）"]
+    u4["next の value 部分を schema.value 全体で検証<br/>（required・項目をまたぐ検証が効く）"]
+    u5["onSave のルールを順に実行"]
+    u6["Persistable（update）"]
+    u0 --> u1 -->|"✗ input"| u2 -->|"✗ load"| u3 --> u4 -->|"✗ input"| u5 -->|"✗ ルール名"| u6
+  end
+
+  subgraph create["create"]
+    direction TB
+    c0["入力: key（id を除く）＋ value 全体"]
+    c1["key を schema.key 全体で検証<br/>value を schema.value 全体で検証<br/>（required・項目をまたぐ検証が効く）"]
+    c2["next = key ＋ value<br/>pre = null"]
+    c3["onSave のルールを順に実行<br/>（id の採番・既定値・存在確認で next を昇格）"]
+    c4["Persistable（create）"]
+    c0 --> c1 -->|"✗ input"| c2 --> c3 -->|"✗ ルール名"| c4
+  end
+```
+
+値の型は次のように変わります。
+
+| 段階                                  | 型                                                                    | 決めるもの                                               |
+| ------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------- |
+| 呼び出しの入力                        | key と value の schema の入力型（操作ごとに上の形）                   | `schema.key` / `schema.value`                            |
+| 検証のあと（ルールが受け取る `next`） | `Value<M>`（key と value の出力型を合わせた型）                       | `schema.key` / `schema.value`                            |
+| ルールを通ったあと                    | ルールが `check` で返した昇格後の型                                   | 各ルール                                                 |
+| 封をした値の `next`                   | `Persisted<M>`。最後の `next` がこの型でなければ `.save()` が型エラー | `schema.persisted`（型の検査だけ。実行時には検証しない） |
 
 ### マージ (`merge`) とルール評価の仕様
 
