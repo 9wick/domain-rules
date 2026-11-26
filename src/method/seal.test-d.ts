@@ -7,7 +7,11 @@ import { open, type Decision, type Deletable, type Persistable } from "./seal.ts
 type Operator = { readonly role: "MEMBER" };
 const item = defineModel<Operator>()({
   name: "item",
-  schema: { input: v.object({ id: v.optional(v.string()) }), persisted: v.object({ id: v.string() }) },
+  schema: {
+    key: v.object({ id: v.optional(v.string()) }),
+    value: v.object({}),
+    persisted: v.object({ id: v.string() }),
+  },
 });
 const download = defineAction<Operator>()({ name: "download", input: v.object({ fileId: v.string() }) });
 

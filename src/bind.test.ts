@@ -15,7 +15,11 @@ import { Panic } from "./shared/panic.ts";
 
 const item = defineModel<string>()({
   name: "item",
-  schema: { input: v.object({ id: v.optional(v.string()) }), persisted: v.object({ id: v.string() }) },
+  schema: {
+    key: v.object({ id: v.optional(v.string()) }),
+    value: v.object({}),
+    persisted: v.object({ id: v.string() }),
+  },
 });
 const newId = port("newId").of<() => string>();
 const stamped = rule(item.onSave, {

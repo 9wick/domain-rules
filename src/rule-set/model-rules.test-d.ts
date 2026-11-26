@@ -15,7 +15,8 @@ type Operator = { readonly name: string };
 const item = defineModel<Operator>()({
   name: "item",
   schema: {
-    input: v.object({ id: v.optional(v.string()), n: v.number() }),
+    key: v.object({ id: v.optional(v.string()) }),
+    value: v.object({ n: v.number() }),
     persisted: v.object({ id: v.string(), n: v.number() }),
   },
 });
@@ -52,15 +53,44 @@ test("永続化の型にならない並びは型エラー", () => {
   modelRules(item).save(ruleset(nothing));
 });
 
-test("fetch は検証した入力と、domain の actor を受け取る", () => {
-  modelRules(item).load({
-    fetch: ({ input, actor }) => {
-      expectTypeOf(input.id).toEqualTypeOf<string>();
-      expectTypeOf(input.n).toEqualTypeOf<number | undefined>();
-      expectTypeOf(actor).toEqualTypeOf<Operator>();
-      return Result.succeed({ id: input.id, n: 0 });
+test("fetch は検証した key と、domain の actor を受け取る。key の項目は id 以外も必須の型で届く", () => {
+  const rental = defineModel<Operator>()({
+    name: "rental",
+    schema: {
+      key: v.object({ id: v.optional(v.string()), tenantId: v.string() }),
+      value: v.object({ n: v.number() }),
+      persisted: v.object({ id: v.string(), tenantId: v.string(), n: v.number() }),
     },
   });
+  const { update, delete: remove } = modelRules(rental)
+    .load({
+      fetch: ({ input, actor }) => {
+        expectTypeOf(input).toEqualTypeOf<
+          Readonly<{ id?: string | undefined; tenantId: string }> & { readonly id: string }
+        >();
+        expectTypeOf(actor).toEqualTypeOf<Operator>();
+        return Result.succeed({ id: input.id, tenantId: input.tenantId, n: 0 });
+      },
+    })
+    .save(
+      ruleset(
+        rule(rental.onSave, {
+          name: "id を付ける",
+          when: always,
+          check: ({ pre }) => Result.succeed({ next: { id: pre?.id ?? "new" } }),
+        }),
+      ),
+    )
+    .delete(ruleset(alwaysAllow))
+    .resolveIn({ invocation: () => ({ scope: {}, now: 0 }) });
+  // @ts-expect-error tenantId は key なので、update でも省略できない
+  void update({ input: { id: "r1", n: 1 }, actor: { name: "op" } });
+  // value は変える項目だけを渡せる
+  void update({ input: { id: "r1", tenantId: "t1" }, actor: { name: "op" } });
+  // @ts-expect-error delete も key で対象を決める
+  void remove({ input: { id: "r1" }, actor: { name: "op" } });
+  // @ts-expect-error delete は value を受け取らない
+  void remove({ input: { id: "r1", tenantId: "t1", n: 1 }, actor: { name: "op" } });
 });
 
 test("load の失敗は、fetch が返した失敗を load の失敗として持つ", async () => {
@@ -78,21 +108,22 @@ test("rule の組の port には、fetch の requires の port が入る", () =>
 test("id のない model には load を書けない", () => {
   const noId = defineModel<Operator>()({
     name: "noId",
-    schema: { input: v.object({ n: v.number() }), persisted: v.object({ n: v.number() }) },
+    schema: { key: v.object({}), value: v.object({ n: v.number() }), persisted: v.object({ n: v.number() }) },
   });
-  // @ts-expect-error 更新と削除は id で対象を決めるので、入力スキーマに id が要る
+  // @ts-expect-error 更新と削除は id で対象を決めるので、key の schema に id が要る
   modelRules(noId).load({ fetch: () => Result.succeed({ n: 1 }) });
 });
 
-test("fetch の返り値は、入力の型にも代入できなければならない", () => {
+test("fetch の返り値は、モデルの値の型にも代入できなければならない", () => {
   const appointment = defineModel<Operator>()({
     name: "appointment",
     schema: {
-      input: v.object({ id: v.optional(v.string()), date: v.string() }),
+      key: v.object({ id: v.optional(v.string()) }),
+      value: v.object({ date: v.string() }),
       persisted: v.object({ id: v.string(), date: v.date() }),
     },
   });
-  // @ts-expect-error 更新で date を省略すると、next の date に入力の型ではない Date が入る
+  // @ts-expect-error 更新で date を省略すると、next の date に value の型ではない Date が入る
   modelRules(appointment).load({ fetch: ({ input }) => Result.succeed({ id: input.id, date: new Date() }) });
 });
 
@@ -128,12 +159,12 @@ test("あるかどうか分からない線路は、rule の組に渡せない", 
   modelRules(item).save(maybe);
 });
 
-test("schema がモデルの値を受け付けないと、update を作る save は型エラー", () => {
+test("value の schema が自分の出力を受け付けないと、update を作る save は型エラー", () => {
   const stamped = defineModel<Operator>()({
     name: "stamped",
     schema: {
-      input: v.object({
-        id: v.optional(v.string()),
+      key: v.object({ id: v.optional(v.string()) }),
+      value: v.object({
         at: v.pipe(
           v.string(),
           v.transform((s) => new Date(s)),

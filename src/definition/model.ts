@@ -5,13 +5,28 @@ import { Track } from "./track.ts";
 export type Entries<Out> = { readonly [K in keyof Out]-?: StandardSchemaV1<unknown, Out[K]> };
 export type ObjectSchema<In = unknown, Out = unknown> = StandardSchemaV1<In, Out> & { readonly entries: Entries<Out> };
 
-// schema の型を入力・出力の型に分けて持つ。検証の結果の型が、型引数からそのまま決まる
-export type Model<N extends string = string, In = unknown, Out = unknown, P = unknown, Act = unknown> = {
+// 線路に載るモデルの値は key と value を合わせたもの
+export type ValueOf<KO, VO> = KO & VO;
+
+// key はモデルを特定する項目、value はモデルが持つ項目。schema の型を入力・出力の型に分けて持つ
+export type Model<
+  N extends string = string,
+  KI = unknown,
+  KO = unknown,
+  VI = unknown,
+  VO = unknown,
+  P = unknown,
+  Act = unknown,
+> = {
   readonly kind: "model";
   readonly name: N;
-  readonly schema: { readonly input: ObjectSchema<In, Out>; readonly persisted: StandardSchemaV1<unknown, P> };
-  readonly onSave: Track<"save", N, SaveState<P | null, Out, Act>>;
-  readonly onDelete: Track<"delete", N, DeleteState<P, Out, Act>>;
+  readonly schema: {
+    readonly key: ObjectSchema<KI, KO>;
+    readonly value: ObjectSchema<VI, VO>;
+    readonly persisted: StandardSchemaV1<unknown, P>;
+  };
+  readonly onSave: Track<"save", N, SaveState<P | null, ValueOf<KO, VO>, Act>>;
+  readonly onDelete: Track<"delete", N, DeleteState<P, KO, Act>>;
 };
 
 // input は呼び出し時に指定した項目だけを持つ。next と同じ値でも、指定したことは input でしか分からない
@@ -23,41 +38,65 @@ export type SaveState<Pre, Next, Act> = {
   readonly now: number;
 };
 
-export type DeleteState<Pre, Value, Act> = {
+// delete の入力は、消すモデルを特定する key だけ
+export type DeleteState<Pre, Key, Act> = {
   readonly pre: Pre;
   readonly next: null;
-  readonly input: Readonly<Partial<Value>>;
+  readonly input: Readonly<Key>;
   readonly actor: Act;
   readonly now: number;
 };
 
-export type Value<M extends Model> = StandardSchemaV1.InferOutput<M["schema"]["input"]>;
+export type Value<M extends Model> = ValueOf<
+  StandardSchemaV1.InferOutput<M["schema"]["key"]>,
+  StandardSchemaV1.InferOutput<M["schema"]["value"]>
+>;
 export type Persisted<M extends Model> = StandardSchemaV1.InferOutput<M["schema"]["persisted"]>;
-export type InputOf<M extends Model> = Partial<StandardSchemaV1.InferInput<M["schema"]["input"]>>;
 // model を作った domain の actor の型
 export type ModelActor<M extends Model> =
   M["onDelete"] extends Track<"delete", string, DeleteState<unknown, unknown, infer A>> ? A : never;
 
-type OptionalInputId<In> = In extends { readonly id: unknown }
-  ? { readonly "model の入力スキーマの id は省略可能でなければならない": true }
+type OptionalKeys<T> = { [K in keyof T]-?: {} extends Pick<T, K> ? K : never }[keyof T];
+
+// 入力で省略できる項目が検証のあとで必ずあるなら、schema が既定値を補っている。既定値はルールで next に入れる
+type NoDefault<In, Out> = [Exclude<OptionalKeys<In>, OptionalKeys<Out>>] extends [never]
+  ? unknown
+  : {
+      readonly "schema の optional には既定値を書けない。既定値はルールで next に入れる": Exclude<
+        OptionalKeys<In>,
+        OptionalKeys<Out>
+      >;
+    };
+
+// key と value が同じ項目を持つと、next でどちらの値が残るかが決まらない
+type Disjoint<KO, VO> = [Extract<keyof KO, keyof VO>] extends [never]
+  ? unknown
+  : { readonly "key と value に同じ項目は書けない": Extract<keyof KO, keyof VO> };
+
+// create では id をまだ持たないので、key の id は省略できる形で書く。update と delete では id を必須として扱う
+type OptionalId<KI> = KI extends { readonly id: unknown }
+  ? { readonly "key の schema の id は省略可能でなければならない": true }
   : unknown;
 
 // actor の型を決めてから model を作る。actor の型は domain で1回だけ書く
 export const defineModel =
   <Act>() =>
-  <const N extends string, In, Out, P>(def: {
+  <const N extends string, KI, KO, VI, VO, P>(def: {
     readonly name: N;
     readonly schema: {
-      readonly input: StandardSchemaV1<In, Out> & { readonly entries: NoInfer<Entries<Out>> } & NoInfer<
-          OptionalInputId<In>
+      readonly key: StandardSchemaV1<KI, KO> & { readonly entries: NoInfer<Entries<KO>> } & NoInfer<
+          NoDefault<KI, KO> & OptionalId<KI>
+        >;
+      readonly value: StandardSchemaV1<VI, VO> & { readonly entries: NoInfer<Entries<VO>> } & NoInfer<
+          NoDefault<VI, VO> & Disjoint<KO, VO>
         >;
       readonly persisted: StandardSchemaV1<unknown, P>;
     };
-  }): Model<N, In, Out, P, Act> =>
+  }): Model<N, KI, KO, VI, VO, P, Act> =>
     Object.freeze({
       kind: "model",
       name: def.name,
       schema: def.schema,
-      onSave: new Track<"save", N, SaveState<P | null, Out, Act>>("save", def.name),
-      onDelete: new Track<"delete", N, DeleteState<P, Out, Act>>("delete", def.name),
+      onSave: new Track<"save", N, SaveState<P | null, ValueOf<KO, VO>, Act>>("save", def.name),
+      onDelete: new Track<"delete", N, DeleteState<P, KO, Act>>("delete", def.name),
     });

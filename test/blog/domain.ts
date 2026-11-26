@@ -46,23 +46,31 @@ export type ArticleId = v.InferOutput<typeof ArticleIdSchema>;
 export type ArticleIdExisted = v.InferOutput<typeof ArticleIdExistedSchema>;
 export type ArticleIdNew = v.InferOutput<typeof ArticleIdNewSchema>;
 
-const articleInput = v.object({
-  id: v.optional(ArticleIdSchema),
+export const ArticleStatusSchema = v.picklist(["DRAFT", "PUBLISHED", "ARCHIVED"]);
+export type ArticleStatus = v.InferOutput<typeof ArticleStatusSchema>;
+
+const articleKey = v.object({ id: v.optional(ArticleIdSchema) });
+// status と approvedAt は作成時に省略でき、省略したときの値はルールで入れる
+const articleValue = v.object({
   blogId: BlogIdSchema,
-  status: v.optional(v.picklist(["DRAFT", "PUBLISHED", "ARCHIVED"]), "DRAFT"),
+  status: v.optional(ArticleStatusSchema),
   authorId: UserIdSchema,
   reviewerId: UserIdSchema,
   slug: v.pipe(v.string(), v.minLength(1)),
   publishAt: v.pipe(v.number(), v.integer()),
-  approvedAt: v.optional(v.nullable(v.number()), null),
+  approvedAt: v.optional(v.nullable(v.number())),
 });
 
 export const article = model({
   name: "article",
   schema: {
-    input: articleInput,
+    key: articleKey,
+    value: articleValue,
     persisted: v.object({
-      ...articleInput.entries,
+      ...articleKey.entries,
+      ...articleValue.entries,
+      status: ArticleStatusSchema,
+      approvedAt: v.nullable(v.number()),
       id: v.union([ArticleIdExistedSchema, ArticleIdNewSchema]),
       blogId: BlogIdExistedSchema,
       reviewerId: UserIdExistedSchema,
@@ -84,6 +92,17 @@ export const findArticlesInBlog = cached(
   port("findArticlesInBlog").of<(blogId: BlogId) => readonly ExistingArticle[], InfraError>(),
 );
 export const newArticleId = port("newArticleId").of<() => ArticleIdNew, InfraError>();
+
+// 既定値を入れたあとの値。status と approvedAt を読むルールは、この状態を前提にする
+type Defaulted = { readonly next: { readonly status: ArticleStatus; readonly approvedAt: number | null } };
+const savedWithDefaults = article.onSave.assuming<Defaulted>();
+
+export const articleDefaults = rule(article.onSave, {
+  name: "作成時に省略した status は下書き、approvedAt は未承認",
+  when: always,
+  check: ({ next }) =>
+    Result.succeed({ next: { status: next.status ?? "DRAFT", approvedAt: next.approvedAt ?? null } }),
+});
 
 export const isDraft = (a: ArticleValue) => a.status === "DRAFT";
 export const isPublished = (a: ArticleValue) => a.status === "PUBLISHED";
@@ -114,7 +133,7 @@ export const publishAtInFuture = rule(article.onSave, {
   check: (s) => (s.next.publishAt > s.now ? Result.succeed() : Result.fail("PUBLISH_AT_IN_PAST")),
 });
 
-export const onlyReviewerPublishes = rule(article.onSave, {
+export const onlyReviewerPublishes = rule(savedWithDefaults, {
   name: "公開できるのは今のレビュアーだけ",
   when: changed("status", { pre: "DRAFT", next: "PUBLISHED" }),
   check: (s) => (s.actor.id === s.pre?.reviewerId ? Result.succeed() : Result.fail("NOT_REVIEWER")),
@@ -132,19 +151,19 @@ export const slugLockedAfterPublish = rule(article.onSave, {
   check: () => Result.fail("SLUG_LOCKED"),
 });
 
-export const publishedIsApproved = rule(article.onSave, {
+export const publishedIsApproved = rule(savedWithDefaults, {
   name: "公開中の記事は承認済み",
   when: next(isPublished),
   check: (s) => (isApproved(s.next) ? Result.succeed() : Result.fail("NOT_APPROVED")),
 });
 
-const allowedStatusChanges: Record<ArticleValue["status"], readonly ArticleValue["status"][]> = {
+const allowedStatusChanges: Record<ArticleStatus, readonly ArticleStatus[]> = {
   DRAFT: ["DRAFT", "PUBLISHED"],
   PUBLISHED: ["PUBLISHED", "ARCHIVED"],
   ARCHIVED: ["ARCHIVED"],
 };
 
-export const statusChangesAreAllowed = rule(article.onSave, {
+export const statusChangesAreAllowed = rule(savedWithDefaults, {
   name: "status は許可された変化だけ",
   when: changed("status"),
   check: (s) => {
@@ -190,7 +209,7 @@ export const blogExists = rule(article.onSave, {
     }),
 });
 
-export const blogAcceptsPosts = rule(article.onSave.assuming<{ next: { blogId: BlogIdExisted } }>(), {
+export const blogAcceptsPosts = rule(article.onSave.assuming<Defaulted & { next: { blogId: BlogIdExisted } }>(), {
   name: "投稿を受け付けているブログ",
   requires: { findBlog },
   when: changed("status", { next: "PUBLISHED" }),
@@ -241,6 +260,7 @@ export const articleRules = modelRules(article)
   })
   .save(
     ruleset(memberCanSave)
+      .add(articleDefaults)
       .add(statusChangesAreAllowed)
       .add(articleImmutableFields)
       .add(blogExists)

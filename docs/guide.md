@@ -38,7 +38,7 @@ export const { model, action, actor } = domainDefinitionKit<{ actor: AppActor }>
 
 ## モデルを定義する (`model`)
 
-`model` は、検証対象の入力スキーマと永続化後のスキーマを定義します。`domainDefinitionKit` が返した `model` を使います。
+`model` は、モデルを特定する key のスキーマ、モデルが持つ value のスキーマ、永続化後のスキーマを定義します。`domainDefinitionKit` が返した `model` を使います。
 
 ```ts
 import * as v from "valibot";
@@ -48,23 +48,29 @@ export const ArticleIdSchema = v.pipe(v.string(), v.startsWith("art_"), v.brand(
 export const ArticleIdExistedSchema = v.pipe(ArticleIdSchema, v.brand("ArticleIdExisted"));
 export const ArticleIdNewSchema = v.pipe(ArticleIdSchema, v.brand("ArticleIdNew"));
 
-const articleInput = v.object({
-  id: v.optional(ArticleIdSchema),
+export const ArticleStatusSchema = v.picklist(["DRAFT", "PUBLISHED", "ARCHIVED"]);
+
+const articleKey = v.object({ id: v.optional(ArticleIdSchema) });
+const articleValue = v.object({
   blogId: BlogIdSchema,
-  status: v.optional(v.picklist(["DRAFT", "PUBLISHED", "ARCHIVED"]), "DRAFT"),
+  status: v.optional(ArticleStatusSchema), // 省略したときの値はルールで入れる
   authorId: UserIdSchema,
   reviewerId: UserIdSchema,
   slug: v.pipe(v.string(), v.minLength(1)),
   publishAt: v.pipe(v.number(), v.integer()),
-  approvedAt: v.optional(v.nullable(v.number()), null),
+  approvedAt: v.optional(v.nullable(v.number())),
 });
 
 export const article = model({
   name: "article",
   schema: {
-    input: articleInput,
+    key: articleKey,
+    value: articleValue,
     persisted: v.object({
-      ...articleInput.entries,
+      ...articleKey.entries,
+      ...articleValue.entries,
+      status: ArticleStatusSchema,
+      approvedAt: v.nullable(v.number()),
       id: v.union([ArticleIdExistedSchema, ArticleIdNewSchema]),
       blogId: BlogIdExistedSchema,
       reviewerId: UserIdExistedSchema,
@@ -72,16 +78,18 @@ export const article = model({
   },
 });
 
-export type ArticleValue = Value<typeof article>; // schema.input の出力型
+export type ArticleValue = Value<typeof article>; // schema.key と schema.value の出力型を合わせた型
 export type Article = Persisted<typeof article>; // schema.persisted の出力型
 export type ExistingArticle = Omit<Article, "id"> & { id: ArticleIdExisted }; // DB から読んだ記事の型
 ```
 
-- **`schema.input`**: モデルの値のスキーマです。入力はモデルのうち作成・更新したい部分の抜粋で、このスキーマで検証・変換します。更新時は既存の値を取得する前に、入力に含まれたフィールドだけを各フィールドのスキーマで検証するため、トップレベルが `entries` を持つオブジェクトスキーマ（Valibot の `v.object` 等）である必要があります。オブジェクト全体に付けた検証（`v.pipe(v.object(...), v.check(...))` で書く「開始は終了より前」など）は、作成時は入力全体に、更新時は既存の値に入力を重ねた `next` にかかるので、作成と更新の両方で効きます。
+- **`schema.key`**: モデルを特定する項目のスキーマです。`id` に加えて、`tenantId` のように既存の値を探すのに必ず要る項目を書きます。key の項目はどの操作でも入力に必要で、`update` と `delete` では key 全体を検証してから `fetch` に渡します。`id` は `create` では採番前で入力にないので、省略可能にしておく必要があります（`update` と `delete` では必須として扱います）。key の項目は `update` で変えられません。
+- **`schema.value`**: モデルが持つ項目のスキーマです。required と optional は、完成したモデルの値にその項目が必ずあるかどうかを表します。`create` では value 全体を検証します。`update` では value は差分なので、既存の値を取得する前に、入力に含まれた項目だけを各項目のスキーマで検証します。そのため、トップレベルが `entries` を持つオブジェクトスキーマ（Valibot の `v.object` 等）である必要があります。オブジェクト全体に付けた検証（`v.pipe(v.object(...), v.check(...))` で書く「開始は終了より前」など）は、作成時は入力の value 全体に、更新時は既存の値に差分を重ねた値にかかるので、作成と更新の両方で効きます。
+  - key と value に同じ項目は書けません（`model` が型エラーになります）。
   - 更新では、既存の値から引き継いだ変換後の値もこのスキーマに通します。そのため `update` を作るモデル（`.load()` の後に `.save()` を書くモデル）では、スキーマが変換後の値もそのまま受け付ける必要があり、受け付けないと `.save()` が型エラーになります。たとえば文字列を `Date` に変換するなら、`v.union([v.date(), v.pipe(v.string(), v.isoTimestamp(), v.transform((s) => new Date(s)))])` のように `Date` も受け付けます。型が変わらない変換（`trim` など）は、変換後の値にもう一度かけても同じ値になるものにしてください。
-- **`schema.persisted`**: 永続化時の型を決めるためのスキーマです。`input` より強い型（存在確認済み Brand 型など）を持たせられます。ライブラリはこのスキーマで実行時の検証を行いません（未確認の入力に Brand が付くのを防ぐため）。保存パイプラインの終端で `next` がこの型になっていることをコンパイル時に検査します。
-- **新規作成時の既定値**: `schema.input` 内の `v.optional` の既定値は、`create` 時にだけ適用されます。
-- **`id` の扱い**: `model` 自身は `id` の取得や採番を行いません。既存レコードの取得は `modelRules(...).load({ requires, fetch })` に書き、新規 ID の採番も他のフィールドと同様にルールで型を昇格させます。なお、更新・削除・upsert を使うモデルの `schema.input` では `id` を省略可能にしておく必要があります。
+- **`schema.persisted`**: 永続化時の型を決めるためのスキーマです。key と value より強い型（存在確認済み Brand 型など）を持たせられます。ライブラリはこのスキーマで実行時の検証を行いません（未確認の入力に Brand が付くのを防ぐため）。保存パイプラインの終端で `next` がこの型になっていることをコンパイル時に検査します。
+- **既定値**: key と value の `v.optional` には既定値を書けません（`model` が型エラーになります）。省略したときの値は、`next` を昇格させるルールで入れます（例: `status: next.status ?? "DRAFT"`）。
+- **`id` の扱い**: `model` 自身は `id` の取得や採番を行いません。既存レコードの取得は `modelRules(...).load({ requires, fetch })` に書き、新規 ID の採番も他のフィールドと同様にルールで型を昇格させます。
 
 ---
 
@@ -92,12 +100,12 @@ export type ExistingArticle = Omit<Article, "id"> & { id: ArticleIdExisted }; //
 | 操作フェーズ     | 指定する値                | 初期状態の型                                                      |
 | ---------------- | ------------------------- | ----------------------------------------------------------------- |
 | モデルの保存     | `article.onSave`          | `{ pre: Article \| null, next: ArticleValue, input, actor, now }` |
-| モデルの削除     | `article.onDelete`        | `{ pre: Article, next: null, input, actor, now }`                 |
+| モデルの削除     | `article.onDelete`        | `{ pre: Article, next: null, input: key, actor, now }`            |
 | アクションの判定 | `previewArticle.onDecide` | `{ input, actor, now }`                                           |
 
 - **`pre`**: DB から読み込んだ既存の値（`load` の `fetch` が成功として返した値）。新規作成時は `null` です。ルール定義時点では `load` が未定のため、`pre` の型は `Persisted<M>` になります。`fetch` のより具体的な返り値型（例: `ExistingArticle`）を前提としたい場合は `.assuming<...>()` を付け、パイプラインの先頭に配置します（開始状態がその型を満たすかを `modelRules` が検査します）。
 - **`next`**: 変更後の値。更新時は既存値に入力値をマージしたオブジェクトです（型は `ArticleValue` ですが、入力で省略されたフィールドには既存値が引き継がれます）。
-- **`input`**（保存・削除）: 呼び出し時に指定した項目だけを持つ、検証済みの入力（`Partial<ArticleValue>`）。`next` が既存値と同じでも、その項目を指定したかどうかは `input` で分かります。新規作成時は入力全体です。ルールは `input` を書き換えられません（`check` が `input` を返すと `ruleset.add()` で型エラーになります）。
+- **`input`**（保存・削除）: 呼び出し時に指定した項目だけを持つ、検証済みの入力です。保存では key と指定した value の項目（`Partial<ArticleValue>`）、削除では key です。`next` が既存値と同じでも、その項目を指定したかどうかは `input` で分かります。新規作成時は入力全体です。ルールは `input` を書き換えられません（`check` が `input` を返すと `ruleset.add()` で型エラーになります）。
 - **`now`**: 呼び出し開始時の時刻（`clock` プロバイダーが返す数値）。1 回の実行中は固定値です。
 
 ### 前段ルールの型昇格を前提にする (`assuming`)
@@ -175,7 +183,8 @@ export const uniqueSlugInBlog = rule(article.onSave, {
   },
 });
 
-export const onlyReviewerPublishes = rule(article.onSave, {
+// savedWithDefaults は status に既定値が入った状態（後述の「適用条件を書く」を参照）
+export const onlyReviewerPublishes = rule(savedWithDefaults, {
   name: "公開できるのは今のレビュアーだけ",
   when: changed("status", { pre: "DRAFT", next: "PUBLISHED" }),
   check: (s) => (s.actor.id === s.pre?.reviewerId ? Result.succeed() : Result.fail("NOT_REVIEWER")),
@@ -239,6 +248,23 @@ export const articleImmutableFields = immutable(article.onSave, ["blogId", "auth
 export const isDraft = (a: ArticleValue) => a.status === "DRAFT";
 export const isPublished = (a: ArticleValue) => a.status === "PUBLISHED";
 export const isApproved = (a: ArticleValue) => a.approvedAt !== null;
+```
+
+`schema.value` で省略可能にした項目の既定値は、`next` を昇格させるルールで入れます。そのあとのルールは `.assuming<...>()` で、既定値が入った状態を前提にします。
+
+```ts
+type Defaulted = { readonly next: { readonly status: ArticleStatus; readonly approvedAt: number | null } };
+const savedWithDefaults = article.onSave.assuming<Defaulted>();
+
+export const articleDefaults = rule(article.onSave, {
+  name: "作成時に省略した status は下書き、approvedAt は未承認",
+  when: always,
+  check: ({ next }) =>
+    Result.succeed({ next: { status: next.status ?? "DRAFT", approvedAt: next.approvedAt ?? null } }),
+});
+
+// status を読むルールは savedWithDefaults に書く
+export const statusChangesAreAllowed = rule(savedWithDefaults, { ... });
 ```
 
 ### 組み込みの `when` ビルダー
@@ -308,7 +334,7 @@ export const blogExists = rule(article.onSave, {
 });
 
 // 前段の blogExists で blogId が BlogIdExisted に昇格していることを前提にする
-export const blogAcceptsPosts = rule(article.onSave.assuming<{ next: { blogId: BlogIdExisted } }>(), {
+export const blogAcceptsPosts = rule(article.onSave.assuming<Defaulted & { next: { blogId: BlogIdExisted } }>(), {
   name: "投稿を受け付けているブログ",
   requires: { findBlog },
   when: changed("status", { next: "PUBLISHED" }),
@@ -379,6 +405,7 @@ export const articleRules = modelRules(article)
   })
   .save(
     ruleset(memberCanSave)
+      .add(articleDefaults)
       .add(statusChangesAreAllowed)
       .add(articleImmutableFields)
       .add(blogExists)
@@ -397,7 +424,7 @@ export const articleRules = modelRules(article)
   .delete(ruleset(memberCanDelete).add(onlyDraftIsDeletable));
 ```
 
-- **`.load({ requires, fetch })`**: 既存の値を取得するステップを定義します。`update` / `upsert` / `delete` メソッドを生成するために必要で、`save` / `delete` より前に呼び出します。`fetch` はルールの `check` と同じく `requires` に書いたポートを受け取り、`Result` を返します。第 1 引数は `{ input, actor }` で、`input` は検証済みの入力（`id` は必ず入ります）、`actor` はメソッドに渡された操作者です。`id` 以外の値（`actor` のテナント ID など）も取得条件に使えます。成功の値は `schema.persisted` と `schema.input` の両方の出力型に代入可能である必要があり、そのまま `pre` になります。ライブラリは成功の値も失敗の値も解釈しません。見つからなかったときの失敗は、`fetch` が自分で返します。
+- **`.load({ requires, fetch })`**: 既存の値を取得するステップを定義します。`update` / `upsert` / `delete` メソッドを生成するために必要で、`save` / `delete` より前に呼び出します。`fetch` はルールの `check` と同じく `requires` に書いたポートを受け取り、`Result` を返します。第 1 引数は `{ input, actor }` で、`input` は `schema.key` で検証した key（`id` は必ず入り、`tenantId` など key に書いた項目も必須の型で入ります）、`actor` はメソッドに渡された操作者です。`actor` の値も取得条件に使えます。成功の値は `schema.persisted` と、key と value を合わせた出力型の両方に代入可能である必要があり、そのまま `pre` になります。ライブラリは成功の値も失敗の値も解釈しません。見つからなかったときの失敗は、`fetch` が自分で返します。
 - **`.save(ruleset)`**: `create` を生成します（`.load()` の後に書くと `update` と `upsert` も生成されます）。保存パイプラインの終端で `next` が `schema.persisted` の型を満たしていないとコンパイルエラーになります。
 - **`.delete(ruleset)`**: `.load()` の後にだけ指定でき、`delete` を生成します。指定しなければ削除メソッドは生えません。
 
@@ -521,13 +548,13 @@ const saved = await Result.pipe(
 
 ### メソッド一覧と返り値
 
-| メソッド | 引数                                      | 成功時の返り値                         |
-| -------- | ----------------------------------------- | -------------------------------------- |
-| `create` | `{ input, actor }`（`id` は受け付けない） | `Persistable<M, "create">`             |
-| `update` | `{ input, actor }`（`input.id` 必須）     | `Persistable<M, "update">`             |
-| `upsert` | `{ input, actor }`                        | `Persistable<M, "create" \| "update">` |
-| `delete` | `{ input, actor }`（`input.id` 必須）     | `Deletable<M>`                         |
-| `decide` | `{ input, actor }`                        | `Decision<A, T>`                       |
+| メソッド | 引数                                                  | 成功時の返り値                         |
+| -------- | ----------------------------------------------------- | -------------------------------------- |
+| `create` | `{ input, actor }`（key（`id` を除く）と value 全体） | `Persistable<M, "create">`             |
+| `update` | `{ input, actor }`（key（`id` 必須）と value の差分） | `Persistable<M, "update">`             |
+| `upsert` | `{ input, actor }`（`create` か `update` の入力）     | `Persistable<M, "create" \| "update">` |
+| `delete` | `{ input, actor }`（key（`id` 必須）だけ）            | `Deletable<M>`                         |
+| `decide` | `{ input, actor }`                                    | `Decision<A, T>`                       |
 
 `upsert` は `input.id` が無ければ新規作成、あれば `load` の `fetch` で既存値を取得して更新します。`fetch` が失敗を返せば `load` で失敗します。
 
@@ -543,10 +570,10 @@ const saved = await Result.pipe(
 | 4   | `rule`            | `ruleset` に並べたルールを順に評価・実行する                                 | 失敗したルールの `check` が返した値    |
 | 5   | `seal` / `output` | 保存・削除は検証済みラッパーを生成。アクションは `output` で結果を組み立てる | なし                                   |
 
-- **`create`**: `load` をスキップします（`pre` は `null`）。`input` ではスキーマ全体で検証し、省略可能項目の既定値を補完します。`id` やスキーマにない未知のキーがあると失敗します。
-- **`update`**: 全 5 ステップを実行します。`input` では入力に含まれたキーだけを各フィールドのスキーマで検証します（未知のキーがあれば失敗します）。項目単体で不正な入力は、ここで `load` の前に失敗します。`merge` の後に、重ねた `next` をスキーマ全体で検証し、項目をまたぐ検証に違反していれば `input` の失敗を返します。
+- **`create`**: `load` をスキップします（`pre` は `null`）。`input` では key と value をそれぞれのスキーマ全体で検証し、両方の問題をまとめて返します。`id` やスキーマにない未知のキーがあると失敗します。
+- **`update`**: 全 5 ステップを実行します。`input` では key をスキーマ全体で、value の差分を入力に含まれた項目だけ各項目のスキーマで検証します（未知のキーがあれば失敗します）。不正な入力は、ここで `load` の前に失敗します。`load` の `fetch` には key だけを渡します。`merge` の後に、重ねた値を value のスキーマ全体で検証し、項目をまたぐ検証に違反していれば `input` の失敗を返します。
 - **`upsert`**: `input.id` が `undefined` なら `create`、指定されていれば `update` と同じステップを実行します。
-- **`delete`**: `merge` をスキップします（`next` は `null`）。`input` では `update` と同じく、入力に含まれたキーだけを各フィールドのスキーマで検証します（未知のキーがあれば失敗します）。
+- **`delete`**: `merge` をスキップします（`next` は `null`）。`input` では key をスキーマ全体で検証します。value の項目や未知のキーがあれば失敗します。
 - **`decide`**: `load` と `merge` をスキップします。`input` ではアクションの入力スキーマ全体で検証します。
 
 ### マージ (`merge`) とルール評価の仕様

@@ -10,7 +10,11 @@ const { model, action, actor } = domainDefinitionKit<{ actor: Operator }>();
 test("kit で決めた actor の型が、model と action の線路に入る", () => {
   const item = model({
     name: "item",
-    schema: { input: v.object({ id: v.optional(v.string()) }), persisted: v.object({ id: v.string() }) },
+    schema: {
+      key: v.object({ id: v.optional(v.string()) }),
+      value: v.object({}),
+      persisted: v.object({ id: v.string() }),
+    },
   });
   const download = action({ name: "download", input: v.object({ fileId: v.string() }) });
   expectTypeOf<ModelActor<typeof item>>().toEqualTypeOf<Operator>();

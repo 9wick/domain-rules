@@ -51,17 +51,19 @@ import {
 // actor の型はここで1回だけ決める。rule の check はこの型の actor を受け取る
 const { model } = domainDefinitionKit<{ actor: { readonly id: string } }>();
 
-const articleInput = v.object({
-  id: v.optional(v.string()),
+// key はモデルを特定する項目、value はモデルが持つ項目。update では value を変える項目だけ渡せる
+const articleKey = v.object({ id: v.optional(v.string()) });
+const articleValue = v.object({
   title: v.pipe(v.string(), v.minLength(1)),
-  status: v.optional(v.picklist(["DRAFT", "PUBLISHED"]), "DRAFT"),
+  status: v.picklist(["DRAFT", "PUBLISHED"]),
 });
 
 const article = model({
   name: "article",
   schema: {
-    input: articleInput,
-    persisted: v.object({ ...articleInput.entries, id: v.string() }),
+    key: articleKey,
+    value: articleValue,
+    persisted: v.object({ ...articleValue.entries, id: v.string() }),
   },
 });
 
@@ -108,7 +110,7 @@ const domain = bind([articleRules], {
 
 // 3. 実行し、検証済みの値を取り出して保存する（Usecase）
 const result = await domain.article.create({
-  input: { title: "Hello domain-rules" },
+  input: { title: "Hello domain-rules", status: "DRAFT" },
   actor: { id: "usr_1" },
 });
 

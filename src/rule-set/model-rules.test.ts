@@ -16,7 +16,8 @@ const operator: Operator = { name: "op" };
 const item = defineModel<Operator>()({
   name: "item",
   schema: {
-    input: v.object({ id: v.optional(v.string()), n: v.number() }),
+    key: v.object({ id: v.optional(v.string()) }),
+    value: v.object({ n: v.number() }),
     persisted: v.object({ id: v.string(), n: v.number() }),
   },
 });
@@ -120,9 +121,9 @@ test("文字列を Date に変換し、Date もそのまま受け付ける schem
   const appointment = defineModel<Operator>()({
     name: "appointment",
     schema: {
-      input: v.object({
-        id: v.optional(v.string()),
-        // update では重ねた next をもう一度通すので、変換後の Date も受け付ける
+      key: v.object({ id: v.optional(v.string()) }),
+      value: v.object({
+        // update では重ねた値をもう一度通すので、変換後の Date も受け付ける
         date: v.union([
           v.date(),
           v.pipe(
