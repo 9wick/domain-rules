@@ -579,43 +579,27 @@ const saved = await Result.pipe(
 
 ### 入力が永続化の型になるまで
 
-呼び出しの入力は key の項目と value の項目に分かれ、それぞれ別の schema で検証されてから `next` に合流します。角の丸い枠は値、四角い枠は検証や処理、矢印のラベルはその道を通る操作です。
+`schema.value` に書いた required と項目をまたぐ検証（refine）は、呼び出しの入力ではなく、**完全な値**にかかります。完全な値は、create では入力の key と value そのもの、update では既存の値 `pre` に差分を重ねたものです。key は fetch で既存の値を探すのに使うので、どの操作でも全体を検証します。青い枠が schema による検証です。
 
 ```mermaid
-flowchart TD
-  IN(["呼び出しの入力"])
-  IN -->|"key の項目"| KS["schema.key で全体を検証"]
-  IN -->|"value の項目（delete では失敗）"| OP{"操作"}
-  KS --> KEY(["key"])
+flowchart LR
+  K(["入力の key<br/>id・tenantId など"]) --> KC["schema.key<br/>全体を検証"]
+  V(["入力の value<br/>create: 全体<br/>update: 差分"]) --> VC["schema.value<br/>渡された項目を検証"]
+  KC -->|"update"| F["fetch(key)"] --> PRE(["pre<br/>既存の値"])
+  KC -->|"create"| M
+  PRE --> M["完全な値にする<br/>create: key ＋ value<br/>update: pre ＋ 差分"]
+  VC --> M
+  M --> WC["schema.value<br/>完全な値の全体を検証<br/>required・refine"]
+  WC --> N(["next<br/>Value 型"]) --> R["onSave の<br/>ルールで昇格"] --> P(["next<br/>Persisted 型"])
 
-  KEY -->|"update / delete"| FETCH["load の fetch"]
-  FETCH --> PRE(["pre（既存の値）"])
-
-  OP -->|"create"| VW["schema.value で全体を検証<br/>required・項目をまたぐ検証が効く"]
-  VW --> VAL(["value"])
-  KEY -->|"create"| JOIN["key と value を合わせる"]
-  VAL --> JOIN
-
-  OP -->|"update"| VP["schema.value の entries で<br/>渡された項目だけを検証"]
-  VP --> PATCH(["差分"])
-  PRE -->|"update"| MERGE["pre に差分を重ねる<br/>key の項目は pre のまま"]
-  PATCH --> MERGE
-  MERGE --> RE["重ねた値を schema.value で全体を検証<br/>required・項目をまたぐ検証が効く"]
-
-  JOIN --> NEXT(["next（Value 型）"])
-  RE --> NEXT
-  NEXT --> SR["onSave のルール<br/>採番・既定値・存在確認で next を昇格"]
-  SR --> PV(["next（Persisted 型）<br/>schema.persisted はコンパイル時に型だけ検査"])
-  PV --> P[["Persistable"]]
-
-  PRE -->|"delete"| DR["onDelete のルール<br/>input は key"]
-  DR --> D[["Deletable"]]
+  classDef schema fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+  class KC,VC,WC schema
 ```
 
-- create は DB を引かず、key と value をそれぞれの schema 全体で検証してから合わせます。
-- update は key で既存の値を取り、value は差分として受け取ります。差分は項目ごとにしか検証できないので、`pre` に重ねたあとで value 全体をもう一度検証します。required と項目をまたぐ検証が効くのはこの時点です。
-- delete は key だけを受け取り、value の項目があれば input で失敗します。
-- どこで失敗したかは、失敗の `step` で分かります。検証で失敗すると `input`、fetch で失敗すると `load`、ルールで失敗するとそのルールの名前です。
+- create は DB を引かないので、`fetch` を通りません。value は入力の時点で完全な値なので、図の 2 つの `schema.value` の検証は 1 回の全体の検証にまとまります。
+- update の差分は、DB を引く前に項目ごとに検証します。required と refine が効くのは、`pre` に重ねたあとの全体の検証です。
+- delete は key だけを受け取り、`schema.key` の検証と `fetch` を通って、`pre` を `onDelete` のルールに渡します。value の項目を渡すと失敗します。
+- 失敗の `step` は、検証で失敗すると `input`、`fetch` で失敗すると `load`、ルールで失敗するとそのルールの名前です。
 
 値の型は次のように変わります。
 
