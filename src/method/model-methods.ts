@@ -24,8 +24,11 @@ export type SaveRun<Pre, Out, P, Act, A, E> = {
     invocation: Invocation,
   ) => Promise<Result.Result<{ readonly next: P; readonly actor: A }, E>>;
 };
-export type DeleteRun<Pre, Act, A, E> = {
-  readonly run: (s: DeleteState<Pre, Act>, invocation: Invocation) => Promise<Result.Result<{ readonly actor: A }, E>>;
+export type DeleteRun<Pre, Out, Act, A, E> = {
+  readonly run: (
+    s: DeleteState<Pre, Out, Act>,
+    invocation: Invocation,
+  ) => Promise<Result.Result<{ readonly actor: A }, E>>;
 };
 
 type IdOf<In> = NonNullable<Partial<In>["id" & keyof Partial<In>]>;
@@ -43,7 +46,7 @@ export type UpsertMethod<N extends string, In, Out, P, Act, Pre, A, E, LE> = (
   InputFailure | LoadFailureOf<LE> | E
 >;
 export type DeleteMethod<N extends string, In, Out, P, Act, Pre, A, E, LE> = (
-  args: Args<{ readonly id: IdOf<In> }, Act>,
+  args: Args<Partial<In> & { readonly id: IdOf<In> }, Act>,
 ) => Result.ResultAsync<Deletable<Model<N, In, Out, P, Act>, Pre, A>, InputFailure | LoadFailureOf<LE> | E>;
 
 const saveWith = async <Pre, Out, P, Act, A, E>(
@@ -160,14 +163,14 @@ export const deleteMethod =
   <N extends string, In, Out extends { readonly id?: unknown }, P, Act, Pre extends Out, LE, A, E>(
     model: Model<N, In, Out, P, Act>,
     load: LoadRun<Out, Act, Pre, LE>,
-    rules: DeleteRun<Pre, Act, A, E>,
+    rules: DeleteRun<Pre, Out, Act, A, E>,
   ): ((ctx: BindCtx) => DeleteMethod<N, In, Out, P, Act, Pre, A, E, LE>) =>
   (ctx) =>
   async ({ input, actor }) => {
     const existing = await loadExisting(ctx, model, load, input, actor);
     if (existing.type === "Failure") return existing;
-    const { inv, pre } = existing.value;
-    const r = await rules.run({ pre, next: null, actor, now: inv.now }, inv);
+    const { inv, pre, validated } = existing.value;
+    const r = await rules.run({ pre, next: null, input: Object.freeze({ ...validated }), actor, now: inv.now }, inv);
     if (r.type === "Failure") return r;
     return Result.succeed(
       seal<"deletable", N, "delete", { readonly pre: Readonly<Pre>; readonly actor: A }>({
