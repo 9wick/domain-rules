@@ -43,7 +43,7 @@
   },
   "devDependencies": {
     "@praha/byethrow": "0.13.0",
-    "as-free": "0.0.2",
+    "as-free": "0.0.3-beta.1",
     "typescript": "7.0.2",
     "valibot": "1.5.0",
     "vite-plus": "catalog:",

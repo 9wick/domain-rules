@@ -3,7 +3,7 @@ catalog:
   vitest: 5.1.0
   vite-plus: 1.5.1
 minimumReleaseAgeExclude:
-  - as-free@0.0.2
+  - as-free@0.0.3-beta.1
 overrides:
   vite@*: "catalog:"
   vitest@*: "catalog:"
