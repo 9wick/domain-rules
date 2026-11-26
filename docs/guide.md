@@ -278,7 +278,7 @@ export const statusChangesAreAllowed = rule(savedWithDefaults, { ... });
 | 指定値から別の値へ変化したとき（新規作成時は除外）                | `changed("status", { pre: "DRAFT" })`                                                 | `onSave`             |
 | 指定値へ変化したとき（新規作成時にその値で始まる場合も含む）      | `changed("status", { next: "PUBLISHED" })`                                            | `onSave`             |
 | 指定値から指定値へ変化したとき                                    | `changed("status", { pre: "DRAFT", next: "PUBLISHED" })`                              | `onSave`             |
-| 呼び出し時にフィールドを指定したとき（値が同じでも、`null` でも） | `given("serial")`                                                                     | `onSave`             |
+| 呼び出し時にフィールドを指定したとき（値が同じでも、`null` でも） | `given("serial")`                                                                     | `onSave`, `onDelete` |
 | 変更後の値が述語を満たすとき                                      | `next(isPublished)`                                                                   | `onSave`             |
 | 既存の値が述語を満たすとき（新規作成時は除外）                    | `pre(isDraft)`                                                                        | `onSave`, `onDelete` |
 | 操作者 (`actor`) が述語を満たすとき                               | `actor(isAdmin)`、`actor((a, s: { next: ArticleValue }) => a.id === s.next.authorId)` | すべて               |
@@ -286,7 +286,7 @@ export const statusChangesAreAllowed = rule(savedWithDefaults, { ... });
 | カスタム条件関数                                                  | `(s) => boolean`                                                                      | すべて               |
 
 - 使えないフェーズや存在しないフィールド名を指定すると、コンパイルエラーになります。
-- `changed` は値の変化を、`given` は「その項目を更新する」という呼び出し側の意思を見ます。既存値と同じ値を指定したとき、`changed` は偽、`given` は真です。「未設定のときだけ設定できる」のように、同じ値での指定も弾きたいルールには `given` を使います。
+- `changed` は値の変化を、`given` は「その項目を指定した」という呼び出し側の意思を見ます。既存値と同じ値を指定したとき、`changed` は偽、`given` は真です。「未設定のときだけ設定できる」のように、同じ値での指定も弾きたいルールには `given` を使います。
 - `actor` 述語の第 2 引数（状態 `s`）は型推論できないため、参照する場合は上記のように型注釈を書きます。
 - `changed` の変化判定および `immutable` の比較は `Object.is` で行います。配列やオブジェクトのフィールドは、中身が同じでも別参照なら「変化した」とみなされます。複数フィールドにまたがる条件は `pre(述語)` と `next(述語)` を `and` 等で組み合わせてください。
 - `when` には `{ kind: "changed", ... }` のようなメタデータが付与され、`plan()` で構造を可視化できます。手書きの関数にも `describe("公開済みの記事", (s) => ...)` で説明を付けられます。
