@@ -251,7 +251,7 @@ export const isApproved = (a: ArticleValue) => a.approvedAt !== null;
 | 指定値から別の値へ変化したとき（新規作成時は除外）                | `changed("status", { pre: "DRAFT" })`                                                 | `onSave`             |
 | 指定値へ変化したとき（新規作成時にその値で始まる場合も含む）      | `changed("status", { next: "PUBLISHED" })`                                            | `onSave`             |
 | 指定値から指定値へ変化したとき                                    | `changed("status", { pre: "DRAFT", next: "PUBLISHED" })`                              | `onSave`             |
-| 呼び出し時にフィールドを指定したとき（値が同じでも、`null` でも） | `given("serial")`                                                                     | `onSave`             |
+| 呼び出し時にフィールドを指定したとき（値が同じでも、`null` でも） | `given("serial")`                                                                     | `onSave`, `onDelete` |
 | 変更後の値が述語を満たすとき                                      | `next(isPublished)`                                                                   | `onSave`             |
 | 既存の値が述語を満たすとき（新規作成時は除外）                    | `pre(isDraft)`                                                                        | `onSave`, `onDelete` |
 | 操作者 (`actor`) が述語を満たすとき                               | `actor(isAdmin)`、`actor((a, s: { next: ArticleValue }) => a.id === s.next.authorId)` | すべて               |

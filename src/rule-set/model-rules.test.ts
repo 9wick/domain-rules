@@ -6,6 +6,7 @@ import { open } from "../method/seal.ts";
 import { alwaysAllow } from "../pipeline/builtin-rules.ts";
 import { rule } from "../pipeline/rule.ts";
 import { ruleset } from "../pipeline/ruleset.ts";
+import { given } from "../pipeline/when/builders.ts";
 import { always } from "../pipeline/when/step.ts";
 import { port } from "../port/port.ts";
 import { modelRules } from "./model-rules.ts";
@@ -72,6 +73,21 @@ test("メソッドは load で読んだ既存の値から、save の線路を通
   const { update } = loaded().save(save).resolveIn(ctxWith(stored));
   const r = await update({ input: { id: "i1", n: 2 }, actor: operator });
   expect(open(Result.unwrap(r))).toEqual({ pre: stored, next: { id: "i1", n: 2 }, actor: operator });
+});
+
+test("delete の線路は呼び出し時の入力を受け取り、given で指定した項目だけを確かめられる", async () => {
+  const sameN = rule(item.onDelete, {
+    name: "指定した n が既存の値と同じ",
+    when: given("n"),
+    check: ({ pre, input }) => (input.n === pre.n ? Result.succeed() : Result.fail("N_MISMATCH" as const)),
+  });
+  const { delete: remove } = loaded().delete(ruleset(sameN)).resolveIn(ctxWith(stored));
+  const unspecified = await remove({ input: { id: "i1" }, actor: operator });
+  expect(open(Result.unwrap(unspecified)).pre).toEqual(stored);
+  const matched = await remove({ input: { id: "i1", n: 1 }, actor: operator });
+  expect(open(Result.unwrap(matched)).pre).toEqual(stored);
+  const mismatched = await remove({ input: { id: "i1", n: 2 }, actor: operator });
+  expect(Result.unwrapError(mismatched)).toEqual({ step: "指定した n が既存の値と同じ", error: "N_MISMATCH" });
 });
 
 test("取得ステップは id 以外の値も取得条件に使え、その失敗が load の失敗になる", async () => {

@@ -29,9 +29,12 @@ export const changed = <const F extends string>(
   });
 
 // 値が変わったかではなく、呼び出し時にその項目を指定したかを見る。null を指定したときも当たる。
-// next に項目があることを求めて、model にない項目名を型エラーにする
-type Given<F extends string> = { readonly next: Fields<F>; readonly input: object };
-export const given = <const F extends string>(field: F): When<"save", Given<F>> =>
+// input は項目がすべて省略可能で項目名を確かめられないので、保存なら next、削除なら pre に項目があることを求めて、model にない項目名を型エラーにする
+type Given<F extends string> = { readonly input: object } & (
+  | { readonly next: Fields<F> }
+  | { readonly pre: Fields<F> }
+);
+export const given = <const F extends string>(field: F): When<"save" | "delete", Given<F>> =>
   whenOf({ kind: "given", field }, (s: Given<F>) => Object.hasOwn(s.input, field));
 
 export const next = <V>(predicate: (v: V) => boolean): When<"save", { readonly next: V }> =>

@@ -1,5 +1,5 @@
 import { expectTypeOf, test } from "vite-plus/test";
-import type { SaveState } from "../../definition/model.ts";
+import type { DeleteState, SaveState } from "../../definition/model.ts";
 import type { When } from "./when.ts";
 import { actor, and, changed, given, next, pre } from "./builders.ts";
 
@@ -30,12 +30,16 @@ test("actor の型は述語の引数から決まり、状態の actor に求め�
   admin({ actor: { name: "x" } });
 });
 
-test("given は保存の線路だけで使え、next にない項目名は型エラー", () => {
+test("given は保存と削除の線路で使え、input にない項目名は型エラー", () => {
   type Saving = SaveState<Item | null, Item, unknown>;
+  type Deleting = DeleteState<Item, Item, unknown>;
   const status: When<"save", Saving> = given("status");
-  // @ts-expect-error given は削除の線路で使えない
-  const onDelete: When<"delete", Saving> = given("status");
+  const onDelete: When<"delete", Deleting> = given("status");
   // @ts-expect-error title は Item にない
   const unknownField: When<"save", Saving> = given("title");
-  expectTypeOf([status, onDelete, unknownField]).not.toBeNever();
+  // @ts-expect-error title は Item にない
+  const unknownOnDelete: When<"delete", Deleting> = given("title");
+  // @ts-expect-error given は判定の線路で使えない
+  const onDecide: When<"decide", Saving> = given("status");
+  expectTypeOf([status, onDelete, unknownField, unknownOnDelete, onDecide]).not.toBeNever();
 });
