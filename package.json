@@ -31,7 +31,7 @@
   },
   "dependencies": {
     "@standard-schema/spec": "1.1.0",
-    "as-free": "0.0.2-beta.1"
+    "as-free": "0.0.2"
   },
   "devDependencies": {
     "@praha/byethrow": "0.13.0",
