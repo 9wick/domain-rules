@@ -590,7 +590,17 @@ flowchart LR
   PRE --> M["完全な値にする<br/>create: key ＋ value<br/>update: pre ＋ 差分"]
   VC --> M
   M --> WC["schema.value<br/>完全な値の全体を検証<br/>required・refine"]
-  WC --> N(["next<br/>Value 型"]) --> R["onSave の<br/>ルールで昇格"] --> P(["next<br/>Persisted 型"])
+  WC --> N(["next<br/>Value 型"]) --> W
+
+  subgraph RS["onSave の ruleset（並べた順に繰り返す）"]
+    W{"rule の when"} -->|"true"| C["check"]
+    W -->|"false"| NX["次の rule へ"]
+    C -->|"成功: next を昇格"| NX
+    NX -->|"rule が残っている"| W
+  end
+
+  C -->|"失敗"| X(["失敗<br/>step は rule の名前"])
+  NX -->|"最後の rule のあと"| P(["next<br/>Persisted 型"])
 
   classDef schema fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
   class KC,VC,WC schema
@@ -599,7 +609,8 @@ flowchart LR
 - create は DB を引かないので、`fetch` を通りません。value は入力の時点で完全な値なので、図の 2 つの `schema.value` の検証は 1 回の全体の検証にまとまります。
 - update の差分は、DB を引く前に項目ごとに検証します。required と refine が効くのは、`pre` に重ねたあとの全体の検証です。
 - delete は key だけを受け取り、`schema.key` の検証と `fetch` を通って、`pre` を `onDelete` のルールに渡します。value の項目を渡すと失敗します。
-- 失敗の `step` は、検証で失敗すると `input`、`fetch` で失敗すると `load`、ルールで失敗するとそのルールの名前です。
+- ruleset は、並べた rule を順に 1 つずつ評価します。`when` が `false` の rule は `check` を飛ばし、`check` が成功すると返した値で `next` を昇格させて次の rule へ進みます。最後の rule を通ったあとの `next` が `Persisted` 型になっていなければ、`.save()` が型エラーになります。
+- 失敗の `step` は、検証で失敗すると `input`、`fetch` で失敗すると `load`、rule の `check` で失敗するとその rule の名前です。
 
 値の型は次のように変わります。
 
