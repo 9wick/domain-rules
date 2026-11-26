@@ -160,7 +160,7 @@ describe("update", () => {
   test("既存の値がなければ load で失敗する", async () => {
     const { domain } = setup({ existing: null });
     const r = await domain.article.update({ input: { id: "art_9", slug: "x" }, actor: author });
-    expect(Result.unwrapError(r)).toEqual({ step: "load", error: "NOT_FOUND" });
+    expect(Result.unwrapError(r)).toEqual({ step: "load", error: "ARTICLE_NOT_FOUND" });
   });
 
   test("when が値の変化を見て rule を当てる", async () => {
@@ -209,7 +209,7 @@ describe("upsert", () => {
   test("id があって見つからなければ load で失敗する", async () => {
     const { domain } = setup({ existing: null });
     const r = await domain.article.upsert({ input: { ...newArticle, id: "art_9" }, actor: author });
-    expect(Result.unwrapError(r)).toEqual({ step: "load", error: "NOT_FOUND" });
+    expect(Result.unwrapError(r)).toEqual({ step: "load", error: "ARTICLE_NOT_FOUND" });
   });
 });
 

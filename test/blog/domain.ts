@@ -231,7 +231,14 @@ export const memberCanSave = rule(article.onSave, memberOnly);
 export const memberCanDelete = rule(article.onDelete, memberOnly);
 
 export const articleRules = modelRules(article)
-  .load(findArticleById)
+  .load({
+    requires: { findArticleById },
+    fetch: async ({ input }, { findArticleById }) => {
+      const found = await findArticleById(input.id);
+      if (Result.isFailure(found)) return found;
+      return found.value ? Result.succeed(found.value) : Result.fail("ARTICLE_NOT_FOUND");
+    },
+  })
   .save(
     ruleset(memberCanSave)
       .add(statusChangesAreAllowed)

@@ -80,7 +80,7 @@ export type ExistingArticle = Omit<Article, "id"> & { id: ArticleIdExisted }; //
 - **`schema.input`**: 入力データのスキーマです。更新時は入力に含まれたフィールドだけを個別に検証するため、トップレベルが `entries` を持つオブジェクトスキーマ（Valibot の `v.object` 等）である必要があります。そのため、オブジェクト全体に付けたクロスフィールド検証は使われません。複数フィールドにまたがる条件（「著者とレビュアーは別人」など）はルールとして書きます。
 - **`schema.persisted`**: 永続化時の型を決めるためのスキーマです。`input` より強い型（存在確認済み Brand 型など）を持たせられます。ライブラリはこのスキーマで実行時の検証を行いません（未確認の入力に Brand が付くのを防ぐため）。保存パイプラインの終端で `next` がこの型になっていることをコンパイル時に検査します。
 - **新規作成時の既定値**: `schema.input` 内の `v.optional` の既定値は、`create` 時にだけ適用されます。
-- **`id` の扱い**: `model` 自身は `id` の取得や採番を行いません。既存レコードの取得は `modelRules(...).load(port)` に渡し、新規 ID の採番も他のフィールドと同様にルールで型を昇格させます。なお、更新・削除・upsert を使うモデルの `schema.input` では `id` を省略可能にしておく必要があります。
+- **`id` の扱い**: `model` 自身は `id` の取得や採番を行いません。既存レコードの取得は `modelRules(...).load({ requires, fetch })` に書き、新規 ID の採番も他のフィールドと同様にルールで型を昇格させます。なお、更新・削除・upsert を使うモデルの `schema.input` では `id` を省略可能にしておく必要があります。
 
 ---
 
@@ -94,7 +94,7 @@ export type ExistingArticle = Omit<Article, "id"> & { id: ArticleIdExisted }; //
 | モデルの削除     | `article.onDelete`        | `{ pre: Article, next: null, actor, now }`                 |
 | アクションの判定 | `previewArticle.onDecide` | `{ input, actor, now }`                                    |
 
-- **`pre`**: DB から読み込んだ既存の値（`load` に渡した `port` の返り値）。新規作成時は `null` です。ルール定義時点では `load` ポートが未定のため、`pre` の型は `Persisted<M>` になります。`load` ポートのより具体的な返り値型（例: `ExistingArticle`）を前提としたい場合は `.assuming<...>()` を付け、パイプラインの先頭に配置します（開始状態がその型を満たすかを `modelRules` が検査します）。
+- **`pre`**: DB から読み込んだ既存の値（`load` の `fetch` が成功として返した値）。新規作成時は `null` です。ルール定義時点では `load` が未定のため、`pre` の型は `Persisted<M>` になります。`fetch` のより具体的な返り値型（例: `ExistingArticle`）を前提としたい場合は `.assuming<...>()` を付け、パイプラインの先頭に配置します（開始状態がその型を満たすかを `modelRules` が検査します）。
 - **`next`**: 変更後の値。更新時は既存値に入力値をマージしたオブジェクトです（型は `ArticleValue` ですが、入力で省略されたフィールドには既存値が引き継がれます）。
 - **`now`**: 呼び出し開始時の時刻（`clock` プロバイダーが返す数値）。1 回の実行中は固定値です。
 
@@ -119,7 +119,7 @@ article.onSave.assuming<{ next: { reviewerId: UserIdExisted } }>();
 ```ts
 import { port, cached } from "domain-rules";
 
-// 既存の記事を取得する（modelRules の load に渡す）
+// 既存の記事を取得する（modelRules の load の fetch から呼ぶ）
 export const findArticleById = port("findArticleById").of<(id: ArticleId) => ExistingArticle | null, InfraError>();
 
 // 存在確認できれば、存在確認済みの型として同じ ID を返す
@@ -365,7 +365,14 @@ export const memberCanDelete = rule(article.onDelete, memberOnly);
 import { modelRules, ruleset } from "domain-rules";
 
 export const articleRules = modelRules(article)
-  .load(findArticleById)
+  .load({
+    requires: { findArticleById },
+    fetch: async ({ input }, { findArticleById }) => {
+      const found = await findArticleById(input.id);
+      if (Result.isFailure(found)) return found;
+      return found.value ? Result.succeed(found.value) : Result.fail("ARTICLE_NOT_FOUND");
+    },
+  })
   .save(
     ruleset(memberCanSave)
       .add(statusChangesAreAllowed)
@@ -386,7 +393,7 @@ export const articleRules = modelRules(article)
   .delete(ruleset(memberCanDelete).add(onlyDraftIsDeletable));
 ```
 
-- **`.load(port)`**: 既存の値を取得するポートを指定します。`update` / `upsert` / `delete` メソッドを生成するために必要で、`save` / `delete` より前に呼び出します。入力スキーマの `id` の型を受け取り、返り値は `schema.persisted` と `schema.input` の両方の出力型に代入可能である必要があります（`null` を返すと `load` ステップで `"NOT_FOUND"` 失敗になります）。
+- **`.load({ requires, fetch })`**: 既存の値を取得するステップを定義します。`update` / `upsert` / `delete` メソッドを生成するために必要で、`save` / `delete` より前に呼び出します。`fetch` はルールの `check` と同じく `requires` に書いたポートを受け取り、`Result` を返します。第 1 引数は `{ input, actor }` で、`input` は検証済みの入力（`id` は必ず入ります）、`actor` はメソッドに渡された操作者です。`id` 以外の値（`actor` のテナント ID など）も取得条件に使えます。成功の値は `schema.persisted` と `schema.input` の両方の出力型に代入可能である必要があり、そのまま `pre` になります。ライブラリは成功の値も失敗の値も解釈しません。見つからなかったときの失敗は、`fetch` が自分で返します。
 - **`.save(ruleset)`**: `create` を生成します（`.load()` の後に書くと `update` と `upsert` も生成されます）。保存パイプラインの終端で `next` が `schema.persisted` の型を満たしていないとコンパイルエラーになります。
 - **`.delete(ruleset)`**: `.load()` の後にだけ指定でき、`delete` を生成します。指定しなければ削除メソッドは生えません。
 
@@ -518,19 +525,19 @@ const saved = await Result.pipe(
 | `delete` | `{ input: { id }, actor }`                | `Deletable<M>`                         |
 | `decide` | `{ input, actor }`                        | `Decision<A, T>`                       |
 
-`upsert` は `input.id` が無ければ新規作成、あって既存値が見つかれば更新、見つからなければ `load` で失敗します。
+`upsert` は `input.id` が無ければ新規作成、あれば `load` の `fetch` で既存値を取得して更新します。`fetch` が失敗を返せば `load` で失敗します。
 
 ### 実行ステップ
 
 メソッドが呼ばれると、以下のステップを上から順に実行します。すべて `Result` を返し、失敗した時点で処理を中断します。
 
-| 順  | ステップ          | 内容                                                                         | 失敗時の `error`                           |
-| --- | ----------------- | ---------------------------------------------------------------------------- | ------------------------------------------ |
-| 1   | `input`           | 入力値をスキーマで検証・変換する                                             | `{ issues: StandardSchemaV1.Issue[] }`     |
-| 2   | `load`            | `modelRules(...).load(port)` で既存データを取得する                          | `"NOT_FOUND"` または `load` ポートの失敗値 |
-| 3   | `merge`           | 既存データに検証済み入力をマージして `next` を作る                           | なし                                       |
-| 4   | `rule`            | `ruleset` に並べたルールを順に評価・実行する                                 | 失敗したルールの `check` が返した値        |
-| 5   | `seal` / `output` | 保存・削除は検証済みラッパーを生成。アクションは `output` で結果を組み立てる | なし                                       |
+| 順  | ステップ          | 内容                                                                         | 失敗時の `error`                       |
+| --- | ----------------- | ---------------------------------------------------------------------------- | -------------------------------------- |
+| 1   | `input`           | 入力値をスキーマで検証・変換する                                             | `{ issues: StandardSchemaV1.Issue[] }` |
+| 2   | `load`            | `modelRules(...).load({ requires, fetch })` で既存データを取得する           | `fetch` が返した失敗の値               |
+| 3   | `merge`           | 既存データに検証済み入力をマージして `next` を作る                           | なし                                   |
+| 4   | `rule`            | `ruleset` に並べたルールを順に評価・実行する                                 | 失敗したルールの `check` が返した値    |
+| 5   | `seal` / `output` | 保存・削除は検証済みラッパーを生成。アクションは `output` で結果を組み立てる | なし                                   |
 
 - **`create`**: `load` をスキップします（`pre` は `null`）。`input` ではスキーマ全体で検証し、省略可能項目の既定値を補完します。`id` やスキーマにない未知のキーがあると失敗します。
 - **`update`**: 全 5 ステップを実行します。`input` では入力に含まれたキーだけを各フィールドのスキーマで検証します（未知のキーがあれば失敗します）。
@@ -550,7 +557,7 @@ const saved = await Result.pipe(
 ```ts
 type Failure =
   | { step: "input"; error: { issues: StandardSchemaV1.Issue[] } }
-  | { step: "load"; error: "NOT_FOUND" | LoadError }
+  | { step: "load"; error: "ARTICLE_NOT_FOUND" | InfraError }
   | { step: "著者とレビュアーは別の人"; error: "SAME_AUTHOR_AND_REVIEWER" }
   | { step: "レビュアーが存在する"; error: "USER_NOT_FOUND" | InfraError }
   | ...;
@@ -597,6 +604,7 @@ import { plan } from "domain-rules";
 
 plan(articleRules);
 // {
+//   load: { ports: ["findArticleById"] },
 //   save: [{ name: "記事を変更できるのはメンバーだけ", when: { kind: "always" }, ports: [] }, ...],
 //   delete: [...]
 // }

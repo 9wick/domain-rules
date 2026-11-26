@@ -86,7 +86,15 @@ const assignArticleId = rule(article.onSave, {
 });
 
 const articleRules = modelRules(article)
-  .load(findArticleById)
+  .load({
+    requires: { findArticleById },
+    // 既存の値の取り方と、見つからないときの失敗は利用者が決める
+    fetch: async ({ input }, { findArticleById }) => {
+      const found = await findArticleById(input.id);
+      if (Result.isFailure(found)) return found;
+      return found.value ? Result.succeed(found.value) : Result.fail("ARTICLE_NOT_FOUND");
+    },
+  })
   .save(ruleset(publishRequiresLongTitle).add(assignArticleId));
 
 // 2. provider を注入して呼び出し可能な API を組み立てる（起動時 / DI）
