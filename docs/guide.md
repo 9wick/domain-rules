@@ -579,43 +579,43 @@ const saved = await Result.pipe(
 
 ### 入力が永続化の型になるまで
 
-呼び出しの入力が、どこでどの schema に検証され、`Persistable` / `Deletable` になるかを操作ごとに示します。矢印の `✗` は、その手前の段階で失敗したときの `step` です。
+呼び出しの入力は key の項目と value の項目に分かれ、それぞれ別の schema で検証されてから `next` に合流します。角の丸い枠は値、四角い枠は検証や処理、矢印のラベルはその道を通る操作です。
 
 ```mermaid
 flowchart TD
-  %% Mermaid は後に書いた subgraph を左に置くので、左から create・update・delete になるよう逆順に書く
-  subgraph delete["delete"]
-    direction TB
-    d0["入力: key（id 必須）だけ"]
-    d1["key を schema.key 全体で検証<br/>（value の項目があれば失敗）"]
-    d2["fetch(key) → pre"]
-    d3["onDelete のルールを順に実行<br/>（input は key）"]
-    d4["Deletable"]
-    d0 --> d1 -->|"✗ input"| d2 -->|"✗ load"| d3 -->|"✗ ルール名"| d4
-  end
+  IN(["呼び出しの入力"])
+  IN -->|"key の項目"| KS["schema.key で全体を検証"]
+  IN -->|"value の項目（delete では失敗）"| OP{"操作"}
+  KS --> KEY(["key"])
 
-  subgraph update["update"]
-    direction TB
-    u0["入力: key（id 必須）＋ value の差分"]
-    u1["key を schema.key 全体で検証<br/>差分を schema.value の entries で項目ごとに検証<br/>（DB を引く前）"]
-    u2["fetch(key) → pre"]
-    u3["next = pre ＋ 差分（key の項目は pre のまま）"]
-    u4["next の value 部分を schema.value 全体で検証<br/>（required・項目をまたぐ検証が効く）"]
-    u5["onSave のルールを順に実行"]
-    u6["Persistable（update）"]
-    u0 --> u1 -->|"✗ input"| u2 -->|"✗ load"| u3 --> u4 -->|"✗ input"| u5 -->|"✗ ルール名"| u6
-  end
+  KEY -->|"update / delete"| FETCH["load の fetch"]
+  FETCH --> PRE(["pre（既存の値）"])
 
-  subgraph create["create"]
-    direction TB
-    c0["入力: key（id を除く）＋ value 全体"]
-    c1["key を schema.key 全体で検証<br/>value を schema.value 全体で検証<br/>（required・項目をまたぐ検証が効く）"]
-    c2["next = key ＋ value<br/>pre = null"]
-    c3["onSave のルールを順に実行<br/>（id の採番・既定値・存在確認で next を昇格）"]
-    c4["Persistable（create）"]
-    c0 --> c1 -->|"✗ input"| c2 --> c3 -->|"✗ ルール名"| c4
-  end
+  OP -->|"create"| VW["schema.value で全体を検証<br/>required・項目をまたぐ検証が効く"]
+  VW --> VAL(["value"])
+  KEY -->|"create"| JOIN["key と value を合わせる"]
+  VAL --> JOIN
+
+  OP -->|"update"| VP["schema.value の entries で<br/>渡された項目だけを検証"]
+  VP --> PATCH(["差分"])
+  PRE -->|"update"| MERGE["pre に差分を重ねる<br/>key の項目は pre のまま"]
+  PATCH --> MERGE
+  MERGE --> RE["重ねた値を schema.value で全体を検証<br/>required・項目をまたぐ検証が効く"]
+
+  JOIN --> NEXT(["next（Value 型）"])
+  RE --> NEXT
+  NEXT --> SR["onSave のルール<br/>採番・既定値・存在確認で next を昇格"]
+  SR --> PV(["next（Persisted 型）<br/>schema.persisted はコンパイル時に型だけ検査"])
+  PV --> P[["Persistable"]]
+
+  PRE -->|"delete"| DR["onDelete のルール<br/>input は key"]
+  DR --> D[["Deletable"]]
 ```
+
+- create は DB を引かず、key と value をそれぞれの schema 全体で検証してから合わせます。
+- update は key で既存の値を取り、value は差分として受け取ります。差分は項目ごとにしか検証できないので、`pre` に重ねたあとで value 全体をもう一度検証します。required と項目をまたぐ検証が効くのはこの時点です。
+- delete は key だけを受け取り、value の項目があれば input で失敗します。
+- どこで失敗したかは、失敗の `step` で分かります。検証で失敗すると `input`、fetch で失敗すると `load`、ルールで失敗するとそのルールの名前です。
 
 値の型は次のように変わります。
 
