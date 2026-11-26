@@ -92,12 +92,12 @@ export type ExistingArticle = Omit<Article, "id"> & { id: ArticleIdExisted }; //
 | 操作フェーズ     | 指定する値                | 初期状態の型                                                      |
 | ---------------- | ------------------------- | ----------------------------------------------------------------- |
 | モデルの保存     | `article.onSave`          | `{ pre: Article \| null, next: ArticleValue, input, actor, now }` |
-| モデルの削除     | `article.onDelete`        | `{ pre: Article, next: null, actor, now }`                        |
+| モデルの削除     | `article.onDelete`        | `{ pre: Article, next: null, input, actor, now }`                 |
 | アクションの判定 | `previewArticle.onDecide` | `{ input, actor, now }`                                           |
 
 - **`pre`**: DB から読み込んだ既存の値（`load` の `fetch` が成功として返した値）。新規作成時は `null` です。ルール定義時点では `load` が未定のため、`pre` の型は `Persisted<M>` になります。`fetch` のより具体的な返り値型（例: `ExistingArticle`）を前提としたい場合は `.assuming<...>()` を付け、パイプラインの先頭に配置します（開始状態がその型を満たすかを `modelRules` が検査します）。
 - **`next`**: 変更後の値。更新時は既存値に入力値をマージしたオブジェクトです（型は `ArticleValue` ですが、入力で省略されたフィールドには既存値が引き継がれます）。
-- **`input`**（保存のみ）: 呼び出し時に指定した項目だけを持つ、検証済みの入力（`Partial<ArticleValue>`）。`next` が既存値と同じでも、その項目を指定したかどうかは `input` で分かります。新規作成時は入力全体です。ルールは `input` を書き換えられません（`check` が `input` を返すと `ruleset.add()` で型エラーになります）。
+- **`input`**（保存・削除）: 呼び出し時に指定した項目だけを持つ、検証済みの入力（`Partial<ArticleValue>`）。`next` が既存値と同じでも、その項目を指定したかどうかは `input` で分かります。新規作成時は入力全体です。ルールは `input` を書き換えられません（`check` が `input` を返すと `ruleset.add()` で型エラーになります）。
 - **`now`**: 呼び出し開始時の時刻（`clock` プロバイダーが返す数値）。1 回の実行中は固定値です。
 
 ### 前段ルールの型昇格を前提にする (`assuming`)
@@ -526,7 +526,7 @@ const saved = await Result.pipe(
 | `create` | `{ input, actor }`（`id` は受け付けない） | `Persistable<M, "create">`             |
 | `update` | `{ input, actor }`（`input.id` 必須）     | `Persistable<M, "update">`             |
 | `upsert` | `{ input, actor }`                        | `Persistable<M, "create" \| "update">` |
-| `delete` | `{ input: { id }, actor }`                | `Deletable<M>`                         |
+| `delete` | `{ input, actor }`（`input.id` 必須）     | `Deletable<M>`                         |
 | `decide` | `{ input, actor }`                        | `Decision<A, T>`                       |
 
 `upsert` は `input.id` が無ければ新規作成、あれば `load` の `fetch` で既存値を取得して更新します。`fetch` が失敗を返せば `load` で失敗します。
@@ -546,7 +546,7 @@ const saved = await Result.pipe(
 - **`create`**: `load` をスキップします（`pre` は `null`）。`input` ではスキーマ全体で検証し、省略可能項目の既定値を補完します。`id` やスキーマにない未知のキーがあると失敗します。
 - **`update`**: 全 5 ステップを実行します。`input` では入力に含まれたキーだけを各フィールドのスキーマで検証します（未知のキーがあれば失敗します）。項目単体で不正な入力は、ここで `load` の前に失敗します。`merge` の後に、重ねた `next` をスキーマ全体で検証し、項目をまたぐ検証に違反していれば `input` の失敗を返します。
 - **`upsert`**: `input.id` が `undefined` なら `create`、指定されていれば `update` と同じステップを実行します。
-- **`delete`**: `merge` をスキップします（`next` は `null`）。`input` では `id` のみを検証します。
+- **`delete`**: `merge` をスキップします（`next` は `null`）。`input` では `update` と同じく、入力に含まれたキーだけを各フィールドのスキーマで検証します（未知のキーがあれば失敗します）。
 - **`decide`**: `load` と `merge` をスキップします。`input` ではアクションの入力スキーマ全体で検証します。
 
 ### マージ (`merge`) とルール評価の仕様

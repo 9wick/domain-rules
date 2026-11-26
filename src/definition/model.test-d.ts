@@ -19,8 +19,8 @@ test("保存の線路は、永続化の型か null の pre、入力の型の nex
   expectTypeOf(item.onSave).toEqualTypeOf<Track<"save", "item", SaveState<Stored | null, Input, Operator>>>();
 });
 
-test("削除の線路は、永続化の型の pre と actor を状態に持つ", () => {
-  expectTypeOf(item.onDelete).toEqualTypeOf<Track<"delete", "item", DeleteState<Stored, Operator>>>();
+test("削除の線路は、永続化の型の pre、入力の型の input、actor を状態に持つ", () => {
+  expectTypeOf(item.onDelete).toEqualTypeOf<Track<"delete", "item", DeleteState<Stored, Input, Operator>>>();
 });
 
 test("ModelActor は model を作ったときの actor の型", () => {

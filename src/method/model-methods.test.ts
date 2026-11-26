@@ -219,15 +219,39 @@ describe("upsert", () => {
   });
 });
 
+// 受け取った状態を記録し、actor をそのまま通す削除の線路
+const recordingDelete = () => {
+  const seen: DeleteState<Stored, Input, Operator>[] = [];
+  const rules: DeleteRun<Stored, Input, Operator, Operator, never> = {
+    run: async (s) => (seen.push(s), Result.succeed({ actor: s.actor })),
+  };
+  return { rules, seen };
+};
+
 describe("delete", () => {
   test("既存の値を線路に渡し、線路が返した actor と pre に封をする", async () => {
     const { ctx, loadItem } = contextWith(() => Result.succeed(stored));
-    const seen: DeleteState<Stored, Operator>[] = [];
-    const rules: DeleteRun<Stored, Operator, Operator, never> = {
-      run: async (s) => (seen.push(s), Result.succeed({ actor: s.actor })),
-    };
+    const { rules, seen } = recordingDelete();
     const r = await deleteMethod(item, loadItem, rules)(ctx)({ input: { id: "i1" }, actor: operator });
     expect(open(Result.unwrap(r))).toEqual({ pre: stored, actor: operator });
-    expect(seen).toEqual([{ pre: stored, next: null, actor: operator, now: 42 }]);
+    expect(seen).toEqual([{ pre: stored, next: null, input: { id: "i1" }, actor: operator, now: 42 }]);
+  });
+
+  test("id 以外の入力も、検証して取得ステップと線路の input に渡す", async () => {
+    const { ctx, calls, loadItem } = contextWith(() => Result.succeed(stored));
+    const { rules, seen } = recordingDelete();
+    await deleteMethod(item, loadItem, rules)(ctx)({ input: { id: "i1", n: 5 }, actor: operator });
+    expect(calls.load).toEqual([{ input: { id: "i1", n: 5 }, actor: operator }]);
+    expect(seen.map((s) => s.input)).toEqual([{ id: "i1", n: 5 }]);
+    expect(seen.every((s) => Object.isFrozen(s.input))).toBe(true);
+  });
+
+  test("項目単体で不正な入力は input で失敗し、load を呼ばない", async () => {
+    const { ctx, calls, loadItem } = contextWith(() => Result.succeed(stored));
+    const { rules, seen } = recordingDelete();
+    // @ts-expect-error 型に合わない入力を渡したときの実行時の振る舞いを確かめる
+    const r = await deleteMethod(item, loadItem, rules)(ctx)({ input: { id: "i1", n: "x" }, actor: operator });
+    expect(Result.unwrapError(r)).toMatchObject({ step: "input" });
+    expect([calls.load.length, seen.length]).toEqual([0, 0]);
   });
 });

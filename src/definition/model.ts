@@ -11,7 +11,7 @@ export type Model<N extends string = string, In = unknown, Out = unknown, P = un
   readonly name: N;
   readonly schema: { readonly input: ObjectSchema<In, Out>; readonly persisted: StandardSchemaV1<unknown, P> };
   readonly onSave: Track<"save", N, SaveState<P | null, Out, Act>>;
-  readonly onDelete: Track<"delete", N, DeleteState<P, Act>>;
+  readonly onDelete: Track<"delete", N, DeleteState<P, Out, Act>>;
 };
 
 // input は呼び出し時に指定した項目だけを持つ。next と同じ値でも、指定したことは input でしか分からない
@@ -23,9 +23,10 @@ export type SaveState<Pre, Next, Act> = {
   readonly now: number;
 };
 
-export type DeleteState<Pre, Act> = {
+export type DeleteState<Pre, Value, Act> = {
   readonly pre: Pre;
   readonly next: null;
+  readonly input: Readonly<Partial<Value>>;
   readonly actor: Act;
   readonly now: number;
 };
@@ -35,7 +36,7 @@ export type Persisted<M extends Model> = StandardSchemaV1.InferOutput<M["schema"
 export type InputOf<M extends Model> = Partial<StandardSchemaV1.InferInput<M["schema"]["input"]>>;
 // model を作った domain の actor の型
 export type ModelActor<M extends Model> =
-  M["onDelete"] extends Track<"delete", string, DeleteState<unknown, infer A>> ? A : never;
+  M["onDelete"] extends Track<"delete", string, DeleteState<unknown, unknown, infer A>> ? A : never;
 
 type OptionalInputId<In> = In extends { readonly id: unknown }
   ? { readonly "model の入力スキーマの id は省略可能でなければならない": true }
@@ -58,5 +59,5 @@ export const defineModel =
       name: def.name,
       schema: def.schema,
       onSave: new Track<"save", N, SaveState<P | null, Out, Act>>("save", def.name),
-      onDelete: new Track<"delete", N, DeleteState<P, Act>>("delete", def.name),
+      onDelete: new Track<"delete", N, DeleteState<P, Out, Act>>("delete", def.name),
     });

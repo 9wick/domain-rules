@@ -225,12 +225,12 @@ export class ModelRulesLoaded<
   }
 
   delete<
-    Del extends RunnableRuleset<DeleteState<NoInfer<Pre>, NoInfer<Act>>, unknown, unknown, string>,
-    DA = ActorOf<DeleteState<Pre, Act> & RulesetOut<Del>>,
+    Del extends RunnableRuleset<DeleteState<NoInfer<Pre>, NoInfer<Out>, NoInfer<Act>>, unknown, unknown, string>,
+    DA = ActorOf<DeleteState<Pre, Out, Act> & RulesetOut<Del>>,
     DE = RulesetError<Del>,
   >(
     this: ModelRulesLoaded<N, In, Out, P, Act, Pre, LE, PN, Ms & { readonly delete?: never }>,
-    rules: Del & DeleteRun<NoInfer<Pre>, NoInfer<Act>, NoInfer<DA>, NoInfer<DE>>,
+    rules: Del & DeleteRun<NoInfer<Pre>, NoInfer<Out>, NoInfer<Act>, NoInfer<DA>, NoInfer<DE>>,
   ) {
     const { model, load, resolveIn } = this;
     const remove = deleteMethod<N, In, Out, P, Act, Pre, LE, DA, DE>(model, load, rules);
