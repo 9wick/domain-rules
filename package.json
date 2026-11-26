@@ -1,12 +1,31 @@
 {
   "name": "domain-rules",
   "version": "0.0.0",
-  "private": true,
+  "description": "Define business rules in small units and guarantee validated data with TypeScript types.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/9wick/domain-rules.git"
+  },
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
   },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      }
+    },
+    "access": "public"
+  },
   "scripts": {
+    "build": "vp pack",
+    "check": "vp check",
     "test": "vp test run",
     "prepare": "vp config"
   },
