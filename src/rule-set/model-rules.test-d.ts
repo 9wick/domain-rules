@@ -127,3 +127,35 @@ test("あるかどうか分からない線路は、rule の組に渡せない", 
   // @ts-expect-error 渡したかどうかが型で決まらないと、メソッドがあるかも型で決まらない
   modelRules(item).save(maybe);
 });
+
+test("schema がモデルの値を受け付けないと、update を作る save は型エラー", () => {
+  const stamped = defineModel<Operator>()({
+    name: "stamped",
+    schema: {
+      input: v.object({
+        id: v.optional(v.string()),
+        at: v.pipe(
+          v.string(),
+          v.transform((s) => new Date(s)),
+        ),
+      }),
+      persisted: v.object({ id: v.string(), at: v.date() }),
+    },
+  });
+  const findStamped = port("findStamped").of<(id: string) => { id: string; at: Date }>();
+  const keepId = rule(stamped.onSave, {
+    name: "id",
+    when: always,
+    check: ({ pre }) => Result.succeed({ next: { id: pre?.id ?? "new" } }),
+  });
+  const withLoad = modelRules(stamped).load({
+    requires: { findStamped },
+    fetch: ({ input }, { findStamped }) => findStamped(input.id),
+  });
+  // @ts-expect-error 重ねた next の Date を、文字列だけを受け付ける schema に通せない
+  withLoad.save(ruleset(keepId));
+  // create だけなら next をもう一度通さないので書ける
+  modelRules(stamped).save(ruleset(keepId));
+  // delete だけでも書ける
+  withLoad.delete(ruleset(alwaysAllow));
+});

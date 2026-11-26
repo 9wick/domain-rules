@@ -61,3 +61,10 @@ export const validatePartial = async <Out>(
   }
   return issues.length > 0 ? Result.fail(inputFailure(issues)) : Result.succeed(out);
 };
+
+// 更新では、抜粋に既存の値を重ねた next がモデルの schema 全体(項目をまたぐ検証を含む)を満たすかを確かめる。
+// 出力は捨てる。既存の値から引き継いだ項目は永続化の型のまま残し、変換を二度かけないため
+export const checkWhole = async (schema: StandardSchemaV1, next: State): Promise<Result.Result<void, InputFailure>> => {
+  const r = await validate(schema, definedEntries(next));
+  return r.type === "Failure" ? Result.fail(inputFailure(r.error)) : Result.succeed();
+};
