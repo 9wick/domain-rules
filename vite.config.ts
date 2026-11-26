@@ -4,6 +4,10 @@ export default defineConfig({
   pack: {
     entry: { index: "src/index.ts" },
     dts: true,
+    deps: {
+      // 小さな自前のユーティリティなので dist に取り込み、利用者の依存を増やさない。ほかの依存が紛れ込んだらビルドを止める
+      onlyBundle: ["as-free"],
+    },
   },
   staged: {
     "*": "vp check --fix",

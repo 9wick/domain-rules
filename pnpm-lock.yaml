@@ -182,13 +182,13 @@ importers:
       '@standard-schema/spec':
         specifier: 1.1.0
         version: 1.1.0
-      as-free:
-        specifier: 0.0.2
-        version: 0.0.2
     devDependencies:
       '@praha/byethrow':
         specifier: 0.13.0
         version: 0.13.0(typescript@7.0.2)
+      as-free:
+        specifier: 0.0.2
+        version: 0.0.2
       typescript:
         specifier: 7.0.2
         version: 7.0.2
