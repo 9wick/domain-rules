@@ -1,4 +1,4 @@
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
 import { Panic } from "../shared/panic.ts";
 import { Context, provide } from "./provider.ts";
 import { Slot } from "./slot.ts";
@@ -27,6 +27,16 @@ test("同じ名前でも、別の差し込み口の provider は別のものと�
   const other = new Slot<"same", () => number>("same");
   const context = new Context([a.provider(() => 1), other.provider(() => 2)]);
   expect([a.implIn(context)?.(), other.implIn(context)?.()]).toEqual([1, 2]);
+});
+
+test("別に読み込んだ provider.ts の Context でも、provider の実装を取り出せる", async () => {
+  // ESM と CommonJS の両方を読み込んだときのように、同じ class が2つある状況を作る
+  const a = new Slot<"a", () => number>("a");
+  const provider = a.provider(() => 1);
+  vi.resetModules();
+  const other = await import("./provider.ts");
+  expect(other.Context).not.toBe(Context);
+  expect(a.implIn(new other.Context([provider]))?.()).toBe(1);
 });
 
 const impl = () => 1;

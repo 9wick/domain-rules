@@ -15,9 +15,9 @@ export class Provider<N extends string = string> {
     Object.freeze(this);
   }
 
-  static boxedOf(p: Provider): object {
-    return p.#boxed;
-  }
+  // static にせずインスタンスに持たせる。ESM と CommonJS の両方が読み込まれると Provider の class が2つでき、
+  // 別の側の class からはこの private field を読めないため、値を作った側の class に読ませる
+  readonly boxed = (): object => this.#boxed;
 }
 
 // bind ごとに1つ作る、差し込み口ごとの実装の一覧。作ったあとは変わらない
@@ -39,7 +39,7 @@ export class Context {
 
   readonly boxFor = (slot: object): object | undefined => {
     const p = this.#providers.get(slot);
-    return p === undefined ? undefined : Provider.boxedOf(p);
+    return p?.boxed();
   };
 }
 
