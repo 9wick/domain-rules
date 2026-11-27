@@ -9,6 +9,8 @@ import { ruleset } from "../pipeline/ruleset.ts";
 import { always } from "../pipeline/when/step.ts";
 import { port } from "../port/port.ts";
 import { modelRules, type ModelRules } from "./model-rules.ts";
+import { Context } from "../port/provider.ts";
+import { invocationOf } from "../port/invocation.ts";
 
 type Operator = { readonly name: string };
 
@@ -38,7 +40,7 @@ test("メソッドの actor は domain の actor の型で、線路が昇格さ�
   });
   const { update } = loaded()
     .save(ruleset(promote).add(assignId))
-    .resolveIn({ invocation: () => ({ scope: {}, now: 0 }) });
+    .resolveIn({ invocation: () => invocationOf(new Context([]), 0) });
   expectTypeOf(update).parameter(0).toHaveProperty("actor").toEqualTypeOf<Operator>();
   const r = await update({ input: { id: "i1" }, actor: { name: "op" } });
   if (Result.isSuccess(r)) {
@@ -82,7 +84,7 @@ test("fetch は検証した key と、domain の actor を受け取る。key の
       ),
     )
     .delete(ruleset(alwaysAllow))
-    .resolveIn({ invocation: () => ({ scope: {}, now: 0 }) });
+    .resolveIn({ invocation: () => invocationOf(new Context([]), 0) });
   // @ts-expect-error tenantId は key なので、update でも省略できない
   void update({ input: { id: "r1", n: 1 }, actor: { name: "op" } });
   // value は変える項目だけを渡せる
@@ -96,7 +98,7 @@ test("fetch は検証した key と、domain の actor を受け取る。key の
 test("load の失敗は、fetch が返した失敗を load の失敗として持つ", async () => {
   const { update } = loaded()
     .save(save)
-    .resolveIn({ invocation: () => ({ scope: {}, now: 0 }) });
+    .resolveIn({ invocation: () => invocationOf(new Context([]), 0) });
   const r = await update({ input: { id: "i1" }, actor: { name: "op" } });
   if (Result.isFailure(r) && r.error.step === "load") expectTypeOf(r.error.error).toEqualTypeOf<"MISSING">();
 });

@@ -15,6 +15,8 @@ import {
   type SaveRun,
 } from "./model-methods.ts";
 import { open } from "./seal.ts";
+import { Context } from "../port/provider.ts";
+import { invocationOf } from "../port/invocation.ts";
 
 type Operator = { readonly name: string };
 type Stored = { id: string; tenantId: string; n: number };
@@ -40,7 +42,7 @@ const contextWith = (find: (id: string) => Result.Result<Stored, LoadError>, now
   const loadItem: LoadRun<Key, Operator, Stored, LoadError> = {
     run: async (args) => (calls.load.push(args), find(args.input.id)),
   };
-  const ctx: BindCtx = { invocation: () => (calls.invocation++, { scope: {}, now }) };
+  const ctx: BindCtx = { invocation: () => (calls.invocation++, invocationOf(new Context([]), now)) };
   return { ctx, calls, loadItem };
 };
 
@@ -184,7 +186,7 @@ describe("update", () => {
     const rules: SaveRun<{ id: number }, { id?: number | undefined }, { id: number }, Operator, Operator, never> = {
       run: async (s) => Result.succeed({ next: { id: s.next.id ?? 0 }, actor: s.actor }),
     };
-    const r = await updateMethod(numbered, find, rules)({ invocation: () => ({ scope: {}, now: 0 }) })({
+    const r = await updateMethod(numbered, find, rules)({ invocation: () => invocationOf(new Context([]), 0) })({
       input: { id: "42" },
       actor: operator,
     });
@@ -215,12 +217,12 @@ describe("項目をまたぐ検証", () => {
     const find: LoadRun<{ id?: string | undefined }, Operator, Range, never> = {
       run: async ({ input }) => (load.push(input.id), Result.succeed(existing)),
     };
-    const update = updateMethod(ranged, find, passThrough)({ invocation: () => ({ scope: {}, now: 0 }) });
+    const update = updateMethod(ranged, find, passThrough)({ invocation: () => invocationOf(new Context([]), 0) });
     return { load, update };
   };
 
   test("create でも update でも、value の schema に書いた検証が効く", async () => {
-    const create = createMethod(ranged, passThrough)({ invocation: () => ({ scope: {}, now: 0 }) });
+    const create = createMethod(ranged, passThrough)({ invocation: () => invocationOf(new Context([]), 0) });
     const created = await create({ input: { from: 9, to: 5 }, actor: operator });
     // 差分の from だけを変えても、既存の to と重ねた値で確かめる
     const updated = await setup().update({ input: { id: "r1", from: 9 }, actor: operator });
@@ -307,7 +309,7 @@ describe("Zod の schema", () => {
   const passThrough: SaveRun<Range, RangeValue, Range, Operator, Operator, never> = {
     run: async (s) => Result.succeed({ next: { ...s.next, id: s.next.id ?? "new" }, actor: s.actor }),
   };
-  const ctx: BindCtx = { invocation: () => ({ scope: {}, now: 0 }) };
+  const ctx: BindCtx = { invocation: () => invocationOf(new Context([]), 0) };
   const find: LoadRun<{ id?: string | undefined }, Operator, Range, never> = {
     run: async () => Result.succeed(existing),
   };

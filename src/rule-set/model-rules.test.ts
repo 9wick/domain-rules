@@ -10,6 +10,8 @@ import { given } from "../pipeline/when/builders.ts";
 import { always } from "../pipeline/when/step.ts";
 import { port } from "../port/port.ts";
 import { modelRules } from "./model-rules.ts";
+import { Context } from "../port/provider.ts";
+import { invocationOf } from "../port/invocation.ts";
 
 type Operator = { readonly name: string };
 const operator: Operator = { name: "op" };
@@ -31,9 +33,8 @@ const assignId = rule(item.onSave, {
 const save = ruleset(assignId);
 
 const ctxWith = (stored: { id: string; n: number }) => {
-  const scope = {};
-  findItem.valued(stored).registerIn(scope);
-  return { invocation: () => ({ scope, now: 0 }) };
+  const context = new Context([findItem.valued(stored)]);
+  return { invocation: () => invocationOf(context, 0) };
 };
 const stored = { id: "i1", n: 1 };
 
@@ -93,12 +94,11 @@ test("delete の線路は呼び出し時の入力を受け取り、given で指�
     when: given("owner"),
     check: ({ pre, input }) => (input.owner === pre.owner ? Result.succeed() : Result.fail("OWNER_MISMATCH" as const)),
   });
-  const scope = {};
-  findOwned.valued(ownedStored).registerIn(scope);
+  const context = new Context([findOwned.valued(ownedStored)]);
   const { delete: remove } = modelRules(owned)
     .load({ requires: { findOwned }, fetch: ({ input }, { findOwned }) => findOwned(input.id) })
     .delete(ruleset(sameOwner))
-    .resolveIn({ invocation: () => ({ scope, now: 0 }) });
+    .resolveIn({ invocation: () => invocationOf(context, 0) });
   const unspecified = await remove({ input: { id: "i1" }, actor: operator });
   expect(open(Result.unwrap(unspecified)).pre).toEqual(ownedStored);
   const matched = await remove({ input: { id: "i1", owner: "alice" }, actor: operator });
@@ -109,17 +109,16 @@ test("delete の線路は呼び出し時の入力を受け取り、given で指�
 
 test("取得ステップは id 以外の値も取得条件に使え、その失敗が load の失敗になる", async () => {
   const findOwned = port("findOwned").of<(owner: string, id: string) => { id: string; n: number }, "NOT_OWNED">();
-  const scope = {};
-  findOwned
-    .provider((owner, id) => (owner === "op" ? Result.succeed({ id, n: 1 }) : Result.fail("NOT_OWNED")))
-    .registerIn(scope);
+  const context = new Context([
+    findOwned.provider((owner, id) => (owner === "op" ? Result.succeed({ id, n: 1 }) : Result.fail("NOT_OWNED"))),
+  ]);
   const { update } = modelRules(item)
     .load({
       requires: { findOwned },
       fetch: ({ input, actor }, { findOwned }) => findOwned(actor.name, input.id),
     })
     .save(save)
-    .resolveIn({ invocation: () => ({ scope, now: 0 }) });
+    .resolveIn({ invocation: () => invocationOf(context, 0) });
   const owned = await update({ input: { id: "i1", n: 2 }, actor: operator });
   expect(open(Result.unwrap(owned)).pre).toEqual({ id: "i1", n: 1 });
   const other = await update({ input: { id: "i1", n: 2 }, actor: { name: "someone" } });
@@ -128,9 +127,10 @@ test("取得ステップは id 以外の値も取得条件に使え、その失�
 
 test("fetch も rule の check と同じく、safeTry で port の失敗を止められる", async () => {
   const findOwner = port("findOwner").of<(id: string) => string, "NO_OWNER">();
-  const scope = {};
-  findItem.valued(stored).registerIn(scope);
-  findOwner.provider((id) => (id === "i1" ? Result.succeed("op") : Result.fail("NO_OWNER"))).registerIn(scope);
+  const context = new Context([
+    findItem.valued(stored),
+    findOwner.provider((id) => (id === "i1" ? Result.succeed("op") : Result.fail("NO_OWNER"))),
+  ]);
   const { update } = modelRules(item)
     .load({
       requires: { findOwner, findItem },
@@ -141,7 +141,7 @@ test("fetch も rule の check と同じく、safeTry で port の失敗を止�
         }),
     })
     .save(save)
-    .resolveIn({ invocation: () => ({ scope, now: 0 }) });
+    .resolveIn({ invocation: () => invocationOf(context, 0) });
   expect(open(Result.unwrap(await update({ input: { id: "i1" }, actor: operator }))).pre).toEqual(stored);
   expect(Result.unwrapError(await update({ input: { id: "i2" }, actor: operator }))).toEqual({
     step: "load",
@@ -175,12 +175,11 @@ test("文字列を Date に変換し、Date もそのまま受け付ける schem
     check: ({ pre }) => Result.succeed({ next: { id: pre?.id ?? "new" } }),
   });
   const stored = { id: "a1", date: new Date("2026-01-01T00:00:00Z") };
-  const scope = {};
-  find.valued(stored).registerIn(scope);
+  const context = new Context([find.valued(stored)]);
   const { update } = modelRules(appointment)
     .load({ requires: { find }, fetch: ({ input }, { find }) => find(input.id) })
     .save(ruleset(keepId))
-    .resolveIn({ invocation: () => ({ scope, now: 0 }) });
+    .resolveIn({ invocation: () => invocationOf(context, 0) });
   const moved = await update({ input: { id: "a1", date: "2026-02-01T00:00:00Z" }, actor: operator });
   expect(open(Result.unwrap(moved)).next.date).toEqual(new Date("2026-02-01T00:00:00Z"));
   const kept = await update({ input: { id: "a1" }, actor: operator });
