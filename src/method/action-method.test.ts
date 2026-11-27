@@ -4,11 +4,13 @@ import { expect, test } from "vite-plus/test";
 import type { DecideState } from "../definition/action.ts";
 import { actionMethods, type DecideRun } from "./action-method.ts";
 import { open } from "./seal.ts";
+import { Context } from "../port/provider.ts";
+import { invocationOf } from "../port/invocation.ts";
 
 type Operator = { readonly role: "MEMBER" | "GUEST" };
 const member: Operator = { role: "MEMBER" };
 const input = v.object({ fileId: v.pipe(v.string(), v.minLength(1)) });
-const ctx = { invocation: () => ({ scope: {}, now: 7 }) };
+const ctx = { invocation: () => invocationOf(new Context([]), 7) };
 
 // 受け取った状態を記録し、メンバーだけに URL を返す線路
 const seen: DecideState<{ fileId: string }, Operator>[] = [];

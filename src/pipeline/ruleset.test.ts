@@ -5,10 +5,12 @@ import { port } from "../port/port.ts";
 import { rule } from "./rule.ts";
 import { ruleset } from "./ruleset.ts";
 import { always } from "./when/step.ts";
+import { invocationOf } from "../port/invocation.ts";
+import { Context } from "../port/provider.ts";
 
 type S = { readonly n: number };
 const track = new Track<"save", "item", S>("save", "item");
-const inv = { scope: {}, now: 0 };
+const inv = invocationOf(new Context([]), 0);
 
 const positive = rule(track, {
   name: "正の数",

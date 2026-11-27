@@ -2,12 +2,14 @@ import { Result } from "@praha/byethrow";
 import { expect, test } from "vite-plus/test";
 import { Track } from "../definition/track.ts";
 import { alwaysAllow, immutable } from "./builtin-rules.ts";
+import { Context } from "../port/provider.ts";
+import { invocationOf } from "../port/invocation.ts";
 
 type Item = { readonly slug: string; readonly title: string; readonly n: number };
 type S = { readonly pre: Item | null; readonly next: Item };
 const track = new Track<"save", "item", S>("save", "item");
 const item: Item = { slug: "a", title: "t", n: 1 };
-const inv = { scope: {}, now: 0 };
+const inv = invocationOf(new Context([]), 0);
 
 const fixed = immutable(track, ["slug", "n"]);
 

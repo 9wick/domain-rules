@@ -4,6 +4,8 @@ import { Track } from "../definition/track.ts";
 import { port } from "../port/port.ts";
 import { rule } from "./rule.ts";
 import { always } from "./when/step.ts";
+import { Context } from "../port/provider.ts";
+import { invocationOf } from "../port/invocation.ts";
 
 type S = { readonly n: number };
 const track = new Track<"save", "item", S>("save", "item");
@@ -14,15 +16,14 @@ test("run は状態を check に渡し、check の Result を返す", async () =
     when: always,
     check: ({ n }) => (n > 0 ? Result.succeed({ checked: true }) : Result.fail("NOT_POSITIVE")),
   });
-  const inv = { scope: {}, now: 0 };
+  const inv = invocationOf(new Context([]), 0);
   expect(await positive.run({ n: 1 }, inv)).toEqual(Result.succeed({ checked: true }));
   expect(await positive.run({ n: -1 }, inv)).toEqual(Result.fail("NOT_POSITIVE"));
 });
 
 test("check は requires の port を、1回の呼び出しに束ねた関数で受け取る", async () => {
   const failing = port("failing").of<() => number, "DOWN">();
-  const scope = {};
-  failing.provider(() => Result.fail("DOWN")).registerIn(scope);
+  const context = new Context([failing.provider(() => Result.fail("DOWN"))]);
   const mapped = rule(track, {
     name: "port を使う",
     requires: { failing },
@@ -32,7 +33,7 @@ test("check は requires の port を、1回の呼び出しに束ねた関数で
       return Result.isFailure(r) ? Result.fail({ unavailable: r.error }) : Result.succeed();
     },
   });
-  expect(await mapped.run({ n: 1 }, { scope, now: 0 })).toEqual(Result.fail({ unavailable: "DOWN" }));
+  expect(await mapped.run({ n: 1 }, invocationOf(context, 0))).toEqual(Result.fail({ unavailable: "DOWN" }));
   expect(mapped.ports).toEqual([failing]);
 });
 
@@ -44,7 +45,7 @@ test("check が throw した例外は握りつぶさない", async () => {
       throw new Error("bug");
     },
   });
-  await expect(boom.run({ n: 1 }, { scope: {}, now: 0 })).rejects.toThrow("bug");
+  await expect(boom.run({ n: 1 }, invocationOf(new Context([]), 0))).rejects.toThrow("bug");
 });
 
 test("when は判定と説明を保ち、当たらなければ状態を進めない step を持つ", async () => {
@@ -63,9 +64,10 @@ test("when は判定と説明を保ち、当たらなければ状態を進めな
 test("check の safeTry は、yield* した port の失敗で止まり、その失敗を返す", async () => {
   const failing = port("failing").of<() => number, "DOWN">();
   const double = port("double").of<(n: number) => number>();
-  const scope = {};
-  failing.provider(() => Result.fail("DOWN")).registerIn(scope);
-  double.provider((n) => Result.succeed(n * 2)).registerIn(scope);
+  const context = new Context([
+    failing.provider(() => Result.fail("DOWN")),
+    double.provider((n) => Result.succeed(n * 2)),
+  ]);
   const events: string[] = [];
   const stops = rule(track, {
     name: "失敗で止まる",
@@ -80,14 +82,13 @@ test("check の safeTry は、yield* した port の失敗で止まり、その�
         return Result.succeed();
       }),
   });
-  expect(await stops.run({ n: 1 }, { scope, now: 0 })).toEqual(Result.fail("DOWN"));
+  expect(await stops.run({ n: 1 }, invocationOf(context, 0))).toEqual(Result.fail("DOWN"));
   expect(events).toEqual(["double 2"]);
 });
 
 test("check の safeTry は、最後まで進んだら body が返した Result を返す", async () => {
   const double = port("double").of<(n: number) => number>();
-  const scope = {};
-  double.provider((n) => Result.succeed(n * 2)).registerIn(scope);
+  const context = new Context([double.provider((n) => Result.succeed(n * 2))]);
   const r = rule(track, {
     name: "最後まで進む",
     requires: { double },
@@ -98,6 +99,6 @@ test("check の safeTry は、最後まで進んだら body が返した Result 
         return d > 2 ? Result.succeed({ doubled: d }) : Result.fail("SMALL");
       }),
   });
-  expect(await r.run({ n: 2 }, { scope, now: 0 })).toEqual(Result.succeed({ doubled: 4 }));
-  expect(await r.run({ n: 1 }, { scope, now: 0 })).toEqual(Result.fail("SMALL"));
+  expect(await r.run({ n: 2 }, invocationOf(context, 0))).toEqual(Result.succeed({ doubled: 4 }));
+  expect(await r.run({ n: 1 }, invocationOf(context, 0))).toEqual(Result.fail("SMALL"));
 });
