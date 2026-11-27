@@ -27,7 +27,7 @@ ESM と CommonJS の両方で使えます（`import` は `.mjs` / `.d.mts`、`re
 
 ## クイックスタート
 
-全体の流れは **1. 定義（モデル・ポート・ルール） → 2. 注入（`bind`） → 3. 実行と取り出し（`open`）** です。
+全体の流れは **1. 定義（モデル・ポート・ルール・リポジトリ） → 2. 注入（`bind`） → 3. 実行して検証済みの値をリポジトリへ渡す**。`open()` で中身を取り出すのはリポジトリの中だけです。
 
 ```ts
 import { Result } from "@praha/byethrow";
@@ -44,6 +44,7 @@ import {
   provide,
   rule,
   ruleset,
+  type Persistable,
   type Persisted,
 } from "domain-rules";
 
@@ -99,6 +100,15 @@ const articleRules = modelRules(article)
   })
   .save(ruleset(publishRequiresLongTitle).add(assignArticleId));
 
+// リポジトリ（永続化層）は検証済みの値（Persistable）だけを受け取り、中で封を開けて保存する
+const articleRepo = {
+  findById: async (id: string) => Result.succeed(await db.article.findById(id)),
+  save: async (p: Persistable<typeof article, "create" | "update">) => {
+    const { next } = open(p); // next は Persisted<typeof article> 型
+    await db.article.save(next);
+  },
+};
+
 // 2. provider を注入して呼び出し可能な API を組み立てる（起動時 / DI）
 const domain = bind([articleRules], {
   providers: [
@@ -108,15 +118,15 @@ const domain = bind([articleRules], {
   ],
 });
 
-// 3. 実行し、検証済みの値を取り出して保存する（Usecase）
+// 3. 実行し、検証済みの値を封をしたままリポジトリへ渡す（Usecase）
 const result = await domain.article.create({
   input: { title: "Hello domain-rules", status: "DRAFT" },
   actor: { id: "usr_1" },
 });
 
 if (Result.isSuccess(result)) {
-  const { next } = open(result.value); // next は Persisted<typeof article> 型
-  await articleRepo.save(next);
+  // 封を開けずにそのままリポジトリへ渡す
+  await articleRepo.save(result.value);
 }
 ```
 
