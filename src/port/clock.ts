@@ -1,22 +1,22 @@
-import { Provider, register } from "./provider.ts";
+import type { Context, Provider } from "./provider.ts";
+import { Slot } from "./slot.ts";
 
 class Clock {
   readonly kind = "clock";
   readonly name = "clock";
-  readonly #impls = new WeakMap<object, () => number>();
+  readonly #slot = new Slot<"clock", () => number>("clock");
 
   constructor() {
     Object.freeze(this);
   }
 
-  readonly provider = (now: () => number): Provider<"clock"> =>
-    new Provider(this.name, (scope) => register(this.#impls, scope, now, this.name));
+  readonly provider = (now: () => number): Provider<"clock"> => this.#slot.provider(now);
 
   readonly valued = (v: number): Provider<"clock"> => this.provider(() => v);
 
-  readonly providedIn = (scope: object): boolean => this.#impls.has(scope);
+  readonly providedIn = (context: Context): boolean => this.#slot.providedIn(context);
 
-  readonly nowIn = (scope: object): number | undefined => this.#impls.get(scope)?.();
+  readonly nowIn = (context: Context): number | undefined => this.#slot.implIn(context)?.();
 }
 export type { Clock };
 

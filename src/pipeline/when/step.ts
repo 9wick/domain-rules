@@ -1,4 +1,4 @@
-import { Result } from "@praha/byethrow";
+import * as Result from "../../shared/result.ts";
 import type { Always, Check } from "./when.ts";
 
 // 成功の値を状態に重ねる。next は項目ごとに重ねる。
@@ -19,7 +19,7 @@ const merged = <X, V>(s: X, v: V): X & V => Object.assign({}, s, v, nestedNext(s
 // 当たる rule の check を呼び、成功の値を重ねる
 const applied = async <X, V, E>(s: X, check: Check<X, V, E>): Promise<Result.Result<X & V, E>> => {
   const r = await check(s);
-  return Result.isFailure(r) ? r : Result.succeed(merged(s, r.value));
+  return r.type === "Failure" ? r : Result.succeed(merged(s, r.value));
 };
 
 // 当たらないこともある when の step。当たらなければ状態をそのまま返す

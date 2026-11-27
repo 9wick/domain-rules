@@ -182,13 +182,13 @@ importers:
       '@standard-schema/spec':
         specifier: 1.1.0
         version: 1.1.0
-      as-free:
-        specifier: 0.0.2-beta.1
-        version: 0.0.2-beta.1
     devDependencies:
       '@praha/byethrow':
         specifier: 0.13.0
         version: 0.13.0(typescript@7.0.2)
+      as-free:
+        specifier: 0.0.3-beta.1
+        version: 0.0.3-beta.1
       typescript:
         specifier: 7.0.2
         version: 7.0.2
@@ -201,6 +201,9 @@ importers:
       vitest:
         specifier: 'catalog:'
         version: 5.1.0(@vitest/browser-preview@5.1.0)(@vitest/ui@5.1.0)(@voidzero-dev/vite-plus-core@1.5.1(typescript@7.0.2))
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
 
 packages:
 
@@ -890,8 +893,8 @@ packages:
   aria-query@5.3.0:
     resolution: {integrity: sha512-b0P0sZPKtyu8HkeRAfCq0IfURZK+SuwMjY1UXGBU27wpAiTwQAIlq56IbIO+ytk/JjS1fMR14ee5WBBfKi5J6A==}
 
-  as-free@0.0.2-beta.1:
-    resolution: {integrity: sha512-0mKrxK2KgN95WBfB2sL/+D0D1LXxWe0cq0Nla5bAaSjVSDTDv3pqzBF5OYm/n4KDpy9d9mRRFvXXRTT8ZeIceg==}
+  as-free@0.0.3-beta.1:
+    resolution: {integrity: sha512-jcuGa3TaPZ979MzWydWfOiNqS64OnWuBg+1pxcVCM3CwhZdgUQ8UeveMoD9ej6Y5GlEqiMwO0F8GCGypQgzBYw==}
 
   assertion-error@2.0.1:
     resolution: {integrity: sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==}
@@ -1231,6 +1234,9 @@ packages:
     resolution: {integrity: sha512-XrBh9ZiQK5mJVRxZBAvD6LwRyAYrK3MFtH3+onyuxFL5hFD44EC3QOmIC1FjTj6H2MMwq46/NAI+NZxLZPZgxg==}
     engines: {node: '>=14.18.0'}
     deprecated: 'Yuku is now one package with one core. Use "yuku" instead: https://yuku.fyi/javascript/. Existing installs keep working but get no more fixes.'
+
+  zod@4.6.7:
+    resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
 
 snapshots:
 
@@ -1645,7 +1651,7 @@ snapshots:
     dependencies:
       dequal: 2.0.3
 
-  as-free@0.0.2-beta.1: {}
+  as-free@0.0.3-beta.1: {}
 
   assertion-error@2.0.1: {}
 
@@ -1981,3 +1987,5 @@ snapshots:
     dependencies:
       '@yuku-toolchain/types': 0.19.0
       yuku-core: 0.19.0
+
+  zod@4.6.7: {}

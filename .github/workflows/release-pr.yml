@@ -1,0 +1,23 @@
+name: Release PR
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write # the release notes API requires it
+  pull-requests: write
+
+concurrency:
+  group: release-pr
+  cancel-in-progress: true
+
+jobs:
+  release-pr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: 9wick/release-flow/release-pr@651af2d82c4ebad0fe0b74808d43c57a168dd49e # v1
+        with:
+          production-branch: release
+          staging-branch: main

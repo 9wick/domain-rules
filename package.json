@@ -1,28 +1,54 @@
 {
   "name": "domain-rules",
   "version": "0.0.0",
-  "private": true,
+  "description": "Define business rules in small units and guarantee validated data with TypeScript types.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/9wick/domain-rules.git"
+  },
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
   },
+  "publishConfig": {
+    "main": "./dist/index.cjs",
+    "module": "./dist/index.mjs",
+    "types": "./dist/index.d.cts",
+    "exports": {
+      ".": {
+        "import": {
+          "types": "./dist/index.d.mts",
+          "default": "./dist/index.mjs"
+        },
+        "require": {
+          "types": "./dist/index.d.cts",
+          "default": "./dist/index.cjs"
+        }
+      }
+    },
+    "access": "public"
+  },
   "scripts": {
+    "build": "vp pack",
+    "check": "vp check",
     "test": "vp test run",
     "prepare": "vp config"
   },
   "dependencies": {
-    "@standard-schema/spec": "1.1.0",
-    "as-free": "0.0.2-beta.1"
+    "@standard-schema/spec": "1.1.0"
   },
   "devDependencies": {
     "@praha/byethrow": "0.13.0",
+    "as-free": "0.0.3-beta.1",
     "typescript": "7.0.2",
     "valibot": "1.5.0",
     "vite-plus": "catalog:",
-    "vitest": "catalog:"
-  },
-  "peerDependencies": {
-    "@praha/byethrow": "0.13.0"
+    "vitest": "catalog:",
+    "zod": "4.6.7"
   },
   "packageManager": "pnpm@12.18.0"
 }

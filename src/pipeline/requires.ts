@@ -1,6 +1,7 @@
 import { mapValues } from "as-free";
 import type { Invocation } from "../port/invocation.ts";
 import type { AnyPort } from "../port/port.ts";
+import { safeTryWith, type SafeTry } from "./safe-try.ts";
 
 // requires に書ける record。各 port が、1回の呼び出しから check に渡す関数を作れることを型で表す
 export type Requires = Readonly<
@@ -39,3 +40,12 @@ export type PortFns<P extends Requires> = ReturnType<typeof resolvePorts<P>>;
 export const unwrapPorts = <P extends Requires>(requires: P, invocation: Invocation) =>
   mapValues(requires, (p) => p.unwrapIn(invocation));
 export type UnwrappedPortFns<P extends Requires> = ReturnType<typeof unwrapPorts<P>>;
+
+// check と load の fetch の第3引数。port の Result を if で取り出す代わりに、yield* で取り出して書くための道具
+export type CheckTools<P extends Requires> = { readonly safeTry: SafeTry<UnwrappedPortFns<P>> };
+
+// check と load の fetch は、どちらも requires の port から1回の呼び出しごとに作った関数を受け取る
+export const withPorts =
+  <P extends Requires, X, R>(requires: P, step: (x: X, ports: PortFns<P>, tools: CheckTools<P>) => R) =>
+  (x: X, invocation: Invocation): R =>
+    step(x, resolvePorts(requires, invocation), { safeTry: safeTryWith(unwrapPorts(requires, invocation)) });

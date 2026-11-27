@@ -27,6 +27,7 @@ describe("型", () => {
         | "input"
         | "load"
         | "記事を変更できるのはメンバーだけ"
+        | "作成時に省略した status は下書き、approvedAt は未承認"
         | "status は許可された変化だけ"
         | `作成後に変えられない項目: ${string}`
         | "ブログが存在する"
@@ -53,7 +54,10 @@ describe("型", () => {
   });
 
   test("rule の失敗の値に、check の失敗と port の失敗が入る", async () => {
-    const r = await domain.article.create({ input: {}, actor: { id: v.parse(UserIdSchema, "usr_1"), role: "MEMBER" } });
+    const r = await domain.article.create({
+      input: { blogId: "blg_1", authorId: "usr_1", reviewerId: "usr_2", slug: "s", publishAt: 1 },
+      actor: { id: v.parse(UserIdSchema, "usr_1"), role: "MEMBER" },
+    });
     if (Result.isFailure(r) && r.error.step === "レビュアーが存在する") {
       expectTypeOf(r.error.error).toEqualTypeOf<
         "USER_NOT_FOUND" | { readonly type: "INFRA"; readonly cause: unknown }

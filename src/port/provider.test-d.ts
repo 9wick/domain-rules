@@ -15,7 +15,7 @@ test("provide の実装は、対象が受け取る実装の型に合わせる", 
 });
 
 test("provider は同じ形の object からは作れない", () => {
-  // @ts-expect-error registerIn を持つだけの object は provider ではない
-  const forged: Provider<"p"> = { name: "p", registerIn: () => undefined };
+  // @ts-expect-error name と slot を持つだけの object は provider ではない
+  const forged: Provider<"p"> = { name: "p", slot: {} };
   expectTypeOf(forged).not.toBeNever();
 });

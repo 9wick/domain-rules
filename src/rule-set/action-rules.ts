@@ -1,20 +1,29 @@
-import { Result } from "@praha/byethrow";
+import * as Result from "../shared/result.ts";
 import type { Action, DecideState } from "../definition/action.ts";
-import { actionMethods, type DecideMethod } from "../method/action-method.ts";
+import { actionMethods, type DecideMethod, type DecideRun } from "../method/action-method.ts";
 import type { BindCtx } from "../method/context.ts";
-import type { Decider, RunnableRuleset } from "../pipeline/ruleset.ts";
+import type { PlannedRule, portNames, RunnableRuleset } from "../pipeline/ruleset.ts";
+import type { AnyPort } from "../port/port.ts";
 
-export type AnyDecider = Decider<never, unknown, unknown, string>;
+export type ActionPlan = { readonly rules: readonly PlannedRule[] };
 
-export type ActionRules<A extends Action = Action, Rs extends AnyDecider = AnyDecider, Ms = unknown> = {
-  readonly kind: "actionRules";
-  readonly name: A["name"];
-  readonly action: A;
-  readonly rules: Rs;
+// bind に渡せる action の rule の組。model の rule の組と同じ項目を持ち、bind は kind で読み分けない
+export class ActionRules<N extends string = string, PN extends string = string, Ms = unknown> {
+  declare readonly [portNames]: PN;
+  readonly kind = "actionRules";
+  readonly name: N;
+  readonly plan: ActionPlan;
+  readonly ports: readonly AnyPort[];
   readonly resolveIn: (ctx: BindCtx) => Ms;
-};
 
-type Decided<End extends { readonly actor: unknown }, T> = { readonly value: T; readonly actor: End["actor"] };
+  constructor(name: N, plan: ActionPlan, ports: readonly AnyPort[], resolveIn: (ctx: BindCtx) => Ms) {
+    this.name = name;
+    this.plan = plan;
+    this.ports = ports;
+    this.resolveIn = resolveIn;
+    Object.freeze(this);
+  }
+}
 
 const actorOf = <X extends { readonly actor: unknown }>(x: X): X["actor"] => x.actor;
 
@@ -25,25 +34,15 @@ export function actionRules<N extends string, In, Out, Act, D, E, PN extends str
     readonly rules: RunnableRuleset<DecideState<Out, Act>, D, E, PN>;
     readonly output: (s: DecideState<Out, Act> & D) => T;
   },
-): ActionRules<
-  Action<N, In, Out, Act>,
-  Decider<DecideState<Out, Act>, Decided<DecideState<Out, Act> & D, T>, E, PN>,
-  { readonly decide: DecideMethod<N, In, Out, Act, T, (DecideState<Out, Act> & D)["actor"], E> }
-> {
+): ActionRules<N, PN, { readonly decide: DecideMethod<N, In, Out, Act, T, (DecideState<Out, Act> & D)["actor"], E> }> {
   const { rules, output } = def;
-  const decided: Decider<DecideState<Out, Act>, Decided<DecideState<Out, Act> & D, T>, E, PN> = {
-    ...rules,
+  const decided: DecideRun<Out, Act, T, (DecideState<Out, Act> & D)["actor"], E> = {
     run: async (s, call) => {
       const r = await rules.run(s, call);
-      return Result.isFailure(r) ? r : Result.succeed({ value: output(r.value), actor: actorOf(r.value) });
+      return r.type === "Failure" ? r : Result.succeed({ value: output(r.value), actor: actorOf(r.value) });
     },
   };
-  return Object.freeze({
-    kind: "actionRules",
-    name: a.name,
-    action: a,
-    rules: Object.freeze(decided),
-    resolveIn: (ctx: BindCtx) =>
-      actionMethods<N, In, Out, Act, T, (DecideState<Out, Act> & D)["actor"], E>(ctx, a.input, decided),
-  });
+  return new ActionRules(a.name, { rules: rules.plan }, rules.ports, (ctx: BindCtx) =>
+    actionMethods<N, In, Out, Act, T, (DecideState<Out, Act> & D)["actor"], E>(ctx, a.input, decided),
+  );
 }

@@ -13,7 +13,11 @@ import { plan } from "./rule-set.ts";
 test("plan は model の rule の組なら save と delete の線路を、action なら判定の線路を返す", () => {
   const item = defineModel<unknown>()({
     name: "item",
-    schema: { input: v.object({ id: v.optional(v.string()) }), persisted: v.object({ id: v.string() }) },
+    schema: {
+      key: v.object({ id: v.optional(v.string()) }),
+      value: v.object({}),
+      persisted: v.object({ id: v.string() }),
+    },
   });
   const assignId = rule(item.onSave, {
     name: "id",

@@ -2,7 +2,7 @@
 
 データの作成・更新・削除やアクション実行前のビジネスルールを小さな単位で定義し、必要なデータだけを取得・検証して、「検証済みであること」を TypeScript の型で保証するライブラリです。
 
-> **Status**: 試作段階です（npm 未公開）。より実践的な定義例は [test/blog/domain.ts](test/blog/domain.ts) にあり、型検査とテストで動作を確認しています。
+> **Status**: 試作段階です。main の最新は npm の `beta` タグで公開しています。より実践的な定義例は [test/blog/domain.ts](test/blog/domain.ts) にあり、型検査とテストで動作を確認しています。
 
 ## 何ができるか
 
@@ -14,8 +14,16 @@
 ## 前提
 
 - TypeScript
-- [Standard Schema](https://github.com/standard-schema/spec) 準拠のスキーマライブラリ（例: Valibot）
-- [`@praha/byethrow`](https://github.com/praha-inc/byethrow)（成功・失敗を `Result` / `ResultAsync` で表現）
+- スキーマライブラリ: [Zod](https://zod.dev)（v4）または [Valibot](https://valibot.dev)（v1）
+- [`@praha/byethrow`](https://github.com/praha-inc/byethrow)（成功・失敗を `Result` / `ResultAsync` で表現。`{ type: "Success", value }` / `{ type: "Failure", error }` の形を受け渡すだけなので、バージョンは問いません）
+
+## インストール
+
+```bash
+pnpm add domain-rules@beta @praha/byethrow
+```
+
+ESM と CommonJS の両方で使えます（`import` は `.mjs` / `.d.mts`、`require` は `.cjs` / `.d.cts` を読み込みます）。
 
 ## クイックスタート
 
@@ -43,17 +51,19 @@ import {
 // actor の型はここで1回だけ決める。rule の check はこの型の actor を受け取る
 const { model } = domainDefinitionKit<{ actor: { readonly id: string } }>();
 
-const articleInput = v.object({
-  id: v.optional(v.string()),
+// key はモデルを特定する項目、value はモデルが持つ項目。update では value を変える項目だけ渡せる
+const articleKey = v.object({ id: v.optional(v.string()) });
+const articleValue = v.object({
   title: v.pipe(v.string(), v.minLength(1)),
-  status: v.optional(v.picklist(["DRAFT", "PUBLISHED"]), "DRAFT"),
+  status: v.picklist(["DRAFT", "PUBLISHED"]),
 });
 
 const article = model({
   name: "article",
   schema: {
-    input: articleInput,
-    persisted: v.object({ ...articleInput.entries, id: v.string() }),
+    key: articleKey,
+    value: articleValue,
+    persisted: v.object({ ...articleValue.entries, id: v.string() }),
   },
 });
 
@@ -78,7 +88,15 @@ const assignArticleId = rule(article.onSave, {
 });
 
 const articleRules = modelRules(article)
-  .load(findArticleById)
+  .load({
+    requires: { findArticleById },
+    // 既存の値の取り方と、見つからないときの失敗は利用者が決める
+    fetch: async ({ input }, { findArticleById }) => {
+      const found = await findArticleById(input.id);
+      if (Result.isFailure(found)) return found;
+      return found.value ? Result.succeed(found.value) : Result.fail("ARTICLE_NOT_FOUND");
+    },
+  })
   .save(ruleset(publishRequiresLongTitle).add(assignArticleId));
 
 // 2. provider を注入して呼び出し可能な API を組み立てる（起動時 / DI）
@@ -92,7 +110,7 @@ const domain = bind([articleRules], {
 
 // 3. 実行し、検証済みの値を取り出して保存する（Usecase）
 const result = await domain.article.create({
-  input: { title: "Hello domain-rules" },
+  input: { title: "Hello domain-rules", status: "DRAFT" },
   actor: { id: "usr_1" },
 });
 
@@ -115,4 +133,4 @@ if (Result.isSuccess(result)) {
 
 ## License
 
-未定
+MIT

@@ -6,7 +6,7 @@ export { provide, type Provider } from "./port/provider.ts";
 export { alwaysAllow, immutable } from "./pipeline/builtin-rules.ts";
 export { rule, type Rule } from "./pipeline/rule.ts";
 export { ruleset, type PlannedRule, type Ruleset } from "./pipeline/ruleset.ts";
-export { and, changed, describe, next, not, onCreate, or, pre } from "./pipeline/when/builders.ts";
+export { and, changed, describe, given, next, not, onCreate, or, pre } from "./pipeline/when/builders.ts";
 export { always } from "./pipeline/when/step.ts";
 export { type When, type WhenDescription } from "./pipeline/when/when.ts";
 export { open, type Decision, type Deletable, type Persistable } from "./method/seal.ts";

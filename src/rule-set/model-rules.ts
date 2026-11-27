@@ -1,5 +1,7 @@
-import type { DeleteState, Model, ModelActor, Persisted, SaveState, Value } from "../definition/model.ts";
-import type { BindCtx } from "../method/context.ts";
+import * as Result from "../shared/result.ts";
+import { getOrEmpty, type OmittableIfEmpty } from "as-free";
+import type { DeleteState, Model, Persisted, SaveState, ValueOf } from "../definition/model.ts";
+import type { Args, BindCtx } from "../method/context.ts";
 import {
   createMethod,
   deleteMethod,
@@ -8,36 +10,46 @@ import {
   type CreateMethod,
   type DeleteRun,
   type LoadFailureOf,
+  type LoadInput,
+  type LoadRun,
   type SaveRun,
 } from "../method/model-methods.ts";
-import type { PlannedRule, RulesetError, RulesetOut, RunnableRuleset, RulesetPorts } from "../pipeline/ruleset.ts";
-import type { AnyPort, Port, PortArgs, PortError, PortValue } from "../port/port.ts";
+import { withPorts, type CheckTools, type PortFns, type Requires, type StrictRecord } from "../pipeline/requires.ts";
+import type { Checked, FailureOf, SuccessOf } from "../pipeline/rule.ts";
+import type {
+  PlannedRule,
+  portNames,
+  RulesetError,
+  RulesetOut,
+  RunnableRuleset,
+  RulesetPorts,
+} from "../pipeline/ruleset.ts";
+import type { AnyPort, NoPorts, PortNames } from "../port/port.ts";
+import type { Invocation } from "../port/invocation.ts";
 
 type ActorOf<S> = S extends { readonly actor: infer A } ? A : never;
 
-export type LoadFailure<L> = LoadFailureOf<PortError<L>>;
+export type LoadFailure<E> = LoadFailureOf<E>;
 
-export type Existing<L> = [L] extends [never] ? never : Exclude<PortValue<L>, null>;
-type LoadId<M extends Model> = "id" extends keyof Value<M> ? Exclude<Value<M>["id"], undefined> : never;
-type LoadIdMismatch<M extends Model, L> = [LoadId<M>] extends [never]
-  ? { readonly "load には入力スキーマの id が要る": true }
-  : [LoadId<M>] extends [PortArgs<L>[0]]
-    ? unknown
-    : { readonly "load が検証済みの id を受け取れない": LoadId<M> };
+// 取得ステップの定義。fetch は rule の check と同じく、requires に書いた port だけを受け取る
+type LoadDef<KO extends { readonly id?: unknown }, Act, Q extends Requires, R, Pre, LE> = {
+  readonly requires?: Q & StrictRecord<Q>;
+  readonly fetch: (
+    args: Args<LoadInput<KO>, Act>,
+    ports: PortFns<Q>,
+    tools: CheckTools<Q>,
+  ) => R & NoInfer<Checked<Pre, LE>>;
+} & OmittableIfEmpty<"requires", Q & StrictRecord<Q>>;
 
-// 更新では既存の値に入力を重ねて next にするので、既存の値は入力の型にも代入できなければならない
-type LoadMismatch<M extends Model, L> = [L] extends [never]
-  ? unknown
-  : [PortValue<L>] extends [(Value<M> & Persisted<M>) | null]
-    ? LoadIdMismatch<M, L>
-    : { readonly "load の返り値が入力と永続化の型に代入できない": PortValue<L> };
-
-type SaveStart<M extends Model, L> = SaveState<Existing<L> | null, Value<M>, ModelActor<M>>;
-type DeleteStart<M extends Model, L> = DeleteState<Existing<L>, ModelActor<M>>;
-
-// 線路は開始の状態に値を重ねていくので、最後の状態は開始の状態と線路が重ねた型の交差型になる
-export type SaveEnd<M extends Model, L, Save> = SaveStart<M, L> & RulesetOut<Save>;
-export type DeleteEnd<M extends Model, L, Del> = DeleteStart<M, L> & RulesetOut<Del>;
+const loadRun = <KO extends { readonly id?: unknown }, Act, Q extends Requires, R, Pre, LE>(
+  def: LoadDef<KO, Act, Q, R, Pre, LE>,
+  requires: Q,
+): LoadRun<KO, Act, Pre, LE> => {
+  const fetch: (args: Args<LoadInput<KO>, Act>, ports: PortFns<Q>, tools: CheckTools<Q>) => Checked<Pre, LE> =
+    def.fetch;
+  const step = withPorts(requires, fetch);
+  return { run: async (args, invocation: Invocation): Promise<Result.Result<Pre, LE>> => step(args, invocation) };
+};
 
 // 保存の線路の最後の状態は、next が永続化の型になっていなければならない
 type PersistedGuard<M extends Model, End> = [End] extends [never]
@@ -46,22 +58,47 @@ type PersistedGuard<M extends Model, End> = [End] extends [never]
     ? unknown
     : { readonly "最後の next が永続化の型にならない": End extends { readonly next: infer X } ? X : never };
 
-export type AnyRunnable = RunnableRuleset<never, unknown, unknown, string>;
+// update は重ねた値をもう一度 value の schema に通すので、schema は自分の出力もそのまま受け付けなければならない
+type ReparseGuard<VI, VO> = [VO] extends [VI]
+  ? unknown
+  : { readonly "update で重ねた値を schema に通すため、schema.value は自分の出力も受け付けなければならない": VO };
 
-declare const setPorts: unique symbol;
-
-// model の rule の組が使う port の名前
-export type ModelRulesPorts<S> = S extends { readonly [setPorts]: infer PN } ? PN : never;
+// update と delete は id で既存の値を指すので、load を書くには key の schema に id が要る
+type KeyHasId<KO> = "id" extends keyof KO ? unknown : { readonly "key の schema に id が要る": never };
 
 type Methods<Ms> = (ctx: BindCtx) => Ms;
-export type Plans = { readonly save?: readonly PlannedRule[]; readonly delete?: readonly PlannedRule[] };
+export type PlannedLoad = { readonly ports: readonly string[] };
+export type Plans = {
+  readonly load?: PlannedLoad;
+  readonly save?: readonly PlannedRule[];
+  readonly delete?: readonly PlannedRule[];
+};
+
+// 書いた load・save・delete。plan と ports はこれだけから作り、別々に積み上げない
+type Parts = {
+  readonly load?: { readonly ports: readonly AnyPort[] };
+  readonly save?: { readonly plan: readonly PlannedRule[]; readonly ports: readonly AnyPort[] };
+  readonly delete?: { readonly plan: readonly PlannedRule[]; readonly ports: readonly AnyPort[] };
+};
+
+const planOf = ({ load, save, delete: del }: Parts): Plans => ({
+  ...(load === undefined ? {} : { load: { ports: load.ports.map((p) => p.name) } }),
+  ...(save === undefined ? {} : { save: save.plan }),
+  ...(del === undefined ? {} : { delete: del.plan }),
+});
+
+const portsOf = ({ load, save, delete: del }: Parts): readonly AnyPort[] => [
+  ...(load?.ports ?? []),
+  ...(save?.ports ?? []),
+  ...(del?.ports ?? []),
+];
 
 // bind に渡せる model の rule の組。メソッドの型 Ms は、load・save・delete を書くたびに、書いたものから決まる
 export type ModelRules<N extends string = string, Ms = unknown, PN extends string = string> = {
-  readonly [setPorts]: PN;
+  readonly [portNames]: PN;
   readonly kind: "modelRules";
   readonly name: N;
-  readonly plans: Plans;
+  readonly plan: Plans;
   readonly ports: readonly AnyPort[];
   readonly resolveIn: Methods<Ms>;
 };
@@ -70,154 +107,171 @@ type CreateStart<Out, Act> = SaveState<null, Out, Act>;
 
 // これ以上メソッドを足せない rule の組
 class ModelRulesDone<N extends string, Ms, PN extends string> implements ModelRules<N, Ms, PN> {
-  declare readonly [setPorts]: PN;
+  declare readonly [portNames]: PN;
   readonly kind = "modelRules";
   readonly name: N;
-  readonly plans: Plans;
+  readonly plan: Plans;
   readonly ports: readonly AnyPort[];
   readonly resolveIn: Methods<Ms>;
 
-  constructor(name: N, plans: Plans, ports: readonly AnyPort[], resolveIn: Methods<Ms>) {
+  constructor(name: N, parts: Parts, resolveIn: Methods<Ms>) {
     this.name = name;
-    this.plans = plans;
-    this.ports = ports;
+    this.plan = planOf(parts);
+    this.ports = portsOf(parts);
     this.resolveIn = resolveIn;
     Object.freeze(this);
   }
 }
 
 // load を書く前の rule の組。load を書かずに save を書くと、create だけを持つ
-export class ModelRulesStart<N extends string, In, Out, P, Act> implements ModelRules<N, {}, never> {
-  declare readonly [setPorts]: never;
+export class ModelRulesStart<N extends string, KI, KO, VI, VO, P, Act> implements ModelRules<N, {}, never> {
+  declare readonly [portNames]: never;
   readonly kind = "modelRules";
   readonly name: N;
-  readonly model: Model<N, In, Out, P, Act>;
-  readonly plans: Plans = {};
+  readonly model: Model<N, KI, KO, VI, VO, P, Act>;
+  readonly plan: Plans = {};
   readonly ports: readonly AnyPort[] = [];
   readonly resolveIn: Methods<{}> = () => Object.freeze({});
 
-  constructor(model: Model<N, In, Out, P, Act>) {
+  constructor(model: Model<N, KI, KO, VI, VO, P, Act>) {
     this.name = model.name;
     this.model = model;
     Object.freeze(this);
   }
 
-  // load の型を値・引数・失敗に分けて受け取る。メソッドを作るときに、検証した id で load を呼べることと、
-  // 既存の値が入力と永続化の型に代入できることを、型引数の制約で表すため
+  // 取得ステップは rule の check と同じく、requires の port を受け取り Result を返す。
+  // 成功の値は既存の値として線路に載るので、入力と永続化の型に代入できることを fetch の返り値の制約で表す。
+  // 引数の型に条件型を重ねると fetch の返り値から型を推論できなくなるので、制約は型引数に置く
   load<
-    LA,
-    LT extends (O & P) | null,
-    LE,
-    L extends Port<string, [LA], LT, LE>,
-    O extends { readonly id?: LA | undefined },
+    O extends { readonly id?: unknown },
+    R extends Checked<ValueOf<O, VO> & P, unknown>,
+    Q extends Requires = NoPorts,
+    // R の制約で確かめた代入を、成功の値の型そのままで Pre の制約として残す
+    Pre extends ValueOf<O, VO> & P = SuccessOf<R> extends ValueOf<O, VO> & P ? SuccessOf<R> : never,
+    LE = FailureOf<R>,
   >(
-    this: ModelRulesStart<N, In, O, P, Act>,
-    port: L & Port<string, [LA], LT, LE> & LoadMismatch<Model<N, In, O, P, Act>, L>,
-  ): ModelRulesLoaded<N, In, O, P, Act, LA, LT, LE, L["name"], {}> {
-    return new ModelRulesLoaded(this.model, port, {}, [port], this.resolveIn);
+    this: ModelRulesStart<N, KI, O, VI, VO, P, Act>,
+    def: LoadDef<O, Act, Q, R, Pre, LE> & KeyHasId<O>,
+  ): ModelRulesLoaded<N, KI, O, VI, VO, P, Act, Pre, LE, PortNames<Q>, {}> {
+    const requires: Q = getOrEmpty<"requires", Q & StrictRecord<Q>>(def, "requires");
+    return new ModelRulesLoaded<N, KI, O, VI, VO, P, Act, Pre, LE, PortNames<Q>, {}>(
+      this.model,
+      loadRun<O, Act, Q, R, Pre, LE>(def, requires),
+      { load: { ports: Object.values(requires) } },
+      this.resolveIn,
+    );
   }
 
   // create は load を通らないので、線路は pre が null の状態から始まる
   save<
-    Save extends RunnableRuleset<CreateStart<NoInfer<Out>, NoInfer<Act>>, unknown, unknown, string>,
-    SA = ActorOf<CreateStart<Out, Act> & RulesetOut<Save>>,
+    Save extends RunnableRuleset<CreateStart<NoInfer<ValueOf<KO, VO>>, NoInfer<Act>>, unknown, unknown, string>,
+    SA = ActorOf<CreateStart<ValueOf<KO, VO>, Act> & RulesetOut<Save>>,
     SE = RulesetError<Save>,
   >(
     rules: Save &
-      PersistedGuard<Model<N, In, Out, P, Act>, CreateStart<Out, Act> & RulesetOut<NoInfer<Save>>> &
-      SaveRun<never, NoInfer<Out>, NoInfer<P>, NoInfer<Act>, NoInfer<SA>, NoInfer<SE>>,
-  ): ModelRulesDone<N, { readonly create: CreateMethod<N, In, Out, P, Act, SA, SE> }, RulesetPorts<Save>> {
-    const create = createMethod<N, In, Out, P, Act, SA, SE>(this.model, rules);
-    return new ModelRulesDone(this.name, { save: rules.plan }, rules.ports, (ctx: BindCtx) =>
-      Object.freeze({ create: create(ctx) }),
-    );
+      PersistedGuard<Model<N, KI, KO, VI, VO, P, Act>, CreateStart<ValueOf<KO, VO>, Act> & RulesetOut<NoInfer<Save>>> &
+      SaveRun<never, NoInfer<ValueOf<KO, VO>>, NoInfer<P>, NoInfer<Act>, NoInfer<SA>, NoInfer<SE>>,
+  ): ModelRulesDone<N, { readonly create: CreateMethod<N, KI, KO, VI, VO, P, Act, SA, SE> }, RulesetPorts<Save>> {
+    const create = createMethod<N, KI, KO, VI, VO, P, Act, SA, SE>(this.model, rules);
+    return new ModelRulesDone(this.name, { save: rules }, (ctx: BindCtx) => Object.freeze({ create: create(ctx) }));
   }
 }
 
 // load を書いたあとの rule の組。save と delete を、それぞれ1回まで書ける
 export class ModelRulesLoaded<
   N extends string,
-  In,
-  Out extends { readonly id?: LA | undefined },
+  KI,
+  KO extends { readonly id?: unknown },
+  VI,
+  VO,
   P,
   Act,
-  LA,
-  LT extends Out | null,
+  Pre extends ValueOf<KO, VO>,
   LE,
   PN extends string,
   Ms,
 > implements ModelRules<N, Ms, PN> {
-  declare readonly [setPorts]: PN;
+  declare readonly [portNames]: PN;
   readonly kind = "modelRules";
   readonly name: N;
-  readonly model: Model<N, In, Out, P, Act>;
-  readonly port: Port<string, [LA], LT, LE>;
-  readonly plans: Plans;
+  readonly model: Model<N, KI, KO, VI, VO, P, Act>;
+  readonly load: LoadRun<KO, Act, Pre, LE>;
+  readonly plan: Plans;
   readonly ports: readonly AnyPort[];
   readonly resolveIn: Methods<Ms>;
+  readonly #parts: Parts;
 
   constructor(
-    model: Model<N, In, Out, P, Act>,
-    port: Port<string, [LA], LT, LE>,
-    plans: Plans,
-    ports: readonly AnyPort[],
+    model: Model<N, KI, KO, VI, VO, P, Act>,
+    load: LoadRun<KO, Act, Pre, LE>,
+    parts: Parts,
     resolveIn: Methods<Ms>,
   ) {
     this.name = model.name;
     this.model = model;
-    this.port = port;
-    this.plans = plans;
-    this.ports = ports;
+    this.load = load;
+    this.#parts = parts;
+    this.plan = planOf(parts);
+    this.ports = portsOf(parts);
     this.resolveIn = resolveIn;
     Object.freeze(this);
   }
 
   save<
     Save extends RunnableRuleset<
-      SaveState<NoInfer<LT & {}> | null, NoInfer<Out>, NoInfer<Act>>,
+      SaveState<NoInfer<Pre> | null, NoInfer<ValueOf<KO, VO>>, NoInfer<Act>>,
       unknown,
       unknown,
       string
     >,
-    SA = ActorOf<SaveState<(LT & {}) | null, Out, Act> & RulesetOut<Save>>,
+    SA = ActorOf<SaveState<Pre | null, ValueOf<KO, VO>, Act> & RulesetOut<Save>>,
     SE = RulesetError<Save>,
   >(
-    this: ModelRulesLoaded<N, In, Out, P, Act, LA, LT, LE, PN, Ms & { readonly create?: never }>,
+    this: ModelRulesLoaded<N, KI, KO, VI, VO, P, Act, Pre, LE, PN, Ms & { readonly create?: never }>,
     rules: Save &
-      PersistedGuard<Model<N, In, Out, P, Act>, SaveState<(LT & {}) | null, Out, Act> & RulesetOut<NoInfer<Save>>> &
-      SaveRun<NoInfer<LT & {}>, NoInfer<Out>, NoInfer<P>, NoInfer<Act>, NoInfer<SA>, NoInfer<SE>>,
+      PersistedGuard<
+        Model<N, KI, KO, VI, VO, P, Act>,
+        SaveState<Pre | null, ValueOf<KO, VO>, Act> & RulesetOut<NoInfer<Save>>
+      > &
+      ReparseGuard<VI, VO> &
+      SaveRun<NoInfer<Pre>, NoInfer<ValueOf<KO, VO>>, NoInfer<P>, NoInfer<Act>, NoInfer<SA>, NoInfer<SE>>,
   ) {
-    const { model, port, resolveIn } = this;
-    const create = createMethod<N, In, Out, P, Act, SA, SE>(model, rules);
-    const update = updateMethod<N, In, Out, P, Act, LA, LT, LE, SA, SE>(model, port, rules);
-    const upsert = upsertMethod<N, In, Out, P, Act, LA, LT, LE, SA, SE>(model, port, rules);
-    return new ModelRulesLoaded<N, In, Out, P, Act, LA, LT, LE, PN | RulesetPorts<Save>, ReturnType<typeof methods>>(
-      model,
-      port,
-      { ...this.plans, save: rules.plan },
-      [...this.ports, ...rules.ports],
-      methods,
-    );
+    const { model, load, resolveIn } = this;
+    const create = createMethod<N, KI, KO, VI, VO, P, Act, SA, SE>(model, rules);
+    const update = updateMethod<N, KI, KO, VI, VO, P, Act, Pre, LE, SA, SE>(model, load, rules);
+    const upsert = upsertMethod<N, KI, KO, VI, VO, P, Act, Pre, LE, SA, SE>(model, load, rules);
+    return new ModelRulesLoaded<
+      N,
+      KI,
+      KO,
+      VI,
+      VO,
+      P,
+      Act,
+      Pre,
+      LE,
+      PN | RulesetPorts<Save>,
+      ReturnType<typeof methods>
+    >(model, load, { ...this.#parts, save: rules }, methods);
     function methods(ctx: BindCtx) {
       return Object.freeze({ ...resolveIn(ctx), create: create(ctx), update: update(ctx), upsert: upsert(ctx) });
     }
   }
 
   delete<
-    Del extends RunnableRuleset<DeleteState<NoInfer<LT & {}>, NoInfer<Act>>, unknown, unknown, string>,
-    DA = ActorOf<DeleteState<LT & {}, Act> & RulesetOut<Del>>,
+    Del extends RunnableRuleset<DeleteState<NoInfer<Pre>, NoInfer<KO>, NoInfer<Act>>, unknown, unknown, string>,
+    DA = ActorOf<DeleteState<Pre, KO, Act> & RulesetOut<Del>>,
     DE = RulesetError<Del>,
   >(
-    this: ModelRulesLoaded<N, In, Out, P, Act, LA, LT, LE, PN, Ms & { readonly delete?: never }>,
-    rules: Del & DeleteRun<NoInfer<LT & {}>, NoInfer<Act>, NoInfer<DA>, NoInfer<DE>>,
+    this: ModelRulesLoaded<N, KI, KO, VI, VO, P, Act, Pre, LE, PN, Ms & { readonly delete?: never }>,
+    rules: Del & DeleteRun<NoInfer<Pre>, NoInfer<KO>, NoInfer<Act>, NoInfer<DA>, NoInfer<DE>>,
   ) {
-    const { model, port, resolveIn } = this;
-    const remove = deleteMethod<N, In, Out, P, Act, LA, LT, LE, DA, DE>(model, port, rules);
-    return new ModelRulesLoaded<N, In, Out, P, Act, LA, LT, LE, PN | RulesetPorts<Del>, ReturnType<typeof methods>>(
+    const { model, load, resolveIn } = this;
+    const remove = deleteMethod<N, KI, KO, VI, VO, P, Act, Pre, LE, DA, DE>(model, load, rules);
+    return new ModelRulesLoaded<N, KI, KO, VI, VO, P, Act, Pre, LE, PN | RulesetPorts<Del>, ReturnType<typeof methods>>(
       model,
-      port,
-      { ...this.plans, delete: rules.plan },
-      [...this.ports, ...rules.ports],
+      load,
+      { ...this.#parts, delete: rules },
       methods,
     );
     function methods(ctx: BindCtx) {
@@ -226,6 +280,6 @@ export class ModelRulesLoaded<
   }
 }
 
-export const modelRules = <N extends string, In, Out, P, Act>(
-  m: Model<N, In, Out, P, Act>,
-): ModelRulesStart<N, In, Out, P, Act> => new ModelRulesStart(m);
+export const modelRules = <N extends string, KI, KO, VI, VO, P, Act>(
+  m: Model<N, KI, KO, VI, VO, P, Act>,
+): ModelRulesStart<N, KI, KO, VI, VO, P, Act> => new ModelRulesStart(m);

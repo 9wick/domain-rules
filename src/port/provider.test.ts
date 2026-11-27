@@ -1,30 +1,48 @@
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
 import { Panic } from "../shared/panic.ts";
-import { provide, Provider, register } from "./provider.ts";
+import { Context, provide } from "./provider.ts";
+import { Slot } from "./slot.ts";
 
-test("registerIn は、作るときに渡した登録の処理を scope に対して呼ぶ", () => {
-  const scopes: object[] = [];
-  const provider = new Provider("p", (scope) => scopes.push(scope));
-  const scope = {};
-  provider.registerIn(scope);
-  expect(scopes).toEqual([scope]);
-  expect(Object.isFrozen(provider)).toBe(true);
+test("Context は差し込み口ごとに、渡した provider の実装を持つ", () => {
+  const a = new Slot<"a", () => number>("a");
+  const b = new Slot<"b", () => string>("b");
+  const context = new Context([a.provider(() => 1)]);
+  expect(context.has(a)).toBe(true);
+  expect(a.implIn(context)?.()).toBe(1);
+  expect(context.has(b)).toBe(false);
+  expect(b.implIn(context)).toBeUndefined();
+  expect(Object.isFrozen(context)).toBe(true);
 });
 
-test("register は scope ごとに1つの実装だけを登録し、2つ目は Panic にする", () => {
-  const impls = new WeakMap<object, string>();
-  const scope = {};
-  register(impls, scope, "first", "p");
-  register(impls, {}, "other scope", "p");
-  expect(impls.get(scope)).toBe("first");
-  expect(() => register(impls, scope, "second", "p")).toThrow(Panic);
-  expect(() => register(impls, scope, "second", "p")).toThrow('bind: port "p" の provider が重複しています');
+test("同じ差し込み口の provider を2つ渡すと Panic にする", () => {
+  const a = new Slot<"a", () => number>("a");
+  expect(() => new Context([a.provider(() => 1), a.provider(() => 2)])).toThrow(Panic);
+  expect(() => new Context([a.provider(() => 1), a.provider(() => 2)])).toThrow(
+    'bind: port "a" の provider が重複しています',
+  );
+});
+
+test("同じ名前でも、別の差し込み口の provider は別のものとして持つ", () => {
+  const a = new Slot<"same", () => number>("same");
+  const other = new Slot<"same", () => number>("same");
+  const context = new Context([a.provider(() => 1), other.provider(() => 2)]);
+  expect([a.implIn(context)?.(), other.implIn(context)?.()]).toEqual([1, 2]);
+});
+
+test("別に読み込んだ provider.ts の Context でも、provider の実装を取り出せる", async () => {
+  // ESM と CommonJS の両方を読み込んだときのように、同じ class が2つある状況を作る
+  const a = new Slot<"a", () => number>("a");
+  const provider = a.provider(() => 1);
+  vi.resetModules();
+  const other = await import("./provider.ts");
+  expect(other.Context).not.toBe(Context);
+  expect(a.implIn(new other.Context([provider]))?.()).toBe(1);
 });
 
 const impl = () => 1;
 
 test("provide は対象の provider で、provide.value は対象の valued で provider を作る", () => {
-  const made = new Provider("p", () => undefined);
+  const made = new Slot<"p", () => number>("p").provider(impl);
   const received: unknown[] = [];
   const target = {
     provider: (impl: () => number) => (received.push(impl), made),

@@ -1,4 +1,4 @@
-import { Result } from "@praha/byethrow";
+import * as Result from "../shared/result.ts";
 import type { Track, TrackKind } from "../definition/track.ts";
 import type { NoPorts } from "../port/port.ts";
 import { rule, type Rule } from "./rule.ts";

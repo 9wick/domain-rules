@@ -1,4 +1,4 @@
-import { Result } from "@praha/byethrow";
+import * as Result from "../shared/result.ts";
 import type { TrackKind } from "../definition/track.ts";
 import type { Invocation } from "../port/invocation.ts";
 import type { AnyPort, PortNames, Ports } from "../port/port.ts";
@@ -17,18 +17,25 @@ type Narrowing<S, O> = {
       ? S[K]
       : unknown;
 };
-// 状態の項目は、より狭い型にだけ変えられる。別の型に置き換えると、重ねた状態の型と実際の値がずれる
+// 状態の項目は、より狭い型にだけ変えられる。別の型に置き換えると、重ねた状態の型と実際の値がずれる。
+// input は呼び出し時の意思なので変えさせない。Partial なので、狭めたつもりの値で項目が消えても型では気づけない
 type NarrowGuard<S, O> = [O] extends [object]
-  ? O extends Narrowing<S, O>
-    ? unknown
-    : { readonly 状態の項目を別の型に置き換えている: O }
+  ? "input" extends keyof O
+    ? { readonly 呼び出し時の入力は変えられない: O }
+    : O extends Narrowing<S, O>
+      ? unknown
+      : { readonly 状態の項目を別の型に置き換えている: O }
   : unknown;
 
 export type StepFailure<N, E> = { readonly step: N; readonly error: E };
 
 export type PlannedRule = { readonly name: string; readonly when: WhenDescription; readonly ports: readonly string[] };
 
-declare const portNames: unique symbol;
+// 線路に並べた rule。plan と ports はこれだけから作り、別々に積み上げない
+type Step = { readonly name: string; readonly when: WhenDescription; readonly ports: readonly AnyPort[] };
+
+// 使う port の名前を型の上で持つ印。bind に渡す rule の組も同じ印で持ち、bind は kind を見ずに port を引く
+export declare const portNames: unique symbol;
 declare const rulesetTypes: unique symbol;
 declare const startState: unique symbol;
 
@@ -49,9 +56,12 @@ export class Ruleset<K extends TrackKind, T extends string, In extends {}, D, E,
   readonly ports: readonly AnyPort[];
   readonly run: RunState<In, D, E>;
 
-  constructor(plan: readonly PlannedRule[], ports: readonly AnyPort[], run: RunState<In, D, E>) {
-    this.plan = plan;
-    this.ports = ports;
+  readonly #steps: readonly Step[];
+
+  constructor(steps: readonly Step[], run: RunState<In, D, E>) {
+    this.#steps = steps;
+    this.plan = steps.map((s) => ({ name: s.name, when: s.when, ports: s.ports.map((p) => p.name) }));
+    this.ports = steps.flatMap((s) => s.ports);
     this.run = run;
     Object.freeze(this);
   }
@@ -63,18 +73,16 @@ export class Ruleset<K extends TrackKind, T extends string, In extends {}, D, E,
       },
   ): Ruleset<K, T, In, D & Delta<V, W>, E | StepFailure<N, E2>, PN | PortNames<P>> {
     const previous = this.run;
-    const ports = r.ports;
     // r.when.step は、rule が付けた step と when 自身の step の交差型になる。add で確かめた型の方で呼ぶ
     const step: Stepper<In & D, V, StepFailure<N, E2>, Delta<V, W>> = r.when.step;
     return new Ruleset<K, T, In, D & Delta<V, W>, E | StepFailure<N, E2>, PN | PortNames<P>>(
-      [...this.plan, { name: r.name, when: describeWhen(r.when), ports: ports.map((p) => p.name) }],
-      [...this.ports, ...ports],
+      [...this.#steps, { name: r.name, when: describeWhen(r.when), ports: r.ports }],
       async <X extends In>(s0: X, invocation: Invocation) => {
         const prev = await previous(s0, invocation);
-        if (Result.isFailure(prev)) return prev;
+        if (prev.type === "Failure") return prev;
         return step(prev.value, async (s) => {
           const out = await r.run(s, invocation);
-          return Result.isFailure(out) ? Result.fail({ step: r.name, error: out.error }) : out;
+          return out.type === "Failure" ? Result.fail({ step: r.name, error: out.error }) : out;
         });
       },
     );
@@ -95,29 +103,16 @@ const start = <
     NarrowGuard<S & {}, V> & {
       readonly when: { readonly step: Stepper<S & {}, V, StepFailure<N, E2>, Delta<V, W>> };
     },
-) =>
-  new Ruleset<K, T, S & {}, unknown, never, never>([], [], async (s) => Result.succeed(s)).add<N, W, V, E2, P>(first);
+) => new Ruleset<K, T, S & {}, unknown, never, never>([], async (s) => Result.succeed(s)).add<N, W, V, E2, P>(first);
 
 // 先頭の rule が受け取る状態から線路を始める
 export const ruleset = start;
 
 // 線路を走らせるのに要る部分。rule を足す add を含めないので、開始の状態の型だけで代入できるかが決まる
-export type RunnableRuleset<In extends {}, D, E, PN extends string> = {
-  readonly [portNames]: PN;
-  readonly [startState]: (s: In) => void;
-  readonly [rulesetTypes]: { readonly delta: D; readonly error: E };
-  readonly plan: readonly PlannedRule[];
-  readonly ports: readonly AnyPort[];
-  readonly run: RunState<In, D, E>;
-};
+export type RunnableRuleset<In extends {}, D, E, PN extends string> = Omit<
+  Ruleset<TrackKind, string, In, D, E, PN>,
+  "add" | "kind"
+>;
 export type RulesetOut<R> = R extends { readonly [rulesetTypes]: { readonly delta: infer D } } ? D : never;
 export type RulesetError<R> = R extends { readonly [rulesetTypes]: { readonly error: infer E } } ? E : never;
 export type RulesetPorts<R> = R extends { readonly [portNames]: infer PN } ? PN : never;
-
-// action の線路。最後の状態から output で返す値を組み立てるので、開始の状態から返す値までを1つの関数で表す
-export type Decider<In, Out, E, PN extends string> = {
-  readonly [portNames]: PN;
-  readonly plan: readonly PlannedRule[];
-  readonly ports: readonly AnyPort[];
-  readonly run: (s: In, invocation: Invocation) => Promise<Result.Result<Out, E>>;
-};
