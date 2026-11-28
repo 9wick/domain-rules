@@ -10,6 +10,7 @@
 - **検証結果を型に反映できる（型の昇格）**: 前段のルールで確認した値（採番済みの ID や存在確認済みの値など）を状態へマージして型を絞り込み、保存可能な型を満たしているかをコンパイル時に検証します。
 - **外部依存を分離してテストしやすい**: DB 参照などの副作用は `port` として宣言し、起動時に `bind` で実装 (`provider`) を注入します。テストでは `provide.value` で固定値を渡すだけで、リポジトリのモックは不要です。
 - **未検証データの保存を型で防ぐ**: すべてのルールを通過した値だけが `Persistable` などの検証済みラッパーとして返り、`open()` でのみ中身を取り出せます。
+- **通知などのきっかけをドメインに置ける**: 「公開されたら知らせる」のような条件を `emit` で宣言すると、発行されたイベントが検証済みの値と並んで返ります。配送は保存に成功したあとにアプリケーションが行います。
 
 ## 前提
 
@@ -27,7 +28,7 @@ ESM と CommonJS の両方で使えます（`import` は `.mjs` / `.d.mts`、`re
 
 ## クイックスタート
 
-全体の流れは **1. 定義（モデル・ポート・ルール） → 2. 注入（`bind`） → 3. 実行と取り出し（`open`）** です。
+全体の流れは **1. 定義（モデル・ポート・ルール・リポジトリ） → 2. 注入（`bind`） → 3. 実行して検証済みの値をリポジトリへ渡す**。`open()` で中身を取り出すのはリポジトリの中だけです。
 
 ```ts
 import { Result } from "@praha/byethrow";
@@ -44,6 +45,7 @@ import {
   provide,
   rule,
   ruleset,
+  type Persistable,
   type Persisted,
 } from "domain-rules";
 
@@ -71,13 +73,15 @@ const findArticleById = port("findArticleById").of<(id: string) => Persisted<typ
 const newArticleId = port("newArticleId").of<() => string, never>();
 
 const publishRequiresLongTitle = rule(article.onSave, {
-  name: "公開時はタイトルが5文字以上",
+  id: "publishRequiresLongTitle",
+  description: "公開時はタイトルが5文字以上",
   when: changed("status", { next: "PUBLISHED" }),
   check: ({ next }) => (next.title.length >= 5 ? Result.succeed() : Result.fail("TITLE_TOO_SHORT")),
 });
 
 const assignArticleId = rule(article.onSave, {
-  name: "ID を確定する",
+  id: "assignArticleId",
+  description: "ID を確定する",
   requires: { newArticleId },
   when: always,
   check: async ({ pre }, { newArticleId }) => {
@@ -99,6 +103,15 @@ const articleRules = modelRules(article)
   })
   .save(ruleset(publishRequiresLongTitle).add(assignArticleId));
 
+// リポジトリ（永続化層）は検証済みの値（Persistable）だけを受け取り、中で封を開けて保存する
+const articleRepo = {
+  findById: async (id: string) => Result.succeed(await db.article.findById(id)),
+  save: async (p: Persistable<typeof article, "create" | "update">) => {
+    const { next } = open(p); // next は Persisted<typeof article> 型
+    await db.article.save(next);
+  },
+};
+
 // 2. provider を注入して呼び出し可能な API を組み立てる（起動時 / DI）
 const domain = bind([articleRules], {
   providers: [
@@ -108,15 +121,15 @@ const domain = bind([articleRules], {
   ],
 });
 
-// 3. 実行し、検証済みの値を取り出して保存する（Usecase）
+// 3. 実行し、検証済みの値を封をしたままリポジトリへ渡す（Usecase）
 const result = await domain.article.create({
   input: { title: "Hello domain-rules", status: "DRAFT" },
   actor: { id: "usr_1" },
 });
 
 if (Result.isSuccess(result)) {
-  const { next } = open(result.value); // next は Persisted<typeof article> 型
-  await articleRepo.save(next);
+  // 封を開けずにそのままリポジトリへ渡す。並んで返る result.value.events は emit が発行したイベント
+  await articleRepo.save(result.value.persistable);
 }
 ```
 

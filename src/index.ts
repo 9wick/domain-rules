@@ -3,7 +3,8 @@ export type { Model, Persisted, Value } from "./definition/model.ts";
 export { clock, type Clock } from "./port/clock.ts";
 export { cached, port, type Port } from "./port/port.ts";
 export { provide, type Provider } from "./port/provider.ts";
-export { alwaysAllow, immutable } from "./pipeline/builtin-rules.ts";
+export { alwaysAllow, defaultFields, immutable } from "./pipeline/builtin-rules.ts";
+export { emit } from "./pipeline/emit.ts";
 export { rule, type Rule } from "./pipeline/rule.ts";
 export { ruleset, type PlannedRule, type Ruleset } from "./pipeline/ruleset.ts";
 export { and, changed, describe, given, next, not, onCreate, or, pre } from "./pipeline/when/builders.ts";
@@ -16,3 +17,4 @@ export { modelRules, type LoadFailure, type ModelRules } from "./rule-set/model-
 export { plan } from "./rule-set/rule-set.ts";
 export { bind, type Domain } from "./bind.ts";
 export { domainDefinitionKit, type DomainTypes } from "./domain-definition-kit.ts";
+export type { DomainEvent } from "./domain-event.ts";

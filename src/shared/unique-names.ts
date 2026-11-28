@@ -13,9 +13,9 @@ type NonLiteralName<T extends readonly { readonly name: string }[]> = {
 
 // 結果の key が、要素の name と1対1になるときだけ受け付ける
 export type UniqueNames<T extends readonly { readonly name: string }[]> = number extends T["length"]
-  ? { readonly "長さの決まった tuple を渡す": never }
+  ? { readonly "pass a fixed-length tuple": never }
   : [NonLiteralName<T>] extends [never]
     ? [DuplicateName<T>] extends [never]
       ? unknown
-      : { readonly "name が重複している": DuplicateName<T> }
-    : { readonly "name は1つの文字列リテラルにする": NonLiteralName<T> };
+      : { readonly "duplicate names": DuplicateName<T> }
+    : { readonly "name must be a single string literal": NonLiteralName<T> };

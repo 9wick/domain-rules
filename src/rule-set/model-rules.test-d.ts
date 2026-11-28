@@ -26,7 +26,8 @@ const findItem = port("findItem").of<(id: string) => { id: string; n: number }, 
 const loaded = () =>
   modelRules(item).load({ requires: { findItem }, fetch: ({ input }, { findItem }) => findItem(input.id) });
 const assignId = rule(item.onSave, {
-  name: "id を付ける",
+  id: "assignId",
+  description: "id を付ける",
   when: always,
   check: ({ pre }) => Result.succeed({ next: { id: pre?.id ?? "new" } }),
 });
@@ -34,7 +35,8 @@ const save = ruleset(assignId);
 
 test("メソッドの actor は domain の actor の型で、線路が昇格させた actor が封をした値に入る", async () => {
   const promote = rule(item.onSave, {
-    name: "メンバーにする",
+    id: "makeMember",
+    description: "メンバーにする",
     when: always,
     check: ({ actor }) => Result.succeed({ actor: { ...actor, member: true as const } }),
   });
@@ -44,13 +46,18 @@ test("メソッドの actor は domain の actor の型で、線路が昇格さ�
   expectTypeOf(update).parameter(0).toHaveProperty("actor").toEqualTypeOf<Operator>();
   const r = await update({ input: { id: "i1" }, actor: { name: "op" } });
   if (Result.isSuccess(r)) {
-    expectTypeOf(open(r.value).actor).not.toBeNever();
-    expectTypeOf(open(r.value).actor).toExtend<Operator & { readonly member: true }>();
+    expectTypeOf(open(r.value.persistable).actor).not.toBeNever();
+    expectTypeOf(open(r.value.persistable).actor).toExtend<Operator & { readonly member: true }>();
   }
 });
 
 test("永続化の型にならない並びは型エラー", () => {
-  const nothing = rule(item.onSave, { name: "何もしない", when: always, check: () => Result.succeed() });
+  const nothing = rule(item.onSave, {
+    id: "noop",
+    description: "何もしない",
+    when: always,
+    check: () => Result.succeed(),
+  });
   // @ts-expect-error id を付けないと next.id が undefined のまま残る
   modelRules(item).save(ruleset(nothing));
 });
@@ -77,7 +84,8 @@ test("fetch は検証した key と、domain の actor を受け取る。key の
     .save(
       ruleset(
         rule(rental.onSave, {
-          name: "id を付ける",
+          id: "assignId",
+          description: "id を付ける",
           when: always,
           check: ({ pre }) => Result.succeed({ next: { id: pre?.id ?? "new" } }),
         }),
@@ -132,7 +140,8 @@ test("fetch の返り値は、モデルの値の型にも代入できなけれ�
 test("load の型を前提にする線路は、その型を返す load とだけ組める", () => {
   type Existing = { id: `i${string}`; n: number };
   const existingOnly = rule(item.onSave.assuming<{ pre: Existing | null }>(), {
-    name: "既存の id",
+    id: "existingId",
+    description: "既存の id",
     when: always,
     check: () => Result.succeed(),
   });
@@ -177,7 +186,8 @@ test("value の schema が自分の出力を受け付けないと、update を�
   });
   const findStamped = port("findStamped").of<(id: string) => { id: string; at: Date }>();
   const keepId = rule(stamped.onSave, {
-    name: "id",
+    id: "id",
+    description: "id",
     when: always,
     check: ({ pre }) => Result.succeed({ next: { id: pre?.id ?? "new" } }),
   });

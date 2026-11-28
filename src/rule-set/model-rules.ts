@@ -20,6 +20,7 @@ import type {
   PlannedRule,
   portNames,
   RulesetError,
+  RulesetEvents,
   RulesetOut,
   RunnableRuleset,
   RulesetPorts,
@@ -56,15 +57,17 @@ type PersistedGuard<M extends Model, End> = [End] extends [never]
   ? unknown
   : [End] extends [{ readonly next: Persisted<M> }]
     ? unknown
-    : { readonly "最後の next が永続化の型にならない": End extends { readonly next: infer X } ? X : never };
+    : {
+        readonly "the final next does not match the persisted type": End extends { readonly next: infer X } ? X : never;
+      };
 
 // update は重ねた値をもう一度 value の schema に通すので、schema は自分の出力もそのまま受け付けなければならない
 type ReparseGuard<VI, VO> = [VO] extends [VI]
   ? unknown
-  : { readonly "update で重ねた値を schema に通すため、schema.value は自分の出力も受け付けなければならない": VO };
+  : { readonly "schema.value must accept its own output, because update re-parses the merged value": VO };
 
 // update と delete は id で既存の値を指すので、load を書くには key の schema に id が要る
-type KeyHasId<KO> = "id" extends keyof KO ? unknown : { readonly "key の schema に id が要る": never };
+type KeyHasId<KO> = "id" extends keyof KO ? unknown : { readonly "the key schema must have id": never };
 
 type Methods<Ms> = (ctx: BindCtx) => Ms;
 export type PlannedLoad = { readonly ports: readonly string[] };
@@ -164,15 +167,22 @@ export class ModelRulesStart<N extends string, KI, KO, VI, VO, P, Act> implement
 
   // create は load を通らないので、線路は pre が null の状態から始まる
   save<
-    Save extends RunnableRuleset<CreateStart<NoInfer<ValueOf<KO, VO>>, NoInfer<Act>>, unknown, unknown, string>,
+    Save extends RunnableRuleset<
+      CreateStart<NoInfer<ValueOf<KO, VO>>, NoInfer<Act>>,
+      unknown,
+      unknown,
+      string,
+      unknown
+    >,
     SA = ActorOf<CreateStart<ValueOf<KO, VO>, Act> & RulesetOut<Save>>,
     SE = RulesetError<Save>,
+    SV = RulesetEvents<Save>,
   >(
     rules: Save &
       PersistedGuard<Model<N, KI, KO, VI, VO, P, Act>, CreateStart<ValueOf<KO, VO>, Act> & RulesetOut<NoInfer<Save>>> &
-      SaveRun<never, NoInfer<ValueOf<KO, VO>>, NoInfer<P>, NoInfer<Act>, NoInfer<SA>, NoInfer<SE>>,
-  ): ModelRulesDone<N, { readonly create: CreateMethod<N, KI, KO, VI, VO, P, Act, SA, SE> }, RulesetPorts<Save>> {
-    const create = createMethod<N, KI, KO, VI, VO, P, Act, SA, SE>(this.model, rules);
+      SaveRun<never, NoInfer<ValueOf<KO, VO>>, NoInfer<P>, NoInfer<Act>, NoInfer<SA>, NoInfer<SE>, NoInfer<SV>>,
+  ): ModelRulesDone<N, { readonly create: CreateMethod<N, KI, KO, VI, VO, P, Act, SA, SE, SV> }, RulesetPorts<Save>> {
+    const create = createMethod<N, KI, KO, VI, VO, P, Act, SA, SE, SV>(this.model, rules);
     return new ModelRulesDone(this.name, { save: rules }, (ctx: BindCtx) => Object.freeze({ create: create(ctx) }));
   }
 }
@@ -222,10 +232,12 @@ export class ModelRulesLoaded<
       SaveState<NoInfer<Pre> | null, NoInfer<ValueOf<KO, VO>>, NoInfer<Act>>,
       unknown,
       unknown,
-      string
+      string,
+      unknown
     >,
     SA = ActorOf<SaveState<Pre | null, ValueOf<KO, VO>, Act> & RulesetOut<Save>>,
     SE = RulesetError<Save>,
+    SV = RulesetEvents<Save>,
   >(
     this: ModelRulesLoaded<N, KI, KO, VI, VO, P, Act, Pre, LE, PN, Ms & { readonly create?: never }>,
     rules: Save &
@@ -234,12 +246,12 @@ export class ModelRulesLoaded<
         SaveState<Pre | null, ValueOf<KO, VO>, Act> & RulesetOut<NoInfer<Save>>
       > &
       ReparseGuard<VI, VO> &
-      SaveRun<NoInfer<Pre>, NoInfer<ValueOf<KO, VO>>, NoInfer<P>, NoInfer<Act>, NoInfer<SA>, NoInfer<SE>>,
+      SaveRun<NoInfer<Pre>, NoInfer<ValueOf<KO, VO>>, NoInfer<P>, NoInfer<Act>, NoInfer<SA>, NoInfer<SE>, NoInfer<SV>>,
   ) {
     const { model, load, resolveIn } = this;
-    const create = createMethod<N, KI, KO, VI, VO, P, Act, SA, SE>(model, rules);
-    const update = updateMethod<N, KI, KO, VI, VO, P, Act, Pre, LE, SA, SE>(model, load, rules);
-    const upsert = upsertMethod<N, KI, KO, VI, VO, P, Act, Pre, LE, SA, SE>(model, load, rules);
+    const create = createMethod<N, KI, KO, VI, VO, P, Act, SA, SE, SV>(model, rules);
+    const update = updateMethod<N, KI, KO, VI, VO, P, Act, Pre, LE, SA, SE, SV>(model, load, rules);
+    const upsert = upsertMethod<N, KI, KO, VI, VO, P, Act, Pre, LE, SA, SE, SV>(model, load, rules);
     return new ModelRulesLoaded<
       N,
       KI,
@@ -259,15 +271,22 @@ export class ModelRulesLoaded<
   }
 
   delete<
-    Del extends RunnableRuleset<DeleteState<NoInfer<Pre>, NoInfer<KO>, NoInfer<Act>>, unknown, unknown, string>,
+    Del extends RunnableRuleset<
+      DeleteState<NoInfer<Pre>, NoInfer<KO>, NoInfer<Act>>,
+      unknown,
+      unknown,
+      string,
+      unknown
+    >,
     DA = ActorOf<DeleteState<Pre, KO, Act> & RulesetOut<Del>>,
     DE = RulesetError<Del>,
+    DV = RulesetEvents<Del>,
   >(
     this: ModelRulesLoaded<N, KI, KO, VI, VO, P, Act, Pre, LE, PN, Ms & { readonly delete?: never }>,
-    rules: Del & DeleteRun<NoInfer<Pre>, NoInfer<KO>, NoInfer<Act>, NoInfer<DA>, NoInfer<DE>>,
+    rules: Del & DeleteRun<NoInfer<Pre>, NoInfer<KO>, NoInfer<Act>, NoInfer<DA>, NoInfer<DE>, NoInfer<DV>>,
   ) {
     const { model, load, resolveIn } = this;
-    const remove = deleteMethod<N, KI, KO, VI, VO, P, Act, Pre, LE, DA, DE>(model, load, rules);
+    const remove = deleteMethod<N, KI, KO, VI, VO, P, Act, Pre, LE, DA, DE, DV>(model, load, rules);
     return new ModelRulesLoaded<N, KI, KO, VI, VO, P, Act, Pre, LE, PN | RulesetPorts<Del>, ReturnType<typeof methods>>(
       model,
       load,

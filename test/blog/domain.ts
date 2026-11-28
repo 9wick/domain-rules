@@ -6,7 +6,9 @@ import {
   and,
   cached,
   changed,
+  defaultFields,
   domainDefinitionKit,
+  emit,
   immutable,
   modelRules,
   next,
@@ -97,25 +99,22 @@ export const newArticleId = port("newArticleId").of<() => ArticleIdNew, InfraErr
 type Defaulted = { readonly next: { readonly status: ArticleStatus; readonly approvedAt: number | null } };
 const savedWithDefaults = article.onSave.assuming<Defaulted>();
 
-export const articleDefaults = rule(article.onSave, {
-  name: "作成時に省略した status は下書き、approvedAt は未承認",
-  when: always,
-  check: ({ next }) =>
-    Result.succeed({ next: { status: next.status ?? "DRAFT", approvedAt: next.approvedAt ?? null } }),
-});
+export const articleDefaults = defaultFields(article.onSave, { status: "DRAFT", approvedAt: null });
 
 export const isDraft = (a: ArticleValue) => a.status === "DRAFT";
 export const isPublished = (a: ArticleValue) => a.status === "PUBLISHED";
 export const isApproved = (a: ArticleValue) => a.approvedAt !== null;
 
 export const authorIsNotReviewer = rule(article.onSave, {
-  name: "著者とレビュアーは別の人",
+  id: "reviewerIsNotAuthor",
+  description: "著者とレビュアーは別の人",
   when: always,
   check: (s) => (s.next.authorId !== s.next.reviewerId ? Result.succeed() : Result.fail("SAME_AUTHOR_AND_REVIEWER")),
 });
 
 export const uniqueSlugInBlog = rule(article.onSave, {
-  name: "slug はブログ内で一意",
+  id: "uniqueSlug",
+  description: "slug はブログ内で一意",
   requires: { findArticlesInBlog },
   when: changed("slug"),
   check: async (s, { findArticlesInBlog }) => {
@@ -128,31 +127,36 @@ export const uniqueSlugInBlog = rule(article.onSave, {
 });
 
 export const publishAtInFuture = rule(article.onSave, {
-  name: "公開日時は未来",
+  id: "publishAtInFuture",
+  description: "公開日時は未来",
   when: changed("publishAt"),
   check: (s) => (s.next.publishAt > s.now ? Result.succeed() : Result.fail("PUBLISH_AT_IN_PAST")),
 });
 
 export const onlyReviewerPublishes = rule(savedWithDefaults, {
-  name: "公開できるのは今のレビュアーだけ",
+  id: "publishByReviewer",
+  description: "公開できるのは今のレビュアーだけ",
   when: changed("status", { pre: "DRAFT", next: "PUBLISHED" }),
   check: (s) => (s.actor.id === s.pre?.reviewerId ? Result.succeed() : Result.fail("NOT_REVIEWER")),
 });
 
 export const onlyAuthorChangesReviewer = rule(article.onSave, {
-  name: "作成後にレビュアーを変えられるのは著者だけ",
+  id: "reviewerChangeByAuthor",
+  description: "作成後にレビュアーを変えられるのは著者だけ",
   when: and(not(onCreate), changed("reviewerId")),
   check: (s) => (s.actor.id === s.pre?.authorId ? Result.succeed() : Result.fail("NOT_AUTHOR")),
 });
 
 export const slugLockedAfterPublish = rule(article.onSave, {
-  name: "公開後の slug を変えられるのは管理者だけ",
+  id: "slugChangeAfterPublishByAdmin",
+  description: "公開後の slug を変えられるのは管理者だけ",
   when: and(changed("slug"), pre(isPublished), not(actor(isAdmin))),
   check: () => Result.fail("SLUG_LOCKED"),
 });
 
 export const publishedIsApproved = rule(savedWithDefaults, {
-  name: "公開中の記事は承認済み",
+  id: "publishedIsApproved",
+  description: "公開中の記事は承認済み",
   when: next(isPublished),
   check: (s) => (isApproved(s.next) ? Result.succeed() : Result.fail("NOT_APPROVED")),
 });
@@ -164,7 +168,8 @@ const allowedStatusChanges: Record<ArticleStatus, readonly ArticleStatus[]> = {
 };
 
 export const statusChangesAreAllowed = rule(savedWithDefaults, {
-  name: "status は許可された変化だけ",
+  id: "allowedStatusTransition",
+  description: "status は許可された変化だけ",
   when: changed("status"),
   check: (s) => {
     const allowed = s.pre === null ? ["DRAFT"] : allowedStatusChanges[s.pre.status];
@@ -173,7 +178,8 @@ export const statusChangesAreAllowed = rule(savedWithDefaults, {
 });
 
 export const onlyDraftIsDeletable = rule(article.onDelete, {
-  name: "削除できるのは下書きだけ",
+  id: "deleteOnlyDraft",
+  description: "削除できるのは下書きだけ",
   when: not(pre(isDraft)),
   check: () => Result.fail("NOT_DRAFT"),
 });
@@ -181,7 +187,8 @@ export const onlyDraftIsDeletable = rule(article.onDelete, {
 export const articleImmutableFields = immutable(article.onSave, ["blogId", "authorId"]);
 
 export const reviewerExists = rule(article.onSave, {
-  name: "レビュアーが存在する",
+  id: "reviewerExists",
+  description: "レビュアーが存在する",
   requires: { requireExistingUser },
   when: always,
   check: async ({ pre, next }, { requireExistingUser }) => {
@@ -195,7 +202,8 @@ export const reviewerExists = rule(article.onSave, {
 });
 
 export const blogExists = rule(article.onSave, {
-  name: "ブログが存在する",
+  id: "blogExists",
+  description: "ブログが存在する",
   requires: { findBlog },
   when: always,
   // port の Result を if で取り出す代わりに、safeTry の中で yield* で取り出す書き方
@@ -210,7 +218,8 @@ export const blogExists = rule(article.onSave, {
 });
 
 export const blogAcceptsPosts = rule(article.onSave.assuming<Defaulted & { next: { blogId: BlogIdExisted } }>(), {
-  name: "投稿を受け付けているブログ",
+  id: "blogAcceptsPosts",
+  description: "投稿を受け付けているブログ",
   requires: { findBlog },
   when: changed("status", { next: "PUBLISHED" }),
   check: async ({ next }, { findBlog }) => {
@@ -221,13 +230,15 @@ export const blogAcceptsPosts = rule(article.onSave.assuming<Defaulted & { next:
 });
 
 export const existingArticleId = rule(article.onSave, {
-  name: "既存の記事の id",
+  id: "keepExistingId",
+  description: "既存の記事の id",
   when: always,
   check: ({ pre }) => Result.succeed({ next: { id: pre?.id } }),
 });
 
 export const articleIdAssigned = rule(article.onSave.assuming<{ next: { id: Article["id"] | undefined } }>(), {
-  name: "新しい記事に id を付ける",
+  id: "assignNewId",
+  description: "新しい記事に id を付ける",
   requires: { newArticleId },
   when: always,
   check: async ({ next }, { newArticleId }) => {
@@ -238,10 +249,35 @@ export const articleIdAssigned = rule(article.onSave.assuming<{ next: { id: Arti
   },
 });
 
+// 公開されたことをレビュアーに知らせる。宛先のアドレスは配送する側が reviewerId から引く
+export const articlePublished = emit(
+  savedWithDefaults.assuming<{ next: { id: Article["id"]; reviewerId: UserIdExisted } }>(),
+  {
+    id: "articlePublished",
+    description: "公開されたらレビュアーに知らせる",
+    when: changed("status", { pre: "DRAFT", next: "PUBLISHED" }),
+    event: (s) =>
+      ({
+        type: "ARTICLE_PUBLISHED",
+        articleId: s.next.id,
+        reviewerId: s.next.reviewerId,
+        publishedBy: s.actor.id,
+      }) as const,
+  },
+);
+
+export const articleDeleted = emit(article.onDelete, {
+  id: "articleDeleted",
+  description: "削除されたら著者に知らせる",
+  when: always,
+  event: (s) => ({ type: "ARTICLE_DELETED", articleId: s.pre.id, authorId: s.pre.authorId }) as const,
+});
+
 export const isMember = (a: AppActor): a is MemberActor => a.role === "MEMBER" || a.role === "ADMIN";
 
 const memberOnly = {
-  name: "記事を変更できるのはメンバーだけ" as const,
+  id: "memberOnly" as const,
+  description: "記事を変更できるのはメンバーだけ",
   when: always,
   check: ({ actor }: { actor: AppActor }) => (isMember(actor) ? Result.succeed({ actor }) : Result.fail("NOT_MEMBER")),
 };
@@ -274,9 +310,10 @@ export const articleRules = modelRules(article)
       .add(publishedIsApproved)
       .add(blogAcceptsPosts)
       .add(existingArticleId)
-      .add(articleIdAssigned),
+      .add(articleIdAssigned)
+      .add(articlePublished),
   )
-  .delete(ruleset(memberCanDelete).add(onlyDraftIsDeletable));
+  .delete(ruleset(memberCanDelete).add(onlyDraftIsDeletable).add(articleDeleted));
 
 export const previewArticle = action({
   name: "previewArticle",
@@ -288,7 +325,8 @@ export const findArticle = cached(
 );
 
 export const targetArticleExists = rule(previewArticle.onDecide, {
-  name: "対象の記事が存在する",
+  id: "articleExists",
+  description: "対象の記事が存在する",
   requires: { findArticle },
   when: always,
   check: async ({ input }, { findArticle }) => {
@@ -299,13 +337,15 @@ export const targetArticleExists = rule(previewArticle.onDecide, {
 });
 
 export const notArchived = rule(previewArticle.onDecide.assuming<{ article: ExistingArticle }>(), {
-  name: "アーカイブ済みの記事はプレビューできない",
+  id: "noPreviewWhenArchived",
+  description: "アーカイブ済みの記事はプレビューできない",
   when: always,
   check: ({ article }) => (article.status !== "ARCHIVED" ? Result.succeed() : Result.fail("ARCHIVED")),
 });
 
 export const canPreview = rule(previewArticle.onDecide.assuming<{ article: ExistingArticle }>(), {
-  name: "プレビューできるのはメンバーの著者かレビュアーだけ",
+  id: "previewByAuthorOrReviewer",
+  description: "プレビューできるのはメンバーの著者かレビュアーだけ",
   when: always,
   check: ({ actor, article }) => {
     if (!isMember(actor)) {

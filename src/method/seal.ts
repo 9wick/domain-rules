@@ -17,7 +17,7 @@ class Sealed<Kind extends string, Target extends string, Op extends string, C> {
 
   static contents<C>(s: Sealed<string, string, string, C>): C {
     // 型の上では封をした値しか渡せないが、スプレッドで作り直した値は実行時にも拒む
-    if (!(#contents in s)) throw new Panic("open: メソッドが作った封をした値ではありません");
+    if (!(#contents in s)) throw new Panic("open: not a sealed value created by a method");
     return s.#contents;
   }
 }

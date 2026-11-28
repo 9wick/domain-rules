@@ -26,10 +26,10 @@ type OptionalKeys<P> = { [K in keyof P]-?: {} extends Pick<P, K> ? K : never }[k
 // index signature や省略できる key があると、bind が確かめる port と check が使う port がずれる
 export type StrictRecord<P> =
   HasIndex<P> extends true
-    ? { readonly "index signature の record は渡せない": never }
+    ? { readonly "records with an index signature are not allowed": never }
     : [OptionalKeys<P>] extends [never]
       ? unknown
-      : { readonly "省略できる key は渡せない": OptionalKeys<P> };
+      : { readonly "optional keys are not allowed": OptionalKeys<P> };
 
 // requires の port ごとに、check に渡す関数を作る
 export const resolvePorts = <P extends Requires>(requires: P, invocation: Invocation) =>

@@ -12,7 +12,7 @@ type FieldsOf<E> =
 // 型で entries か shape を必須にしているので、どちらも無いのは型を外した呼び出しだけ
 const entriesOf = <E>(schema: FieldsOf<E>): E => {
   const entries = schema.entries ?? schema.shape;
-  if (entries === undefined) throw new Panic("defineModel: key と value の schema には entries か shape が必要です");
+  if (entries === undefined) throw new Panic("defineModel: key and value schemas must have entries or shape");
   return entries;
 };
 
@@ -37,7 +37,7 @@ export type Model<
     readonly persisted: StandardSchemaV1<unknown, P>;
   };
   readonly entries: { readonly key: Entries<KO>; readonly value: Entries<VO> };
-  readonly onSave: Track<"save", N, SaveState<P | null, ValueOf<KO, VO>, Act>>;
+  readonly onSave: Track<"save", N, SaveState<P | null, ValueOf<KO, VO>, Act>, keyof KO & string>;
   readonly onDelete: Track<"delete", N, DeleteState<P, KO, Act>>;
 };
 
@@ -74,7 +74,7 @@ type OptionalKeys<T> = { [K in keyof T]-?: {} extends Pick<T, K> ? K : never }[k
 type NoDefault<In, Out> = [Exclude<OptionalKeys<In>, OptionalKeys<Out>>] extends [never]
   ? unknown
   : {
-      readonly "schema の optional には既定値を書けない。既定値はルールで next に入れる": Exclude<
+      readonly "optional fields in a schema cannot have defaults; set defaults in next with a rule": Exclude<
         OptionalKeys<In>,
         OptionalKeys<Out>
       >;
@@ -83,11 +83,11 @@ type NoDefault<In, Out> = [Exclude<OptionalKeys<In>, OptionalKeys<Out>>] extends
 // key と value が同じ項目を持つと、next でどちらの値が残るかが決まらない
 type Disjoint<KO, VO> = [Extract<keyof KO, keyof VO>] extends [never]
   ? unknown
-  : { readonly "key と value に同じ項目は書けない": Extract<keyof KO, keyof VO> };
+  : { readonly "key and value cannot share fields": Extract<keyof KO, keyof VO> };
 
 // create では id をまだ持たないので、key の id は省略できる形で書く。update と delete では id を必須として扱う
 type OptionalId<KI> = KI extends { readonly id: unknown }
-  ? { readonly "key の schema の id は省略可能でなければならない": true }
+  ? { readonly "id in the key schema must be optional": true }
   : unknown;
 
 // actor の型を決めてから model を作る。actor の型は domain で1回だけ書く
@@ -110,6 +110,6 @@ export const defineModel =
       name: def.name,
       schema: def.schema,
       entries: { key: entriesOf<Entries<KO>>(def.schema.key), value: entriesOf<Entries<VO>>(def.schema.value) },
-      onSave: new Track<"save", N, SaveState<P | null, ValueOf<KO, VO>, Act>>("save", def.name),
+      onSave: new Track<"save", N, SaveState<P | null, ValueOf<KO, VO>, Act>, keyof KO & string>("save", def.name),
       onDelete: new Track<"delete", N, DeleteState<P, KO, Act>>("delete", def.name),
     });

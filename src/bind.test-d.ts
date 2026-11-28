@@ -21,7 +21,8 @@ const item = defineModel<string>()({
 });
 const newId = port("newId").of<() => string>();
 const assign = rule(item.onSave, {
-  name: "id",
+  id: "id",
+  description: "id",
   requires: { newId },
   when: always,
   check: async (_, { newId }) =>

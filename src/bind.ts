@@ -22,18 +22,18 @@ export function bind<const Sets extends readonly RuleSet[], const Ps extends rea
   sets: Sets & UniqueNames<Sets>,
   options: { readonly providers: Ps } & ([MissingProviders<Sets, Ps>] extends [never]
     ? unknown
-    : { readonly "provider が足りない port": MissingProviders<Sets, Ps> }),
+    : { readonly "missing providers for ports": MissingProviders<Sets, Ps> }),
 ) {
   const context = new Context(options.providers);
   const names = new Set<string>();
   for (const set of sets) {
     // 復帰できない異常: 同じ名前の rule の組を2つ渡している。型でも弾くが、tuple でない配列などで来たときに後の組で黙って上書きしない
-    if (names.has(set.name)) throw new Panic(`bind: "${set.name}" の rule の組が重複しています`);
+    if (names.has(set.name)) throw new Panic(`bind: duplicate rule set name "${set.name}"`);
     names.add(set.name);
     const missing = requiredPorts(set)
       .filter((port) => !port.providedIn(context))
       .map((port) => port.name);
-    if (missing.length > 0) throw new Panic(`bind: provider が足りない port: ${missing.join(", ")}`);
+    if (missing.length > 0) throw new Panic(`bind: missing providers for ports: ${missing.join(", ")}`);
   }
   const ctx: BindCtx = { invocation: () => invocation(context) };
   const list: Sets = sets;
@@ -47,7 +47,7 @@ const requiredPorts = (
 const invocation = (context: Context): Invocation => {
   const now = clock.nowIn(context);
   // bind が clock の provider を確かめてから呼ぶので、ここに来るのは壊れたときだけ
-  if (now === undefined) throw new Panic("bind: clock の provider がありません");
+  if (now === undefined) throw new Panic("bind: no provider for clock");
   return invocationOf(context, now);
 };
 

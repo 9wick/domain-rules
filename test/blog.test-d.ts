@@ -1,16 +1,19 @@
 import { Result } from "@praha/byethrow";
 import * as v from "valibot";
 import { describe, expectTypeOf, test } from "vite-plus/test";
-import { bind, open, type Persistable } from "../src/index.ts";
+import { bind, open, type DomainEvent, type Persistable } from "../src/index.ts";
 import {
   UserIdSchema,
   article,
+  articleDeleted,
+  articlePublished,
   articleRules,
   previewArticleRules,
   type ArticleIdExisted,
   type ArticleIdNew,
   type ExistingArticle,
   type MemberActor,
+  type UserId,
   type UserIdExisted,
 } from "./blog/domain.ts";
 
@@ -26,31 +29,32 @@ describe("型", () => {
       expectTypeOf(r.error.step).toEqualTypeOf<
         | "input"
         | "load"
-        | "記事を変更できるのはメンバーだけ"
-        | "作成時に省略した status は下書き、approvedAt は未承認"
-        | "status は許可された変化だけ"
-        | `作成後に変えられない項目: ${string}`
-        | "ブログが存在する"
-        | "レビュアーが存在する"
-        | "著者とレビュアーは別の人"
-        | "slug はブログ内で一意"
-        | "公開日時は未来"
-        | "公開できるのは今のレビュアーだけ"
-        | "作成後にレビュアーを変えられるのは著者だけ"
-        | "公開後の slug を変えられるのは管理者だけ"
-        | "公開中の記事は承認済み"
-        | "投稿を受け付けているブログ"
-        | "既存の記事の id"
-        | "新しい記事に id を付ける"
+        | "memberOnly"
+        | "defaultFields"
+        | "allowedStatusTransition"
+        | "immutable"
+        | "blogExists"
+        | "reviewerExists"
+        | "reviewerIsNotAuthor"
+        | "uniqueSlug"
+        | "publishAtInFuture"
+        | "publishByReviewer"
+        | "reviewerChangeByAuthor"
+        | "slugChangeAfterPublishByAdmin"
+        | "publishedIsApproved"
+        | "blogAcceptsPosts"
+        | "keepExistingId"
+        | "assignNewId"
+        | "articlePublished"
       >();
       return;
     }
-    const { pre, next, actor } = open(r.value);
+    const { pre, next, actor } = open(r.value.persistable);
     expectTypeOf(pre).toEqualTypeOf<Readonly<ExistingArticle>>();
     expectTypeOf(next.id).toEqualTypeOf<ArticleIdExisted | ArticleIdNew>();
     expectTypeOf(next.reviewerId).toEqualTypeOf<UserIdExisted>();
     expectTypeOf(actor).toEqualTypeOf<MemberActor>();
-    expectTypeOf(r.value).toExtend<Persistable<typeof article, "update">>();
+    expectTypeOf(r.value.persistable).toExtend<Persistable<typeof article, "update">>();
   });
 
   test("rule の失敗の値に、check の失敗と port の失敗が入る", async () => {
@@ -58,7 +62,7 @@ describe("型", () => {
       input: { blogId: "blg_1", authorId: "usr_1", reviewerId: "usr_2", slug: "s", publishAt: 1 },
       actor: { id: v.parse(UserIdSchema, "usr_1"), role: "MEMBER" },
     });
-    if (Result.isFailure(r) && r.error.step === "レビュアーが存在する") {
+    if (Result.isFailure(r) && r.error.step === "reviewerExists") {
       expectTypeOf(r.error.error).toEqualTypeOf<
         "USER_NOT_FOUND" | { readonly type: "INFRA"; readonly cause: unknown }
       >();
@@ -71,7 +75,32 @@ describe("型", () => {
       actor: { id: v.parse(UserIdSchema, "usr_1"), role: "MEMBER" },
     });
     if (Result.isSuccess(r)) {
-      expectTypeOf(open(r.value).value.viewerRole).toEqualTypeOf<"author" | "reviewer">();
+      expectTypeOf(open(r.value.decision).value.viewerRole).toEqualTypeOf<"author" | "reviewer">();
     }
+  });
+
+  test("イベントの型は emit・rule の組・bind の戻り値から取り出せ、メソッドの events と同じ型になる", async () => {
+    type Published = {
+      readonly type: "ARTICLE_PUBLISHED";
+      readonly articleId: ArticleIdExisted | ArticleIdNew;
+      readonly reviewerId: UserIdExisted;
+      readonly publishedBy: UserId;
+    };
+    type Deleted = {
+      readonly type: "ARTICLE_DELETED";
+      readonly articleId: ArticleIdExisted | ArticleIdNew;
+      readonly authorId: UserId;
+    };
+    expectTypeOf<DomainEvent<typeof articlePublished>>().toEqualTypeOf<Published>();
+    expectTypeOf<DomainEvent<typeof articleDeleted>>().toEqualTypeOf<Deleted>();
+    expectTypeOf<DomainEvent<typeof articleRules>>().toEqualTypeOf<Published | Deleted>();
+    expectTypeOf<DomainEvent<typeof previewArticleRules>>().toBeNever();
+    expectTypeOf<DomainEvent<typeof domain>>().toEqualTypeOf<Published | Deleted>();
+
+    const r = await domain.article.delete({
+      input: { id: "art_1" },
+      actor: { id: v.parse(UserIdSchema, "usr_1"), role: "MEMBER" },
+    });
+    if (Result.isSuccess(r)) expectTypeOf(r.value.events).toEqualTypeOf<readonly Deleted[]>();
   });
 });

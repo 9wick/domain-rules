@@ -13,6 +13,7 @@
 - [確認済みの値で型を昇格させる](#確認済みの値で型を昇格させる)
 - [モデルのルール定義を組み立てる (`modelRules`)](#モデルのルール定義を組み立てる-modelrules)
 - [永続化を伴わない操作を定義する (`action` / `actionRules`)](#永続化を伴わない操作を定義する-action--actionrules)
+- [条件に応じてイベントを発行する (`emit`)](#条件に応じてイベントを発行する-emit)
 - [実装を注入する (`provide` / `bind`) とテスト](#実装を注入する-provide--bind-とテスト)
 - [実行時の挙動と失敗の型 (`create` / `update` / `delete` / `decide`)](#実行時の挙動と失敗の型-create--update--delete--decide)
 - [検証済みの値を取り出す (`open`)](#検証済みの値を取り出す-open)
@@ -86,10 +87,11 @@ export type ExistingArticle = Omit<Article, "id"> & { id: ArticleIdExisted }; //
 - **`schema.key`**: モデルを特定する項目のスキーマです。`id` に加えて、`tenantId` のように既存の値を探すのに必ず要る項目を書きます。key の項目はどの操作でも入力に必要で、`update` と `delete` では key 全体を検証してから `fetch` に渡します。`id` は `create` では採番前で入力にないので、省略可能にしておく必要があります（`update` と `delete` では必須として扱います）。key の項目は `update` で変えられません。
 - **`schema.value`**: モデルが持つ項目のスキーマです。required と optional は、完成したモデルの値にその項目が必ずあるかどうかを表します。`create` では value 全体を検証します。`update` では value は差分なので、既存の値を取得する前に、入力に含まれた項目だけを各項目のスキーマで検証します。そのため、トップレベルはオブジェクトスキーマ（Valibot の `v.object`、Zod の `z.object`）である必要があります。オブジェクト全体に付けた検証（Valibot の `v.pipe(v.object(...), v.check(...))` や Zod の `z.object(...).refine(...)` で書く「開始は終了より前」など）は、作成時は入力の value 全体に、更新時は既存の値に差分を重ねた値にかかるので、作成と更新の両方で効きます。
   - key と value に同じ項目は書けません（`model` が型エラーになります）。
-  - 更新では、既存の値から引き継いだ変換後の値もこのスキーマに通します。そのため `update` を作るモデル（`.load()` の後に `.save()` を書くモデル）では、スキーマが変換後の値もそのまま受け付ける必要があり、受け付けないと `.save()` が型エラーになります。たとえば文字列を `Date` に変換するなら、`v.union([v.date(), v.pipe(v.string(), v.isoTimestamp(), v.transform((s) => new Date(s)))])` のように `Date` も受け付けます。型が変わらない変換（`trim` など）は、変換後の値にもう一度かけても同じ値になるものにしてください。
+  - value スキーマでは値を検証するだけにして、変換することは推奨しません（入力の型と出力の型を同じにします）。value に渡された値は「この値で保存してほしい」という要求なので、ここで書き換えると、保存されるものが要求と違ってしまいます。前後の空白の除去や、JSON で届いた文字列から `Date` への復元のような整形が必要なら、value に渡す前の境界（プレゼン層や usecase 層など）で行ってください。こうしておくと、`.load()` で読んだ値をそのまま `.save()` に渡しても同じスキーマを通ります。
+  - それでも value スキーマで変換する場合、更新では既存の値から引き継いだ変換後の値もこのスキーマに通ることに注意してください。`update` を作るモデル（`.load()` の後に `.save()` を書くモデル）では、スキーマが変換後の値もそのまま受け付けないと `.save()` が型エラーになります。型が変わらない変換（`trim` など）は、変換後の値にもう一度かけても同じ値になるものにしてください。
 - **`schema.persisted`**: 永続化時の型を決めるためのスキーマです。key と value より強い型（存在確認済み Brand 型など）を持たせられます。ライブラリはこのスキーマで実行時の検証を行いません（未確認の入力に Brand が付くのを防ぐため）。保存パイプラインの終端で `next` がこの型になっていることをコンパイル時に検査します。
 - **検証の順番**: 各操作で key と value がどこで検証され、`persisted` の型になるまでの流れは [入力が永続化の型になるまで](#入力が永続化の型になるまで) を参照してください。
-- **既定値**: key と value の `v.optional` には既定値を書けません（`model` が型エラーになります）。省略したときの値は、`next` を昇格させるルールで入れます（例: `status: next.status ?? "DRAFT"`）。
+- **既定値**: key と value の `v.optional` には既定値を書けません（`model` が型エラーになります）。作成時に省略したときの値は、[`defaultFields`](#組み込みヘルパー-immutable--defaultfields--alwaysallow) で入れます。
 - **`id` の扱い**: `model` 自身は `id` の取得や採番を行いません。既存レコードの取得は `modelRules(...).load({ requires, fetch })` に書き、新規 ID の採番も他のフィールドと同様にルールで型を昇格させます。
 
 ---
@@ -158,7 +160,7 @@ export const newArticleId = port("newArticleId").of<() => ArticleIdNew, InfraErr
 
 ## ルールを定義する (`rule`)
 
-`rule` はパイプラインの 1 ステップを定義します。外部ポートを使う場合は `requires` に指定し、`check` の第 2 引数から受け取ります(第 3 引数の [`safeTry`](#port-の結果を-yield-で取り出す-safetry) でも受け取れます)。
+`rule` はパイプラインの 1 ステップを定義します。`id` は失敗の型の `step` に入る判別用の識別子で、`description` は人が読むための説明です。説明の文言を直しても `id` を変えなければ、呼び出し側の分岐はそのまま動きます。`id` はログやエラーコードとして扱いやすい ASCII の名前にしておくことをおすすめします。外部ポートを使う場合は `requires` に指定し、`check` の第 2 引数から受け取ります(第 3 引数の [`safeTry`](#port-の結果を-yield-で取り出す-safetry) でも受け取れます)。
 
 ```ts
 import { rule, always, onCreate, changed, next, pre, and, not } from "domain-rules";
@@ -166,13 +168,15 @@ import { rule, always, onCreate, changed, next, pre, and, not } from "domain-rul
 import { Result } from "@praha/byethrow";
 
 export const authorIsNotReviewer = rule(article.onSave, {
-  name: "著者とレビュアーは別の人",
+  id: "reviewerIsNotAuthor",
+  description: "著者とレビュアーは別の人",
   when: always,
   check: (s) => (s.next.authorId !== s.next.reviewerId ? Result.succeed() : Result.fail("SAME_AUTHOR_AND_REVIEWER")),
 });
 
 export const uniqueSlugInBlog = rule(article.onSave, {
-  name: "slug はブログ内で一意",
+  id: "uniqueSlug",
+  description: "slug はブログ内で一意",
   requires: { findArticlesInBlog },
   when: changed("slug"),
   check: async (s, { findArticlesInBlog }) => {
@@ -186,13 +190,15 @@ export const uniqueSlugInBlog = rule(article.onSave, {
 
 // savedWithDefaults は status に既定値が入った状態（後述の「適用条件を書く」を参照）
 export const onlyReviewerPublishes = rule(savedWithDefaults, {
-  name: "公開できるのは今のレビュアーだけ",
+  id: "publishByReviewer",
+  description: "公開できるのは今のレビュアーだけ",
   when: changed("status", { pre: "DRAFT", next: "PUBLISHED" }),
   check: (s) => (s.actor.id === s.pre?.reviewerId ? Result.succeed() : Result.fail("NOT_REVIEWER")),
 });
 
 export const onlyDraftIsDeletable = rule(article.onDelete, {
-  name: "削除できるのは下書きだけ",
+  id: "deleteOnlyDraft",
+  description: "削除できるのは下書きだけ",
   when: not(pre(isDraft)),
   check: () => Result.fail("NOT_DRAFT"),
 });
@@ -204,7 +210,8 @@ port の `Result` を `if (Result.isFailure(...)) return ...` で毎回取り出
 
 ```ts
 export const uniqueSlugInBlog = rule(article.onSave, {
-  name: "slug はブログ内で一意",
+  id: "uniqueSlug",
+  description: "slug はブログ内で一意",
   requires: { findArticlesInBlog },
   when: changed("slug"),
   check: (s, _, { safeTry }) =>
@@ -221,7 +228,7 @@ export const uniqueSlugInBlog = rule(article.onSave, {
 - 失敗の型は、`yield*` した port の失敗と、最後に返した `Result` の失敗を合わせたものになります。
 - 失敗で止まるときは generator を閉じるので、関数の中の `finally` や `using` の後始末は走ります。
 
-### 組み込みヘルパー (`immutable` / `alwaysAllow`)
+### 組み込みヘルパー (`immutable` / `defaultFields` / `alwaysAllow`)
 
 よく使われるパターンのヘルパーが用意されています。
 
@@ -232,12 +239,37 @@ import { immutable } from "domain-rules";
 export const articleImmutableFields = immutable(article.onSave, ["blogId", "authorId"]);
 ```
 
-`immutable` が返すルールの名前は `"作成後に変えられない項目: blogId, authorId"` になり、更新時に該当フィールドが変わると `{ code: "IMMUTABLE_FIELD_CHANGED", field: "blogId" }` で失敗します。
+`immutable` が返すルールの `id` は指定した項目によらず既定で `"immutable"`、`description` は `"fields immutable after creation: blogId, authorId"` になり、更新時に該当フィールドが変わると `{ code: "IMMUTABLE_FIELD_CHANGED", field: "blogId" }` で失敗します。
 
-条件なしで削除を許可するモデルには、`.delete(ruleset(alwaysAllow))` を指定できます。
+同じ線路に `immutable` を複数置いて、失敗の `step` でも区別したいときは、第 3 引数で `id` を変えられます。
+
+```ts
+export const slugIsFixed = immutable(article.onSave, ["slug"], { id: "slugIsFixed" });
+```
+
+`defaultFields` は、作成時に省略した項目に既定値を入れます。値は固定値か、状態 `s`（`pre` / `next` / `input` / `actor` / `now`）から値を作る関数で書きます。
+
+```ts
+import { defaultFields } from "domain-rules";
+
+export const articleDefaults = defaultFields(article.onSave, {
+  status: "DRAFT",
+  approvedAt: null,
+  slug: (s) => `blog_at_${s.now}`,
+});
+```
+
+- 値を入れるのは、作成時に `next` の項目が `undefined` のときだけです。`null` を指定した項目は上書きしません。更新では既存の値を引き継ぐので、何もしません。
+- 既定値を書けるのは、value で省略できて、`schema.persisted` では必ずある項目だけです。それ以外の項目を書くと型エラーになります。省略できない項目には既定値が使われません。永続化の型でも省略できる項目は、更新後に値がある型にできません。key の項目（`id` など）は、採番のような port を使うルールで入れます。
+- 既定値の網羅は強制しません。省略できる項目に誰も値を入れなければ、保存パイプラインの終端の `persisted` の型検査で型エラーになります。
+- `when` は `always` です。通ったあとのルールは、指定した項目に値がある型で受け取れます。失敗はしません。
+- port は受け取りません。採番のように port が要る値は、`rule` で書きます（[`id` と `actor` の昇格例](#id-と-actor-の昇格例) を参照）。時刻は `s.now` を使います。
+- `id` は既定で `"defaultFields"`、`description` は `"defaults for fields omitted on create: status, approvedAt, slug"` です。同じ線路に複数置くときは、`immutable` と同じく第 3 引数の `{ id }` で変えます。
+
+条件なしで削除を許可するモデルには、`.delete(ruleset(alwaysAllow))` を指定できます。`alwaysAllow` の `id` は `"alwaysAllow"` です。
 
 > **ルール定義オブジェクトを変数に切り出すときの注意**:
-> `const def = { name: "..." as const, ... }` のようにオブジェクトリテラルを別の変数に置いて `rule()` へ渡す場合は、`name` に `as const` を付けてください。付けないと `name` の型が `string` に広がり、失敗型の `step` がリテラル型で判別できなくなります（`rule()` にインラインで渡す場合は不要です）。
+> `const def = { id: "..." as const, ... }` のようにオブジェクトリテラルを別の変数に置いて `rule()` へ渡す場合は、`id` に `as const` を付けてください。付けないと `id` の型が `string` に広がり、失敗型の `step` がリテラル型で判別できなくなります（`rule()` にインラインで渡す場合は不要です）。
 
 ---
 
@@ -251,18 +283,13 @@ export const isPublished = (a: ArticleValue) => a.status === "PUBLISHED";
 export const isApproved = (a: ArticleValue) => a.approvedAt !== null;
 ```
 
-`schema.value` で省略可能にした項目の既定値は、`next` を昇格させるルールで入れます。そのあとのルールは `.assuming<...>()` で、既定値が入った状態を前提にします。
+`schema.value` で省略可能にした項目の既定値は、[`defaultFields`](#組み込みヘルパー-immutable--defaultfields--alwaysallow) で入れます。そのあとのルールは `.assuming<...>()` で、既定値が入った状態を前提にします。
 
 ```ts
 type Defaulted = { readonly next: { readonly status: ArticleStatus; readonly approvedAt: number | null } };
 const savedWithDefaults = article.onSave.assuming<Defaulted>();
 
-export const articleDefaults = rule(article.onSave, {
-  name: "作成時に省略した status は下書き、approvedAt は未承認",
-  when: always,
-  check: ({ next }) =>
-    Result.succeed({ next: { status: next.status ?? "DRAFT", approvedAt: next.approvedAt ?? null } }),
-});
+export const articleDefaults = defaultFields(article.onSave, { status: "DRAFT", approvedAt: null });
 
 // status を読むルールは savedWithDefaults に書く
 export const statusChangesAreAllowed = rule(savedWithDefaults, { ... });
@@ -306,7 +333,8 @@ export const statusChangesAreAllowed = rule(savedWithDefaults, { ... });
 
 ```ts
 export const reviewerExists = rule(article.onSave, {
-  name: "レビュアーが存在する",
+  id: "reviewerExists",
+  description: "レビュアーが存在する",
   requires: { requireExistingUser },
   when: always,
   check: async ({ pre, next }, { requireExistingUser }) => {
@@ -321,7 +349,8 @@ export const reviewerExists = rule(article.onSave, {
 });
 
 export const blogExists = rule(article.onSave, {
-  name: "ブログが存在する",
+  id: "blogExists",
+  description: "ブログが存在する",
   requires: { findBlog },
   when: always,
   check: async ({ pre, next }, { findBlog }) => {
@@ -336,7 +365,8 @@ export const blogExists = rule(article.onSave, {
 
 // 前段の blogExists で blogId が BlogIdExisted に昇格していることを前提にする
 export const blogAcceptsPosts = rule(article.onSave.assuming<Defaulted & { next: { blogId: BlogIdExisted } }>(), {
-  name: "投稿を受け付けているブログ",
+  id: "blogAcceptsPosts",
+  description: "投稿を受け付けているブログ",
   requires: { findBlog },
   when: changed("status", { next: "PUBLISHED" }),
   check: async ({ next }, { findBlog }) => {
@@ -355,14 +385,16 @@ export const blogAcceptsPosts = rule(article.onSave.assuming<Defaulted & { next:
 ```ts
 // 既存記事なら既存の id を引き継ぐ
 export const existingArticleId = rule(article.onSave, {
-  name: "既存の記事の id",
+  id: "keepExistingId",
+  description: "既存の記事の id",
   when: always,
   check: ({ pre }) => Result.succeed({ next: { id: pre?.id } }),
 });
 
 // 未確定（新規作成）なら採番ポートから id を発行する
 export const articleIdAssigned = rule(article.onSave.assuming<{ next: { id: Article["id"] | undefined } }>(), {
-  name: "新しい記事に id を付ける",
+  id: "assignNewId",
+  description: "新しい記事に id を付ける",
   requires: { newArticleId },
   when: always,
   check: async ({ next }, { newArticleId }) => {
@@ -377,7 +409,8 @@ export const articleIdAssigned = rule(article.onSave.assuming<{ next: { id: Arti
 export const isMember = (actor: AppActor): actor is MemberActor => actor.role === "MEMBER" || actor.role === "ADMIN";
 
 const memberOnly = {
-  name: "記事を変更できるのはメンバーだけ" as const,
+  id: "memberOnly" as const,
+  description: "記事を変更できるのはメンバーだけ",
   when: always,
   check: ({ actor }: { actor: AppActor }) => (isMember(actor) ? Result.succeed({ actor }) : Result.fail("NOT_MEMBER")),
 };
@@ -453,7 +486,8 @@ export const findArticle = cached(
 );
 
 export const targetArticleExists = rule(previewArticle.onDecide, {
-  name: "対象の記事が存在する",
+  id: "articleExists",
+  description: "対象の記事が存在する",
   requires: { findArticle },
   when: always,
   check: async ({ input }, { findArticle }) => {
@@ -464,13 +498,15 @@ export const targetArticleExists = rule(previewArticle.onDecide, {
 });
 
 export const notArchived = rule(previewArticle.onDecide.assuming<{ article: ExistingArticle }>(), {
-  name: "アーカイブ済みの記事はプレビューできない",
+  id: "noPreviewWhenArchived",
+  description: "アーカイブ済みの記事はプレビューできない",
   when: always,
   check: ({ article }) => (article.status !== "ARCHIVED" ? Result.succeed() : Result.fail("ARCHIVED")),
 });
 
 export const canPreview = rule(previewArticle.onDecide.assuming<{ article: ExistingArticle }>(), {
-  name: "プレビューできるのはメンバーの著者かレビュアーだけ",
+  id: "previewByAuthorOrReviewer",
+  description: "プレビューできるのはメンバーの著者かレビュアーだけ",
   when: always,
   check: ({ actor, article }) => {
     if (!isMember(actor)) return Result.fail("NOT_ALLOWED");
@@ -487,6 +523,107 @@ export const previewArticleRules = actionRules(previewArticle, {
 ```
 
 `output` には最後の状態を受け取って結果を組み立てる関数を渡します（返り値不要なら `output: () => undefined`）。
+
+---
+
+## 条件に応じてイベントを発行する (`emit`)
+
+「記事が公開されたらレビュアーに知らせる」のように、条件に応じて何かが起きたことを外へ伝えたいときは、`emit` でイベントを発行するステップを定義します。条件は `rule` と同じく `when` で書き、イベントの中身は `event` が返す値です。
+
+```ts
+import { emit, changed } from "domain-rules";
+
+// id を確定するルールと、レビュアーの存在を確かめるルールのあとに置く前提で、昇格した型を assuming で受け取る
+export const articlePublished = emit(
+  savedWithDefaults.assuming<{ next: { id: Article["id"]; reviewerId: UserIdExisted } }>(),
+  {
+    id: "articlePublished",
+    description: "公開されたらレビュアーに知らせる",
+    when: changed("status", { pre: "DRAFT", next: "PUBLISHED" }),
+    event: (s) =>
+      ({
+        type: "ARTICLE_PUBLISHED",
+        articleId: s.next.id,
+        reviewerId: s.next.reviewerId,
+        publishedBy: s.actor.id,
+      }) as const,
+  },
+);
+
+export const articleRules = modelRules(article)
+  .load({ ... })
+  .save(ruleset(memberCanSave).add(articleDefaults) /* ... */ .add(articleIdAssigned).add(articlePublished));
+```
+
+- `emit` は `ruleset` に `rule` と並べて置けます。保存・削除・アクションのどの線路にも置けます。
+- `event` が受け取る状態の型は、`rule` の `check` と同じく渡した線路の型です。前段のルールで昇格した型を使うときは、[`assuming`](#前段ルールの型昇格を前提にする-assuming) で前提にし、そのルールより後ろに置きます。前提にした昇格が起きない位置に置くと、`add` で型エラーになります。
+- イベントの型をリテラルのまま残したいときは、`event` の戻り値に `as const` を付けます。
+- `event` は同期の純関数で、port を受け取りません。通知先を決めるのに外部の値が要るとき（「その場所を担当する管理者」など）は、前段の `rule` で取得して状態に入れておきます。宛先のメールアドレスや表示名、リンクの URL など配送に要る値は、イベントには ID だけを入れ、配送する側で引いてください。
+- 1 つの `emit` が発行するイベントは 1 つです。複数のイベントを発行したいときは `emit` を並べます。
+- `when` が `false` ならイベントは発行されず、状態をそのまま次へ渡します。`emit` は状態を変えず、失敗もしません。
+- `id` と `description` は [`plan`](#ルール構成を確認する-plan) で構成を確かめるためのもので、イベントには含まれません。
+
+発行されたイベントは、メソッドの成功の値の `events` に、パイプライン上の順に並びます。後段のルールで失敗したときは、それより前の `emit` が発行したイベントも返りません。
+
+```ts
+const r = await domain.article.update({ input: { id, status: "PUBLISHED" }, actor });
+if (Result.isSuccess(r)) {
+  const { persistable, events } = r.value;
+  // events: readonly { type: "ARTICLE_PUBLISHED"; articleId: ...; reviewerId: ... }[]
+  await db.transaction(async (tx) => {
+    await articleRepository.save(tx, persistable);
+    await outbox.push(tx, events);
+  });
+}
+```
+
+- `events` の要素は `event` が返した値そのものです。ライブラリは何も付け足しません。区別が要るなら `type` などをイベントに持たせ、ハンドラに要る `actor` や時刻も `event` の中で状態から入れてください。
+- `events` は封の外にある読み取り専用のデータなので、`open()` せずに読めます。
+
+### イベントの型を取り出す (`DomainEvent`)
+
+配送する側のハンドラや outbox の型は、`DomainEvent` で定義から取り出せます。イベントの型を別に書き起こさないので、`event` の戻り値を変えればハンドラの型も追従します。
+
+```ts
+import type { DomainEvent } from "domain-rules";
+
+type ArticlePublished = DomainEvent<typeof articlePublished>;
+// { readonly type: "ARTICLE_PUBLISHED"; readonly articleId: ...; readonly reviewerId: ... }
+
+type ArticleEvent = DomainEvent<typeof articleRules>;
+// articleRules の保存と削除の線路に置いた emit が発行しうるイベントの和
+
+const handle = (e: ArticleEvent) => {
+  switch (e.type) {
+    case "ARTICLE_PUBLISHED":
+      return notifyReviewer(e.reviewerId, e.articleId);
+  }
+};
+```
+
+| 渡すもの                     | 得られる型                                              |
+| ---------------------------- | ------------------------------------------------------- |
+| `emit` の戻り値              | その `emit` の `event` が返す型                         |
+| `ruleset`                    | その `ruleset` に並べた `emit` のイベントの和           |
+| `modelRules` / `actionRules` | 保存・削除・判定の線路に置いた `emit` のイベントの和    |
+| `bind` の戻り値 (`domain`)   | `bind` に渡したすべてのモデルとアクションのイベントの和 |
+
+`emit` を 1 つも置いていなければ `never` です。ドメイン全体のイベントを 1 つの outbox やディスパッチャで受けるときは、`bind` の戻り値から取ります。
+
+```ts
+export const domain = bind([articleRules, previewArticleRules], { providers });
+
+type AppEvent = DomainEvent<typeof domain>;
+// = DomainEvent<typeof articleRules> | DomainEvent<typeof previewArticleRules>
+```
+
+`domain` の各メソッドが返す `events` の型から引くので、`bind` に渡すルール定義を足せば `AppEvent` にも加わります。
+
+ライブラリが扱わないこと:
+
+- **イベントの配送**: `events` を受け取ってメールを送る・キューに積むのは、ユースケース層や基盤の責務です。ライブラリはハンドラを呼びません。
+- **保存とイベントの記録の整合**: 保存に成功したときだけイベントが配送されるようにするには、同じトランザクションで outbox に記録するなど、アプリケーション側で扱ってください。
+- **冪等キー・相関 ID・配送順の保証、まとめて送る処理**: 配送基盤の都合なので、必要なら `event` に含めるか、配送する側で扱ってください。
 
 ---
 
@@ -543,19 +680,21 @@ const testDomain = bind([articleRules], {
 ```ts
 const saved = await Result.pipe(
   domain.article.update({ input: { id: articleId, status: "PUBLISHED" }, actor }),
-  Result.andThen((persistable) => repository.save(persistable)),
+  Result.andThen(({ persistable }) => repository.save(persistable)),
 );
 ```
 
 ### メソッド一覧と返り値
 
-| メソッド | 引数                                                  | 成功時の返り値                         |
-| -------- | ----------------------------------------------------- | -------------------------------------- |
-| `create` | `{ input, actor }`（key（`id` を除く）と value 全体） | `Persistable<M, "create">`             |
-| `update` | `{ input, actor }`（key（`id` 必須）と value の差分） | `Persistable<M, "update">`             |
-| `upsert` | `{ input, actor }`（`create` か `update` の入力）     | `Persistable<M, "create" \| "update">` |
-| `delete` | `{ input, actor }`（key（`id` 必須）だけ）            | `Deletable<M>`                         |
-| `decide` | `{ input, actor }`                                    | `Decision<A, T>`                       |
+| メソッド | 引数                                                  | 成功時の返り値                                                  |
+| -------- | ----------------------------------------------------- | --------------------------------------------------------------- |
+| `create` | `{ input, actor }`（key（`id` を除く）と value 全体） | `{ persistable: Persistable<M, "create">, events }`             |
+| `update` | `{ input, actor }`（key（`id` 必須）と value の差分） | `{ persistable: Persistable<M, "update">, events }`             |
+| `upsert` | `{ input, actor }`（`create` か `update` の入力）     | `{ persistable: Persistable<M, "create" \| "update">, events }` |
+| `delete` | `{ input, actor }`（key（`id` 必須）だけ）            | `{ deletable: Deletable<M>, events }`                           |
+| `decide` | `{ input, actor }`                                    | `{ decision: Decision<A, T>, events }`                          |
+
+`events` は線路に置いた [`emit`](#条件に応じてイベントを発行する-emit) が発行したイベントの列で、型は発行しうるイベントの和の `readonly` 配列です。`emit` を置いていなければ空の配列です。
 
 `upsert` は `input.id` が無ければ新規作成、あれば `load` の `fetch` で既存値を取得して更新します。`fetch` が失敗を返せば `load` で失敗します。
 
@@ -563,13 +702,13 @@ const saved = await Result.pipe(
 
 メソッドが呼ばれると、以下のステップを上から順に実行します。すべて `Result` を返し、失敗した時点で処理を中断します。
 
-| 順  | ステップ          | 内容                                                                         | 失敗時の `error`                       |
-| --- | ----------------- | ---------------------------------------------------------------------------- | -------------------------------------- |
-| 1   | `input`           | 入力値をスキーマで検証・変換する                                             | `{ issues: StandardSchemaV1.Issue[] }` |
-| 2   | `load`            | `modelRules(...).load({ requires, fetch })` で既存データを取得する           | `fetch` が返した失敗の値               |
-| 3   | `merge`           | 既存データに検証済み入力をマージして `next` を作り、スキーマ全体で検証する   | `{ issues: StandardSchemaV1.Issue[] }` |
-| 4   | `rule`            | `ruleset` に並べたルールを順に評価・実行する                                 | 失敗したルールの `check` が返した値    |
-| 5   | `seal` / `output` | 保存・削除は検証済みラッパーを生成。アクションは `output` で結果を組み立てる | なし                                   |
+| 順  | ステップ          | 内容                                                                                                       | 失敗時の `error`                       |
+| --- | ----------------- | ---------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| 1   | `input`           | 入力値をスキーマで検証・変換する                                                                           | `{ issues: StandardSchemaV1.Issue[] }` |
+| 2   | `load`            | `modelRules(...).load({ requires, fetch })` で既存データを取得する                                         | `fetch` が返した失敗の値               |
+| 3   | `merge`           | 既存データに検証済み入力をマージして `next` を作り、スキーマ全体で検証する                                 | `{ issues: StandardSchemaV1.Issue[] }` |
+| 4   | `rule`            | `ruleset` に並べたルールを順に評価・実行する。`emit` はイベントを溜める                                    | 失敗したルールの `check` が返した値    |
+| 5   | `seal` / `output` | 保存・削除は検証済みラッパーを生成。アクションは `output` で結果を組み立てる。溜めたイベントと組にして返す | なし                                   |
 
 - **`create`**: `load` をスキップします（`pre` は `null`）。`input` では key と value をそれぞれのスキーマ全体で検証し、両方の問題をまとめて返します。`id` やスキーマにない未知のキーがあると失敗します。
 - **`update`**: 全 5 ステップを実行します。`input` では key をスキーマ全体で、value の差分を入力に含まれた項目だけ各項目のスキーマで検証します（未知のキーがあれば失敗します）。不正な入力は、ここで `load` の前に失敗します。`load` の `fetch` には key だけを渡します。`merge` の後に、重ねた値を value のスキーマ全体で検証し、項目をまたぐ検証に違反していれば `input` の失敗を返します。
@@ -624,14 +763,14 @@ flowchart LR
 
 ### 失敗の型 (`Failure`)
 
-失敗時は、どのステップで失敗したかを表す `step` と固有の `error` を持つ判別可能なユニオン型が返ります。
+失敗時は、どのステップで失敗したかを表す `step` と固有の `error` を持つ判別可能なユニオン型が返ります。ルールで失敗したときの `step` はそのルールの `id` で、`description` は含みません。
 
 ```ts
 type Failure =
   | { step: "input"; error: { issues: StandardSchemaV1.Issue[] } }
   | { step: "load"; error: "ARTICLE_NOT_FOUND" | InfraError }
-  | { step: "著者とレビュアーは別の人"; error: "SAME_AUTHOR_AND_REVIEWER" }
-  | { step: "レビュアーが存在する"; error: "USER_NOT_FOUND" | InfraError }
+  | { step: "reviewerIsNotAuthor"; error: "SAME_AUTHOR_AND_REVIEWER" }
+  | { step: "reviewerExists"; error: "USER_NOT_FOUND" | InfraError }
   | ...;
 ```
 
@@ -642,7 +781,7 @@ type Failure =
 
 ## 検証済みの値を取り出す (`open`)
 
-`Persistable` / `Deletable` / `Decision` は、パイプラインを通過したことを証明する不透明（opaque）なオブジェクトです。中身は `open()` でのみ取り出せます。
+`Persistable` / `Deletable` / `Decision` は、パイプラインを通過したことを証明する不透明（opaque）なオブジェクトです。メソッドの成功の値の `persistable` / `deletable` / `decision` に入っており、中身は `open()` でのみ取り出せます（`open(r.value.persistable)`）。並んで返る `events` は封をしていないデータで、`open()` は要りません。
 
 ```ts
 import { open } from "domain-rules";
@@ -669,7 +808,7 @@ const save = (p: Persistable<typeof article, "create" | "update">) => {
 
 ## ルール構成を確認する (`plan`)
 
-`plan()` を使うと、実行せずにルールパイプラインの構成（ルール名・`when` の説明・利用するポート名）を取得できます。
+`plan()` を使うと、実行せずにルールパイプラインの構成（ルールの `id` と `description`・`when` の説明・利用するポート名）を取得できます。
 
 ```ts
 import { plan } from "domain-rules";
@@ -677,7 +816,9 @@ import { plan } from "domain-rules";
 plan(articleRules);
 // {
 //   load: { ports: ["findArticleById"] },
-//   save: [{ name: "記事を変更できるのはメンバーだけ", when: { kind: "always" }, ports: [] }, ...],
+//   save: [{ id: "memberOnly", description: "記事を変更できるのはメンバーだけ", when: { kind: "always" }, ports: [] }, ...],
 //   delete: [...]
 // }
 ```
+
+`emit` も、置いた位置に `id`・`description`・`when` を持つ要素として並びます（port を受け取らないので `ports` は常に空です）。
