@@ -24,8 +24,9 @@ test("immutable は作成時と、指定していない項目だけが変わっ�
   expect(fixed.when({ pre: item, next: { ...item, title: "u" } })).toBe(false);
 });
 
-test("immutable の名前と説明は、指定した項目を表す", () => {
-  expect(fixed.name).toBe("作成後に変えられない項目: slug, n");
+test("immutable の識別子は項目によらず同じで、説明は指定した項目を表す", () => {
+  expect(fixed.id).toBe("immutable");
+  expect(fixed.description).toBe("作成後に変えられない項目: slug, n");
   expect(fixed.when.description).toEqual({
     kind: "and",
     conditions: [

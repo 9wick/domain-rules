@@ -14,7 +14,8 @@ export const immutable = <T extends string, S extends { readonly pre: object | n
 ) => {
   const changedField = (s: S) => fields.find((f) => !Object.is(valueOf(s.pre, f), valueOf(s.next, f)));
   return rule(track, {
-    name: `作成後に変えられない項目: ${fields.join(", ")}` as const,
+    id: "immutable",
+    description: `作成後に変えられない項目: ${fields.join(", ")}`,
     // 説明は and(not(onCreate), or(changed(...))) と同じ形にする。判定は項目の数によらず1つの関数で書く
     when: whenOf<"save", S>(
       {
@@ -34,10 +35,13 @@ export const immutable = <T extends string, S extends { readonly pre: object | n
 };
 
 // 何も確かめずに通す rule。条件なしで削除してよい model の delete に ruleset(alwaysAllow) として渡す
-export const alwaysAllow: Rule<TrackKind, string, "常に許可", unknown, Always, void, never, NoPorts> = Object.freeze({
-  kind: "rule",
-  name: "常に許可",
-  ports: [],
-  when: always,
-  run: async () => Result.succeed(),
-});
+export const alwaysAllow: Rule<TrackKind, string, "alwaysAllow", unknown, Always, void, never, NoPorts> = Object.freeze(
+  {
+    kind: "rule",
+    id: "alwaysAllow",
+    description: "常に許可",
+    ports: [],
+    when: always,
+    run: async () => Result.succeed(),
+  },
+);

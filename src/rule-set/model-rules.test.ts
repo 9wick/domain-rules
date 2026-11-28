@@ -26,7 +26,8 @@ const item = defineModel<Operator>()({
 });
 const findItem = port("findItem").of<(id: string) => { id: string; n: number }>();
 const assignId = rule(item.onSave, {
-  name: "id を付ける",
+  id: "assignId",
+  description: "id を付ける",
   when: always,
   check: ({ pre }) => Result.succeed({ next: { id: pre?.id ?? "new" } }),
 });
@@ -62,7 +63,8 @@ test("load と save を書くと create・update・upsert を、delete を書く
 test("ports は load と、save・delete の線路が使う port を持つ", () => {
   const audit = port("audit").of<() => void>();
   const audited = rule(item.onDelete, {
-    name: "監査",
+    id: "audit",
+    description: "監査",
     requires: { audit },
     when: always,
     check: () => Result.succeed(),
@@ -90,7 +92,8 @@ test("delete の線路は呼び出し時の入力を受け取り、given で指�
   const findOwned = port("findOwned").of<(id: string) => { id: string; owner: string; n: number }>();
   const ownedStored = { id: "i1", owner: "alice", n: 1 };
   const sameOwner = rule(owned.onDelete, {
-    name: "指定した owner が既存の値と同じ",
+    id: "sameOwner",
+    description: "指定した owner が既存の値と同じ",
     when: given("owner"),
     check: ({ pre, input }) => (input.owner === pre.owner ? Result.succeed() : Result.fail("OWNER_MISMATCH" as const)),
   });
@@ -104,7 +107,7 @@ test("delete の線路は呼び出し時の入力を受け取り、given で指�
   const matched = await remove({ input: { id: "i1", owner: "alice" }, actor: operator });
   expect(open(Result.unwrap(matched)).pre).toEqual(ownedStored);
   const mismatched = await remove({ input: { id: "i1", owner: "bob" }, actor: operator });
-  expect(Result.unwrapError(mismatched)).toEqual({ step: "指定した owner が既存の値と同じ", error: "OWNER_MISMATCH" });
+  expect(Result.unwrapError(mismatched)).toEqual({ step: "sameOwner", error: "OWNER_MISMATCH" });
 });
 
 test("取得ステップは id 以外の値も取得条件に使え、その失敗が load の失敗になる", async () => {
@@ -170,7 +173,8 @@ test("文字列を Date に変換し、Date もそのまま受け付ける schem
   });
   const find = port("findAppointment").of<(id: string) => { id: string; date: Date }>();
   const keepId = rule(appointment.onSave, {
-    name: "id",
+    id: "id",
+    description: "id",
     when: always,
     check: ({ pre }) => Result.succeed({ next: { id: pre?.id ?? "new" } }),
   });

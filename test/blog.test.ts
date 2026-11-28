@@ -109,7 +109,7 @@ describe("create", () => {
   test("最初に失敗した rule で止まり、後ろの rule は実行しない", async () => {
     const { domain, calls } = setup();
     const r = await domain.article.create({ input: newArticle, actor: guest });
-    expect(Result.unwrapError(r)).toEqual({ step: "記事を変更できるのはメンバーだけ", error: "NOT_MEMBER" });
+    expect(Result.unwrapError(r)).toEqual({ step: "memberOnly", error: "NOT_MEMBER" });
     expect(calls).toEqual([]);
   });
 
@@ -125,13 +125,13 @@ describe("create", () => {
       ],
     });
     const r = await failing.article.create({ input: newArticle, actor: author });
-    expect(Result.unwrapError(r)).toEqual({ step: "レビュアーが存在する", error: "USER_NOT_FOUND" });
+    expect(Result.unwrapError(r)).toEqual({ step: "reviewerExists", error: "USER_NOT_FOUND" });
   });
 
   test("check の失敗の値はそのまま返る", async () => {
     const { domain } = setup({ articles: [{ ...draft, slug: "new" }] });
     const r = await domain.article.create({ input: newArticle, actor: author });
-    expect(Result.unwrapError(r)).toEqual({ step: "slug はブログ内で一意", error: "DUPLICATED_SLUG" });
+    expect(Result.unwrapError(r)).toEqual({ step: "uniqueSlug", error: "DUPLICATED_SLUG" });
   });
 });
 
@@ -166,16 +166,16 @@ describe("update", () => {
   test("when が値の変化を見て rule を当てる", async () => {
     const { domain } = setup();
     const byAuthor = await domain.article.update({ input: { id: "art_1", status: "PUBLISHED" }, actor: author });
-    expect(Result.unwrapError(byAuthor)).toEqual({ step: "公開できるのは今のレビュアーだけ", error: "NOT_REVIEWER" });
+    expect(Result.unwrapError(byAuthor)).toEqual({ step: "publishByReviewer", error: "NOT_REVIEWER" });
     const back = setup({ existing: { ...draft, status: "PUBLISHED" } });
     const archived = await back.domain.article.update({ input: { id: "art_1", status: "DRAFT" }, actor: author });
     expect(Result.unwrapError(archived)).toEqual({
-      step: "status は許可された変化だけ",
+      step: "allowedStatusTransition",
       error: "STATUS_CHANGE_NOT_ALLOWED",
     });
     const locked = await back.domain.article.update({ input: { id: "art_1", slug: "other" }, actor: author });
     expect(Result.unwrapError(locked)).toEqual({
-      step: "公開後の slug を変えられるのは管理者だけ",
+      step: "slugChangeAfterPublishByAdmin",
       error: "SLUG_LOCKED",
     });
     const admin = await back.domain.article.update({
@@ -189,7 +189,7 @@ describe("update", () => {
     const { domain } = setup();
     const r = await domain.article.update({ input: { id: "art_1", authorId: "usr_other" }, actor: author });
     expect(Result.unwrapError(r)).toEqual({
-      step: "作成後に変えられない項目: blogId, authorId",
+      step: "immutable",
       error: { code: "IMMUTABLE_FIELD_CHANGED", field: "authorId" },
     });
   });
@@ -224,7 +224,7 @@ describe("delete", () => {
   test("下書きでなければ失敗する", async () => {
     const { domain } = setup({ existing: { ...draft, status: "PUBLISHED" } });
     const r = await domain.article.delete({ input: { id: "art_1" }, actor: author });
-    expect(Result.unwrapError(r)).toEqual({ step: "削除できるのは下書きだけ", error: "NOT_DRAFT" });
+    expect(Result.unwrapError(r)).toEqual({ step: "deleteOnlyDraft", error: "NOT_DRAFT" });
   });
 });
 
@@ -238,7 +238,7 @@ describe("decide", () => {
   test("rule の失敗で止まる", async () => {
     const { domain } = setup({ existing: null });
     const r = await domain.previewArticle.decide({ input: { blogId: "blg_1", articleId: "art_1" }, actor: reviewer });
-    expect(Result.unwrapError(r)).toEqual({ step: "対象の記事が存在する", error: "ARTICLE_NOT_FOUND" });
+    expect(Result.unwrapError(r)).toEqual({ step: "articleExists", error: "ARTICLE_NOT_FOUND" });
   });
 });
 
@@ -272,12 +272,18 @@ describe("bind", () => {
 describe("plan", () => {
   test("線路を実行せずに表示する", () => {
     const p = plan(articleRules);
-    expect(p.save?.[0]).toEqual({ name: "記事を変更できるのはメンバーだけ", when: { kind: "always" }, ports: [] });
-    expect(p.save?.find((r) => r.name === "slug はブログ内で一意")).toEqual({
-      name: "slug はブログ内で一意",
+    expect(p.save?.[0]).toEqual({
+      id: "memberOnly",
+      description: "記事を変更できるのはメンバーだけ",
+      when: { kind: "always" },
+      ports: [],
+    });
+    expect(p.save?.find((r) => r.id === "uniqueSlug")).toEqual({
+      id: "uniqueSlug",
+      description: "slug はブログ内で一意",
       when: { kind: "changed", field: "slug" },
       ports: ["findArticlesInBlog"],
     });
-    expect(p.delete?.map((r) => r.name)).toEqual(["記事を変更できるのはメンバーだけ", "削除できるのは下書きだけ"]);
+    expect(p.delete?.map((r) => r.id)).toEqual(["memberOnly", "deleteOnlyDraft"]);
   });
 });

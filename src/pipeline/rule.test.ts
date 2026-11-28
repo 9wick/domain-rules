@@ -12,7 +12,8 @@ const track = new Track<"save", "item", S>("save", "item");
 
 test("run は状態を check に渡し、check の Result を返す", async () => {
   const positive = rule(track, {
-    name: "正の数",
+    id: "positive",
+    description: "正の数",
     when: always,
     check: ({ n }) => (n > 0 ? Result.succeed({ checked: true }) : Result.fail("NOT_POSITIVE")),
   });
@@ -25,7 +26,8 @@ test("check は requires の port を、1回の呼び出しに束ねた関数で
   const failing = port("failing").of<() => number, "DOWN">();
   const context = new Context([failing.provider(() => Result.fail("DOWN"))]);
   const mapped = rule(track, {
-    name: "port を使う",
+    id: "usePort",
+    description: "port を使う",
     requires: { failing },
     when: always,
     check: async (_, { failing }) => {
@@ -39,7 +41,8 @@ test("check は requires の port を、1回の呼び出しに束ねた関数で
 
 test("check が throw した例外は握りつぶさない", async () => {
   const boom = rule(track, {
-    name: "boom",
+    id: "boom",
+    description: "boom",
     when: always,
     check: (): Result.Result<void, never> => {
       throw new Error("bug");
@@ -50,7 +53,8 @@ test("check が throw した例外は握りつぶさない", async () => {
 
 test("when は判定と説明を保ち、当たらなければ状態を進めない step を持つ", async () => {
   const onlyPositive = rule(track, {
-    name: "正のときだけ",
+    id: "onlyPositive",
+    description: "正のときだけ",
     when: ({ n }: S) => n > 0,
     check: () => Result.succeed({ checked: true }),
   });
@@ -70,7 +74,8 @@ test("check の safeTry は、yield* した port の失敗で止まり、その�
   ]);
   const events: string[] = [];
   const stops = rule(track, {
-    name: "失敗で止まる",
+    id: "stopOnFailure",
+    description: "失敗で止まる",
     requires: { failing, double },
     when: always,
     check: (_, __, { safeTry }) =>
@@ -90,7 +95,8 @@ test("check の safeTry は、最後まで進んだら body が返した Result 
   const double = port("double").of<(n: number) => number>();
   const context = new Context([double.provider((n) => Result.succeed(n * 2))]);
   const r = rule(track, {
-    name: "最後まで進む",
+    id: "reachEnd",
+    description: "最後まで進む",
     requires: { double },
     when: ({ n }: S) => n !== 0,
     check: ({ n }, _, { safeTry }) =>

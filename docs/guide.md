@@ -158,7 +158,7 @@ export const newArticleId = port("newArticleId").of<() => ArticleIdNew, InfraErr
 
 ## ルールを定義する (`rule`)
 
-`rule` はパイプラインの 1 ステップを定義します。外部ポートを使う場合は `requires` に指定し、`check` の第 2 引数から受け取ります(第 3 引数の [`safeTry`](#port-の結果を-yield-で取り出す-safetry) でも受け取れます)。
+`rule` はパイプラインの 1 ステップを定義します。`id` は失敗の型の `step` に入る判別用の識別子で、`description` は人が読むための説明です。説明の文言を直しても `id` を変えなければ、呼び出し側の分岐はそのまま動きます。`id` はログやエラーコードとして扱いやすい ASCII の名前にしておくことをおすすめします。外部ポートを使う場合は `requires` に指定し、`check` の第 2 引数から受け取ります(第 3 引数の [`safeTry`](#port-の結果を-yield-で取り出す-safetry) でも受け取れます)。
 
 ```ts
 import { rule, always, onCreate, changed, next, pre, and, not } from "domain-rules";
@@ -166,13 +166,15 @@ import { rule, always, onCreate, changed, next, pre, and, not } from "domain-rul
 import { Result } from "@praha/byethrow";
 
 export const authorIsNotReviewer = rule(article.onSave, {
-  name: "著者とレビュアーは別の人",
+  id: "reviewerIsNotAuthor",
+  description: "著者とレビュアーは別の人",
   when: always,
   check: (s) => (s.next.authorId !== s.next.reviewerId ? Result.succeed() : Result.fail("SAME_AUTHOR_AND_REVIEWER")),
 });
 
 export const uniqueSlugInBlog = rule(article.onSave, {
-  name: "slug はブログ内で一意",
+  id: "uniqueSlug",
+  description: "slug はブログ内で一意",
   requires: { findArticlesInBlog },
   when: changed("slug"),
   check: async (s, { findArticlesInBlog }) => {
@@ -186,13 +188,15 @@ export const uniqueSlugInBlog = rule(article.onSave, {
 
 // savedWithDefaults は status に既定値が入った状態（後述の「適用条件を書く」を参照）
 export const onlyReviewerPublishes = rule(savedWithDefaults, {
-  name: "公開できるのは今のレビュアーだけ",
+  id: "publishByReviewer",
+  description: "公開できるのは今のレビュアーだけ",
   when: changed("status", { pre: "DRAFT", next: "PUBLISHED" }),
   check: (s) => (s.actor.id === s.pre?.reviewerId ? Result.succeed() : Result.fail("NOT_REVIEWER")),
 });
 
 export const onlyDraftIsDeletable = rule(article.onDelete, {
-  name: "削除できるのは下書きだけ",
+  id: "deleteOnlyDraft",
+  description: "削除できるのは下書きだけ",
   when: not(pre(isDraft)),
   check: () => Result.fail("NOT_DRAFT"),
 });
@@ -204,7 +208,8 @@ port の `Result` を `if (Result.isFailure(...)) return ...` で毎回取り出
 
 ```ts
 export const uniqueSlugInBlog = rule(article.onSave, {
-  name: "slug はブログ内で一意",
+  id: "uniqueSlug",
+  description: "slug はブログ内で一意",
   requires: { findArticlesInBlog },
   when: changed("slug"),
   check: (s, _, { safeTry }) =>
@@ -232,12 +237,12 @@ import { immutable } from "domain-rules";
 export const articleImmutableFields = immutable(article.onSave, ["blogId", "authorId"]);
 ```
 
-`immutable` が返すルールの名前は `"作成後に変えられない項目: blogId, authorId"` になり、更新時に該当フィールドが変わると `{ code: "IMMUTABLE_FIELD_CHANGED", field: "blogId" }` で失敗します。
+`immutable` が返すルールの `id` は指定した項目によらず `"immutable"`、`description` は `"作成後に変えられない項目: blogId, authorId"` になり、更新時に該当フィールドが変わると `{ code: "IMMUTABLE_FIELD_CHANGED", field: "blogId" }` で失敗します。
 
-条件なしで削除を許可するモデルには、`.delete(ruleset(alwaysAllow))` を指定できます。
+条件なしで削除を許可するモデルには、`.delete(ruleset(alwaysAllow))` を指定できます。`alwaysAllow` の `id` は `"alwaysAllow"` です。
 
 > **ルール定義オブジェクトを変数に切り出すときの注意**:
-> `const def = { name: "..." as const, ... }` のようにオブジェクトリテラルを別の変数に置いて `rule()` へ渡す場合は、`name` に `as const` を付けてください。付けないと `name` の型が `string` に広がり、失敗型の `step` がリテラル型で判別できなくなります（`rule()` にインラインで渡す場合は不要です）。
+> `const def = { id: "..." as const, ... }` のようにオブジェクトリテラルを別の変数に置いて `rule()` へ渡す場合は、`id` に `as const` を付けてください。付けないと `id` の型が `string` に広がり、失敗型の `step` がリテラル型で判別できなくなります（`rule()` にインラインで渡す場合は不要です）。
 
 ---
 
@@ -258,7 +263,8 @@ type Defaulted = { readonly next: { readonly status: ArticleStatus; readonly app
 const savedWithDefaults = article.onSave.assuming<Defaulted>();
 
 export const articleDefaults = rule(article.onSave, {
-  name: "作成時に省略した status は下書き、approvedAt は未承認",
+  id: "createDefaults",
+  description: "作成時に省略した status は下書き、approvedAt は未承認",
   when: always,
   check: ({ next }) =>
     Result.succeed({ next: { status: next.status ?? "DRAFT", approvedAt: next.approvedAt ?? null } }),
@@ -306,7 +312,8 @@ export const statusChangesAreAllowed = rule(savedWithDefaults, { ... });
 
 ```ts
 export const reviewerExists = rule(article.onSave, {
-  name: "レビュアーが存在する",
+  id: "reviewerExists",
+  description: "レビュアーが存在する",
   requires: { requireExistingUser },
   when: always,
   check: async ({ pre, next }, { requireExistingUser }) => {
@@ -321,7 +328,8 @@ export const reviewerExists = rule(article.onSave, {
 });
 
 export const blogExists = rule(article.onSave, {
-  name: "ブログが存在する",
+  id: "blogExists",
+  description: "ブログが存在する",
   requires: { findBlog },
   when: always,
   check: async ({ pre, next }, { findBlog }) => {
@@ -336,7 +344,8 @@ export const blogExists = rule(article.onSave, {
 
 // 前段の blogExists で blogId が BlogIdExisted に昇格していることを前提にする
 export const blogAcceptsPosts = rule(article.onSave.assuming<Defaulted & { next: { blogId: BlogIdExisted } }>(), {
-  name: "投稿を受け付けているブログ",
+  id: "blogAcceptsPosts",
+  description: "投稿を受け付けているブログ",
   requires: { findBlog },
   when: changed("status", { next: "PUBLISHED" }),
   check: async ({ next }, { findBlog }) => {
@@ -355,14 +364,16 @@ export const blogAcceptsPosts = rule(article.onSave.assuming<Defaulted & { next:
 ```ts
 // 既存記事なら既存の id を引き継ぐ
 export const existingArticleId = rule(article.onSave, {
-  name: "既存の記事の id",
+  id: "keepExistingId",
+  description: "既存の記事の id",
   when: always,
   check: ({ pre }) => Result.succeed({ next: { id: pre?.id } }),
 });
 
 // 未確定（新規作成）なら採番ポートから id を発行する
 export const articleIdAssigned = rule(article.onSave.assuming<{ next: { id: Article["id"] | undefined } }>(), {
-  name: "新しい記事に id を付ける",
+  id: "assignNewId",
+  description: "新しい記事に id を付ける",
   requires: { newArticleId },
   when: always,
   check: async ({ next }, { newArticleId }) => {
@@ -377,7 +388,8 @@ export const articleIdAssigned = rule(article.onSave.assuming<{ next: { id: Arti
 export const isMember = (actor: AppActor): actor is MemberActor => actor.role === "MEMBER" || actor.role === "ADMIN";
 
 const memberOnly = {
-  name: "記事を変更できるのはメンバーだけ" as const,
+  id: "memberOnly" as const,
+  description: "記事を変更できるのはメンバーだけ",
   when: always,
   check: ({ actor }: { actor: AppActor }) => (isMember(actor) ? Result.succeed({ actor }) : Result.fail("NOT_MEMBER")),
 };
@@ -453,7 +465,8 @@ export const findArticle = cached(
 );
 
 export const targetArticleExists = rule(previewArticle.onDecide, {
-  name: "対象の記事が存在する",
+  id: "articleExists",
+  description: "対象の記事が存在する",
   requires: { findArticle },
   when: always,
   check: async ({ input }, { findArticle }) => {
@@ -464,13 +477,15 @@ export const targetArticleExists = rule(previewArticle.onDecide, {
 });
 
 export const notArchived = rule(previewArticle.onDecide.assuming<{ article: ExistingArticle }>(), {
-  name: "アーカイブ済みの記事はプレビューできない",
+  id: "noPreviewWhenArchived",
+  description: "アーカイブ済みの記事はプレビューできない",
   when: always,
   check: ({ article }) => (article.status !== "ARCHIVED" ? Result.succeed() : Result.fail("ARCHIVED")),
 });
 
 export const canPreview = rule(previewArticle.onDecide.assuming<{ article: ExistingArticle }>(), {
-  name: "プレビューできるのはメンバーの著者かレビュアーだけ",
+  id: "previewByAuthorOrReviewer",
+  description: "プレビューできるのはメンバーの著者かレビュアーだけ",
   when: always,
   check: ({ actor, article }) => {
     if (!isMember(actor)) return Result.fail("NOT_ALLOWED");
@@ -624,14 +639,14 @@ flowchart LR
 
 ### 失敗の型 (`Failure`)
 
-失敗時は、どのステップで失敗したかを表す `step` と固有の `error` を持つ判別可能なユニオン型が返ります。
+失敗時は、どのステップで失敗したかを表す `step` と固有の `error` を持つ判別可能なユニオン型が返ります。ルールで失敗したときの `step` はそのルールの `id` で、`description` は含みません。
 
 ```ts
 type Failure =
   | { step: "input"; error: { issues: StandardSchemaV1.Issue[] } }
   | { step: "load"; error: "ARTICLE_NOT_FOUND" | InfraError }
-  | { step: "著者とレビュアーは別の人"; error: "SAME_AUTHOR_AND_REVIEWER" }
-  | { step: "レビュアーが存在する"; error: "USER_NOT_FOUND" | InfraError }
+  | { step: "reviewerIsNotAuthor"; error: "SAME_AUTHOR_AND_REVIEWER" }
+  | { step: "reviewerExists"; error: "USER_NOT_FOUND" | InfraError }
   | ...;
 ```
 
@@ -669,7 +684,7 @@ const save = (p: Persistable<typeof article, "create" | "update">) => {
 
 ## ルール構成を確認する (`plan`)
 
-`plan()` を使うと、実行せずにルールパイプラインの構成（ルール名・`when` の説明・利用するポート名）を取得できます。
+`plan()` を使うと、実行せずにルールパイプラインの構成（ルールの `id` と `description`・`when` の説明・利用するポート名）を取得できます。
 
 ```ts
 import { plan } from "domain-rules";
@@ -677,7 +692,7 @@ import { plan } from "domain-rules";
 plan(articleRules);
 // {
 //   load: { ports: ["findArticleById"] },
-//   save: [{ name: "記事を変更できるのはメンバーだけ", when: { kind: "always" }, ports: [] }, ...],
+//   save: [{ id: "memberOnly", description: "記事を変更できるのはメンバーだけ", when: { kind: "always" }, ports: [] }, ...],
 //   delete: [...]
 // }
 ```
