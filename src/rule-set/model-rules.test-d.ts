@@ -46,8 +46,8 @@ test("メソッドの actor は domain の actor の型で、線路が昇格さ�
   expectTypeOf(update).parameter(0).toHaveProperty("actor").toEqualTypeOf<Operator>();
   const r = await update({ input: { id: "i1" }, actor: { name: "op" } });
   if (Result.isSuccess(r)) {
-    expectTypeOf(open(r.value).actor).not.toBeNever();
-    expectTypeOf(open(r.value).actor).toExtend<Operator & { readonly member: true }>();
+    expectTypeOf(open(r.value.persistable).actor).not.toBeNever();
+    expectTypeOf(open(r.value.persistable).actor).toExtend<Operator & { readonly member: true }>();
   }
 });
 

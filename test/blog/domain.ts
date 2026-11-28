@@ -8,6 +8,7 @@ import {
   changed,
   defaultFields,
   domainDefinitionKit,
+  emit,
   immutable,
   modelRules,
   next,
@@ -248,6 +249,30 @@ export const articleIdAssigned = rule(article.onSave.assuming<{ next: { id: Arti
   },
 });
 
+// 公開されたことをレビュアーに知らせる。宛先のアドレスは配送する側が reviewerId から引く
+export const articlePublished = emit(
+  savedWithDefaults.assuming<{ next: { id: Article["id"]; reviewerId: UserIdExisted } }>(),
+  {
+    id: "articlePublished",
+    description: "公開されたらレビュアーに知らせる",
+    when: changed("status", { pre: "DRAFT", next: "PUBLISHED" }),
+    event: (s) =>
+      ({
+        type: "ARTICLE_PUBLISHED",
+        articleId: s.next.id,
+        reviewerId: s.next.reviewerId,
+        publishedBy: s.actor.id,
+      }) as const,
+  },
+);
+
+export const articleDeleted = emit(article.onDelete, {
+  id: "articleDeleted",
+  description: "削除されたら著者に知らせる",
+  when: always,
+  event: (s) => ({ type: "ARTICLE_DELETED", articleId: s.pre.id, authorId: s.pre.authorId }) as const,
+});
+
 export const isMember = (a: AppActor): a is MemberActor => a.role === "MEMBER" || a.role === "ADMIN";
 
 const memberOnly = {
@@ -285,9 +310,10 @@ export const articleRules = modelRules(article)
       .add(publishedIsApproved)
       .add(blogAcceptsPosts)
       .add(existingArticleId)
-      .add(articleIdAssigned),
+      .add(articleIdAssigned)
+      .add(articlePublished),
   )
-  .delete(ruleset(memberCanDelete).add(onlyDraftIsDeletable));
+  .delete(ruleset(memberCanDelete).add(onlyDraftIsDeletable).add(articleDeleted));
 
 export const previewArticle = action({
   name: "previewArticle",

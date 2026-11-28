@@ -79,7 +79,7 @@ describe("create", () => {
   test("検証して既定値を入れ、昇格させた値に封をする", async () => {
     const { domain } = setup();
     const r = await domain.article.create({ input: newArticle, actor: author });
-    const { pre, next, actor } = open(Result.unwrap(r));
+    const { pre, next, actor } = open(Result.unwrap(r).persistable);
     expect(pre).toBeNull();
     expect(next).toEqual({ ...newArticle, id: "art_new", status: "DRAFT", approvedAt: null });
     expect(actor).toBe(author);
@@ -139,7 +139,7 @@ describe("update", () => {
   test("入力にない項目は既存の値を残し、変わらない値は取得しない", async () => {
     const { domain, calls } = setup();
     const r = await domain.article.update({ input: { id: "art_1", slug: "renamed" }, actor: author });
-    const { pre, next } = open(Result.unwrap(r));
+    const { pre, next } = open(Result.unwrap(r).persistable);
     expect(pre).toEqual(draft);
     expect(next).toEqual({ ...draft, slug: "renamed" });
     expect(calls).toEqual(["findArticleById(art_1)", "findArticlesInBlog(blg_1)"]);
@@ -148,7 +148,7 @@ describe("update", () => {
   test("null は空にする", async () => {
     const { domain } = setup();
     const r = await domain.article.update({ input: { id: "art_1", approvedAt: null }, actor: author });
-    expect(open(Result.unwrap(r)).next.approvedAt).toBeNull();
+    expect(open(Result.unwrap(r).persistable).next.approvedAt).toBeNull();
   });
 
   test("入力にある項目だけを検証する", async () => {
@@ -198,10 +198,10 @@ describe("update", () => {
 describe("upsert", () => {
   test("id がなければ作成、あれば更新", async () => {
     const { domain } = setup();
-    const created = open(Result.unwrap(await domain.article.upsert({ input: newArticle, actor: author })));
+    const created = open(Result.unwrap(await domain.article.upsert({ input: newArticle, actor: author })).persistable);
     expect(created.pre).toBeNull();
     const updated = open(
-      Result.unwrap(await domain.article.upsert({ input: { id: "art_1", slug: "s" }, actor: author })),
+      Result.unwrap(await domain.article.upsert({ input: { id: "art_1", slug: "s" }, actor: author })).persistable,
     );
     expect(updated.pre).toEqual(draft);
   });
@@ -216,7 +216,9 @@ describe("upsert", () => {
 describe("delete", () => {
   test("削除の rule を通り、削除する対象に封をする", async () => {
     const { domain } = setup();
-    const { pre, actor } = open(Result.unwrap(await domain.article.delete({ input: { id: "art_1" }, actor: author })));
+    const { pre, actor } = open(
+      Result.unwrap(await domain.article.delete({ input: { id: "art_1" }, actor: author })).deletable,
+    );
     expect(pre).toEqual(draft);
     expect(actor).toBe(author);
   });
@@ -232,7 +234,7 @@ describe("decide", () => {
   test("output が組み立てた値を返す", async () => {
     const { domain } = setup();
     const r = await domain.previewArticle.decide({ input: { blogId: "blg_1", articleId: "art_1" }, actor: reviewer });
-    expect(open(Result.unwrap(r)).value).toEqual({ article: draft, viewerRole: "reviewer" });
+    expect(open(Result.unwrap(r).decision).value).toEqual({ article: draft, viewerRole: "reviewer" });
   });
 
   test("rule の失敗で止まる", async () => {
@@ -242,10 +244,41 @@ describe("decide", () => {
   });
 });
 
+describe("イベント", () => {
+  test("公開したときだけ、封をした値と並べてイベントを返す", async () => {
+    const { domain } = setup();
+    const published = Result.unwrap(
+      await domain.article.update({ input: { id: "art_1", status: "PUBLISHED" }, actor: reviewer }),
+    );
+    expect(published.events).toEqual([
+      { type: "ARTICLE_PUBLISHED", articleId: "art_1", reviewerId: "usr_reviewer", publishedBy: "usr_reviewer" },
+    ]);
+    expect(open(published.persistable).next.status).toBe("PUBLISHED");
+    const edited = Result.unwrap(await domain.article.update({ input: { id: "art_1", slug: "other" }, actor: author }));
+    expect(edited.events).toEqual([]);
+  });
+
+  test("rule で失敗すれば、イベントも返さない", async () => {
+    const { domain } = setup({ blog: { ...openBlog, acceptsPosts: false } });
+    const r = await domain.article.update({ input: { id: "art_1", status: "PUBLISHED" }, actor: reviewer });
+    expect(Result.unwrapError(r)).toEqual({ step: "blogAcceptsPosts", error: "BLOG_CLOSED" });
+  });
+
+  test("削除と判定も events を返す", async () => {
+    const { domain } = setup();
+    const removed = Result.unwrap(await domain.article.delete({ input: { id: "art_1" }, actor: author }));
+    expect(removed.events).toEqual([{ type: "ARTICLE_DELETED", articleId: "art_1", authorId: "usr_author" }]);
+    const decided = Result.unwrap(
+      await domain.previewArticle.decide({ input: { blogId: "blg_1", articleId: "art_1" }, actor: reviewer }),
+    );
+    expect(decided.events).toEqual([]);
+  });
+});
+
 describe("封をした値", () => {
   test("作り直した値は open できない", async () => {
     const { domain } = setup();
-    const p = Result.unwrap(await domain.article.create({ input: newArticle, actor: author }));
+    const p = Result.unwrap(await domain.article.create({ input: newArticle, actor: author })).persistable;
     // @ts-expect-error 作り直した値は封をした値の型にならない
     expect(() => open({ ...p })).toThrow("open: not a sealed value created by a method");
   });
@@ -284,6 +317,12 @@ describe("plan", () => {
       when: { kind: "changed", field: "slug" },
       ports: ["findArticlesInBlog"],
     });
-    expect(p.delete?.map((r) => r.id)).toEqual(["memberOnly", "deleteOnlyDraft"]);
+    expect(p.save?.at(-1)).toEqual({
+      id: "articlePublished",
+      description: "公開されたらレビュアーに知らせる",
+      when: { kind: "changed", field: "status", pre: "DRAFT", next: "PUBLISHED" },
+      ports: [],
+    });
+    expect(p.delete?.map((r) => r.id)).toEqual(["memberOnly", "deleteOnlyDraft", "articleDeleted"]);
   });
 });

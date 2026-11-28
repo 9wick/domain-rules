@@ -38,14 +38,14 @@ const items = modelRules(item).save(ruleset(stamped));
 test("rule の組の名前ごとに、provider の実装と時計で動くメソッドを返す", async () => {
   const domain = bind([items], { providers: [provide.value(newId, "i1"), provide.value(clock, 42)] });
   const r = await domain.item.create({ input: {}, actor: "op" });
-  expect(open(Result.unwrap(r)).next).toEqual({ id: "i1@42" });
+  expect(open(Result.unwrap(r).persistable).next).toEqual({ id: "i1@42" });
 });
 
 test("bind ごとに provider を分ける", async () => {
   const a = bind([items], { providers: [provide.value(newId, "a"), provide.value(clock, 0)] });
   const b = bind([items], { providers: [provide.value(newId, "b"), provide.value(clock, 0)] });
   const ids = [await a.item.create({ input: {}, actor: "op" }), await b.item.create({ input: {}, actor: "op" })].map(
-    (r) => open(Result.unwrap(r)).next.id,
+    (r) => open(Result.unwrap(r).persistable).next.id,
   );
   expect(ids).toEqual(["a@0", "b@0"]);
 });

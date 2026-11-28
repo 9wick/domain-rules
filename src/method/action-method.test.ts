@@ -14,11 +14,11 @@ const ctx = { invocation: () => invocationOf(new Context([]), 7) };
 
 // 受け取った状態を記録し、メンバーだけに URL を返す線路
 const seen: DecideState<{ fileId: string }, Operator>[] = [];
-const rules: DecideRun<{ fileId: string }, Operator, string, Operator, "FORBIDDEN"> = {
+const rules: DecideRun<{ fileId: string }, Operator, string, Operator, "FORBIDDEN", never> = {
   run: async (s) => (
     seen.push(s),
     s.actor.role === "MEMBER"
-      ? Result.succeed({ value: `/files/${s.input.fileId}`, actor: s.actor })
+      ? Result.succeed({ decided: { value: `/files/${s.input.fileId}`, actor: s.actor }, events: [] })
       : Result.fail("FORBIDDEN")
   ),
 };
@@ -31,7 +31,7 @@ test("入力の全体を action の schema で検証する", async () => {
 
 test("検証した入力・actor・時刻を線路に渡し、線路が返した値と actor に封をする", async () => {
   const r = await decide({ input: { fileId: "f1" }, actor: member });
-  expect(open(Result.unwrap(r))).toEqual({ value: "/files/f1", actor: member });
+  expect(open(Result.unwrap(r).decision)).toEqual({ value: "/files/f1", actor: member });
   expect(seen.at(-1)).toEqual({ input: { fileId: "f1" }, actor: member, now: 7 });
 });
 

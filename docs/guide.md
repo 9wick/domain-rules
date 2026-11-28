@@ -13,6 +13,7 @@
 - [確認済みの値で型を昇格させる](#確認済みの値で型を昇格させる)
 - [モデルのルール定義を組み立てる (`modelRules`)](#モデルのルール定義を組み立てる-modelrules)
 - [永続化を伴わない操作を定義する (`action` / `actionRules`)](#永続化を伴わない操作を定義する-action--actionrules)
+- [条件に応じてイベントを発行する (`emit`)](#条件に応じてイベントを発行する-emit)
 - [実装を注入する (`provide` / `bind`) とテスト](#実装を注入する-provide--bind-とテスト)
 - [実行時の挙動と失敗の型 (`create` / `update` / `delete` / `decide`)](#実行時の挙動と失敗の型-create--update--delete--decide)
 - [検証済みの値を取り出す (`open`)](#検証済みの値を取り出す-open)
@@ -525,6 +526,107 @@ export const previewArticleRules = actionRules(previewArticle, {
 
 ---
 
+## 条件に応じてイベントを発行する (`emit`)
+
+「記事が公開されたらレビュアーに知らせる」のように、条件に応じて何かが起きたことを外へ伝えたいときは、`emit` でイベントを発行するステップを定義します。条件は `rule` と同じく `when` で書き、イベントの中身は `event` が返す値です。
+
+```ts
+import { emit, changed } from "domain-rules";
+
+// id を確定するルールと、レビュアーの存在を確かめるルールのあとに置く前提で、昇格した型を assuming で受け取る
+export const articlePublished = emit(
+  savedWithDefaults.assuming<{ next: { id: Article["id"]; reviewerId: UserIdExisted } }>(),
+  {
+    id: "articlePublished",
+    description: "公開されたらレビュアーに知らせる",
+    when: changed("status", { pre: "DRAFT", next: "PUBLISHED" }),
+    event: (s) =>
+      ({
+        type: "ARTICLE_PUBLISHED",
+        articleId: s.next.id,
+        reviewerId: s.next.reviewerId,
+        publishedBy: s.actor.id,
+      }) as const,
+  },
+);
+
+export const articleRules = modelRules(article)
+  .load({ ... })
+  .save(ruleset(memberCanSave).add(articleDefaults) /* ... */ .add(articleIdAssigned).add(articlePublished));
+```
+
+- `emit` は `ruleset` に `rule` と並べて置けます。保存・削除・アクションのどの線路にも置けます。
+- `event` が受け取る状態の型は、`rule` の `check` と同じく渡した線路の型です。前段のルールで昇格した型を使うときは、[`assuming`](#前段ルールの型昇格を前提にする-assuming) で前提にし、そのルールより後ろに置きます。前提にした昇格が起きない位置に置くと、`add` で型エラーになります。
+- イベントの型をリテラルのまま残したいときは、`event` の戻り値に `as const` を付けます。
+- `event` は同期の純関数で、port を受け取りません。通知先を決めるのに外部の値が要るとき（「その場所を担当する管理者」など）は、前段の `rule` で取得して状態に入れておきます。宛先のメールアドレスや表示名、リンクの URL など配送に要る値は、イベントには ID だけを入れ、配送する側で引いてください。
+- 1 つの `emit` が発行するイベントは 1 つです。複数のイベントを発行したいときは `emit` を並べます。
+- `when` が `false` ならイベントは発行されず、状態をそのまま次へ渡します。`emit` は状態を変えず、失敗もしません。
+- `id` と `description` は [`plan`](#ルール構成を確認する-plan) で構成を確かめるためのもので、イベントには含まれません。
+
+発行されたイベントは、メソッドの成功の値の `events` に、パイプライン上の順に並びます。後段のルールで失敗したときは、それより前の `emit` が発行したイベントも返りません。
+
+```ts
+const r = await domain.article.update({ input: { id, status: "PUBLISHED" }, actor });
+if (Result.isSuccess(r)) {
+  const { persistable, events } = r.value;
+  // events: readonly { type: "ARTICLE_PUBLISHED"; articleId: ...; reviewerId: ... }[]
+  await db.transaction(async (tx) => {
+    await articleRepository.save(tx, persistable);
+    await outbox.push(tx, events);
+  });
+}
+```
+
+- `events` の要素は `event` が返した値そのものです。ライブラリは何も付け足しません。区別が要るなら `type` などをイベントに持たせ、ハンドラに要る `actor` や時刻も `event` の中で状態から入れてください。
+- `events` は封の外にある読み取り専用のデータなので、`open()` せずに読めます。
+
+### イベントの型を取り出す (`DomainEvent`)
+
+配送する側のハンドラや outbox の型は、`DomainEvent` で定義から取り出せます。イベントの型を別に書き起こさないので、`event` の戻り値を変えればハンドラの型も追従します。
+
+```ts
+import type { DomainEvent } from "domain-rules";
+
+type ArticlePublished = DomainEvent<typeof articlePublished>;
+// { readonly type: "ARTICLE_PUBLISHED"; readonly articleId: ...; readonly reviewerId: ... }
+
+type ArticleEvent = DomainEvent<typeof articleRules>;
+// articleRules の保存と削除の線路に置いた emit が発行しうるイベントの和
+
+const handle = (e: ArticleEvent) => {
+  switch (e.type) {
+    case "ARTICLE_PUBLISHED":
+      return notifyReviewer(e.reviewerId, e.articleId);
+  }
+};
+```
+
+| 渡すもの                     | 得られる型                                              |
+| ---------------------------- | ------------------------------------------------------- |
+| `emit` の戻り値              | その `emit` の `event` が返す型                         |
+| `ruleset`                    | その `ruleset` に並べた `emit` のイベントの和           |
+| `modelRules` / `actionRules` | 保存・削除・判定の線路に置いた `emit` のイベントの和    |
+| `bind` の戻り値 (`domain`)   | `bind` に渡したすべてのモデルとアクションのイベントの和 |
+
+`emit` を 1 つも置いていなければ `never` です。ドメイン全体のイベントを 1 つの outbox やディスパッチャで受けるときは、`bind` の戻り値から取ります。
+
+```ts
+export const domain = bind([articleRules, previewArticleRules], { providers });
+
+type AppEvent = DomainEvent<typeof domain>;
+// = DomainEvent<typeof articleRules> | DomainEvent<typeof previewArticleRules>
+```
+
+`domain` の各メソッドが返す `events` の型から引くので、`bind` に渡すルール定義を足せば `AppEvent` にも加わります。
+
+ライブラリが扱わないこと:
+
+- **イベントの配送**: `events` を受け取ってメールを送る・キューに積むのは、ユースケース層や基盤の責務です。ライブラリはハンドラを呼びません。
+- **保存とイベントの記録の整合**: 保存に成功したときだけイベントが配送されるようにするには、同じトランザクションで outbox に記録するなど、アプリケーション側で扱ってください。
+- **冪等キー・相関 ID・配送順の保証、まとめて送る処理**: 配送基盤の都合なので、必要なら `event` に含めるか、配送する側で扱ってください。
+
+---
+
 ## 実装を注入する (`provide` / `bind`) とテスト
 
 `provide` で各 `port`（および `clock`）に実装を与え、`bind` でルール定義と結合して実行用オブジェクトを生成します。
@@ -578,19 +680,21 @@ const testDomain = bind([articleRules], {
 ```ts
 const saved = await Result.pipe(
   domain.article.update({ input: { id: articleId, status: "PUBLISHED" }, actor }),
-  Result.andThen((persistable) => repository.save(persistable)),
+  Result.andThen(({ persistable }) => repository.save(persistable)),
 );
 ```
 
 ### メソッド一覧と返り値
 
-| メソッド | 引数                                                  | 成功時の返り値                         |
-| -------- | ----------------------------------------------------- | -------------------------------------- |
-| `create` | `{ input, actor }`（key（`id` を除く）と value 全体） | `Persistable<M, "create">`             |
-| `update` | `{ input, actor }`（key（`id` 必須）と value の差分） | `Persistable<M, "update">`             |
-| `upsert` | `{ input, actor }`（`create` か `update` の入力）     | `Persistable<M, "create" \| "update">` |
-| `delete` | `{ input, actor }`（key（`id` 必須）だけ）            | `Deletable<M>`                         |
-| `decide` | `{ input, actor }`                                    | `Decision<A, T>`                       |
+| メソッド | 引数                                                  | 成功時の返り値                                                  |
+| -------- | ----------------------------------------------------- | --------------------------------------------------------------- |
+| `create` | `{ input, actor }`（key（`id` を除く）と value 全体） | `{ persistable: Persistable<M, "create">, events }`             |
+| `update` | `{ input, actor }`（key（`id` 必須）と value の差分） | `{ persistable: Persistable<M, "update">, events }`             |
+| `upsert` | `{ input, actor }`（`create` か `update` の入力）     | `{ persistable: Persistable<M, "create" \| "update">, events }` |
+| `delete` | `{ input, actor }`（key（`id` 必須）だけ）            | `{ deletable: Deletable<M>, events }`                           |
+| `decide` | `{ input, actor }`                                    | `{ decision: Decision<A, T>, events }`                          |
+
+`events` は線路に置いた [`emit`](#条件に応じてイベントを発行する-emit) が発行したイベントの列で、型は発行しうるイベントの和の `readonly` 配列です。`emit` を置いていなければ空の配列です。
 
 `upsert` は `input.id` が無ければ新規作成、あれば `load` の `fetch` で既存値を取得して更新します。`fetch` が失敗を返せば `load` で失敗します。
 
@@ -598,13 +702,13 @@ const saved = await Result.pipe(
 
 メソッドが呼ばれると、以下のステップを上から順に実行します。すべて `Result` を返し、失敗した時点で処理を中断します。
 
-| 順  | ステップ          | 内容                                                                         | 失敗時の `error`                       |
-| --- | ----------------- | ---------------------------------------------------------------------------- | -------------------------------------- |
-| 1   | `input`           | 入力値をスキーマで検証・変換する                                             | `{ issues: StandardSchemaV1.Issue[] }` |
-| 2   | `load`            | `modelRules(...).load({ requires, fetch })` で既存データを取得する           | `fetch` が返した失敗の値               |
-| 3   | `merge`           | 既存データに検証済み入力をマージして `next` を作り、スキーマ全体で検証する   | `{ issues: StandardSchemaV1.Issue[] }` |
-| 4   | `rule`            | `ruleset` に並べたルールを順に評価・実行する                                 | 失敗したルールの `check` が返した値    |
-| 5   | `seal` / `output` | 保存・削除は検証済みラッパーを生成。アクションは `output` で結果を組み立てる | なし                                   |
+| 順  | ステップ          | 内容                                                                                                       | 失敗時の `error`                       |
+| --- | ----------------- | ---------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| 1   | `input`           | 入力値をスキーマで検証・変換する                                                                           | `{ issues: StandardSchemaV1.Issue[] }` |
+| 2   | `load`            | `modelRules(...).load({ requires, fetch })` で既存データを取得する                                         | `fetch` が返した失敗の値               |
+| 3   | `merge`           | 既存データに検証済み入力をマージして `next` を作り、スキーマ全体で検証する                                 | `{ issues: StandardSchemaV1.Issue[] }` |
+| 4   | `rule`            | `ruleset` に並べたルールを順に評価・実行する。`emit` はイベントを溜める                                    | 失敗したルールの `check` が返した値    |
+| 5   | `seal` / `output` | 保存・削除は検証済みラッパーを生成。アクションは `output` で結果を組み立てる。溜めたイベントと組にして返す | なし                                   |
 
 - **`create`**: `load` をスキップします（`pre` は `null`）。`input` では key と value をそれぞれのスキーマ全体で検証し、両方の問題をまとめて返します。`id` やスキーマにない未知のキーがあると失敗します。
 - **`update`**: 全 5 ステップを実行します。`input` では key をスキーマ全体で、value の差分を入力に含まれた項目だけ各項目のスキーマで検証します（未知のキーがあれば失敗します）。不正な入力は、ここで `load` の前に失敗します。`load` の `fetch` には key だけを渡します。`merge` の後に、重ねた値を value のスキーマ全体で検証し、項目をまたぐ検証に違反していれば `input` の失敗を返します。
@@ -677,7 +781,7 @@ type Failure =
 
 ## 検証済みの値を取り出す (`open`)
 
-`Persistable` / `Deletable` / `Decision` は、パイプラインを通過したことを証明する不透明（opaque）なオブジェクトです。中身は `open()` でのみ取り出せます。
+`Persistable` / `Deletable` / `Decision` は、パイプラインを通過したことを証明する不透明（opaque）なオブジェクトです。メソッドの成功の値の `persistable` / `deletable` / `decision` に入っており、中身は `open()` でのみ取り出せます（`open(r.value.persistable)`）。並んで返る `events` は封をしていないデータで、`open()` は要りません。
 
 ```ts
 import { open } from "domain-rules";
@@ -716,3 +820,5 @@ plan(articleRules);
 //   delete: [...]
 // }
 ```
+
+`emit` も、置いた位置に `id`・`description`・`when` を持つ要素として並びます（port を受け取らないので `ports` は常に空です）。

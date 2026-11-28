@@ -76,7 +76,7 @@ test("ports は load と、save・delete の線路が使う port を持つ", () 
 test("メソッドは load で読んだ既存の値から、save の線路を通す", async () => {
   const { update } = loaded().save(save).resolveIn(ctxWith(stored));
   const r = await update({ input: { id: "i1", n: 2 }, actor: operator });
-  expect(open(Result.unwrap(r))).toEqual({ pre: stored, next: { id: "i1", n: 2 }, actor: operator });
+  expect(open(Result.unwrap(r).persistable)).toEqual({ pre: stored, next: { id: "i1", n: 2 }, actor: operator });
 });
 
 test("delete の線路は呼び出し時の入力を受け取り、given で指定した項目だけを確かめられる", async () => {
@@ -103,9 +103,9 @@ test("delete の線路は呼び出し時の入力を受け取り、given で指�
     .delete(ruleset(sameOwner))
     .resolveIn({ invocation: () => invocationOf(context, 0) });
   const unspecified = await remove({ input: { id: "i1" }, actor: operator });
-  expect(open(Result.unwrap(unspecified)).pre).toEqual(ownedStored);
+  expect(open(Result.unwrap(unspecified).deletable).pre).toEqual(ownedStored);
   const matched = await remove({ input: { id: "i1", owner: "alice" }, actor: operator });
-  expect(open(Result.unwrap(matched)).pre).toEqual(ownedStored);
+  expect(open(Result.unwrap(matched).deletable).pre).toEqual(ownedStored);
   const mismatched = await remove({ input: { id: "i1", owner: "bob" }, actor: operator });
   expect(Result.unwrapError(mismatched)).toEqual({ step: "sameOwner", error: "OWNER_MISMATCH" });
 });
@@ -123,7 +123,7 @@ test("取得ステップは id 以外の値も取得条件に使え、その失�
     .save(save)
     .resolveIn({ invocation: () => invocationOf(context, 0) });
   const owned = await update({ input: { id: "i1", n: 2 }, actor: operator });
-  expect(open(Result.unwrap(owned)).pre).toEqual({ id: "i1", n: 1 });
+  expect(open(Result.unwrap(owned).persistable).pre).toEqual({ id: "i1", n: 1 });
   const other = await update({ input: { id: "i1", n: 2 }, actor: { name: "someone" } });
   expect(Result.unwrapError(other)).toEqual({ step: "load", error: "NOT_OWNED" });
 });
@@ -145,7 +145,7 @@ test("fetch も rule の check と同じく、safeTry で port の失敗を止�
     })
     .save(save)
     .resolveIn({ invocation: () => invocationOf(context, 0) });
-  expect(open(Result.unwrap(await update({ input: { id: "i1" }, actor: operator }))).pre).toEqual(stored);
+  expect(open(Result.unwrap(await update({ input: { id: "i1" }, actor: operator })).persistable).pre).toEqual(stored);
   expect(Result.unwrapError(await update({ input: { id: "i2" }, actor: operator }))).toEqual({
     step: "load",
     error: "NO_OWNER",
@@ -185,7 +185,7 @@ test("文字列を Date に変換し、Date もそのまま受け付ける schem
     .save(ruleset(keepId))
     .resolveIn({ invocation: () => invocationOf(context, 0) });
   const moved = await update({ input: { id: "a1", date: "2026-02-01T00:00:00Z" }, actor: operator });
-  expect(open(Result.unwrap(moved)).next.date).toEqual(new Date("2026-02-01T00:00:00Z"));
+  expect(open(Result.unwrap(moved).persistable).next.date).toEqual(new Date("2026-02-01T00:00:00Z"));
   const kept = await update({ input: { id: "a1" }, actor: operator });
-  expect(open(Result.unwrap(kept)).next.date).toBe(stored.date);
+  expect(open(Result.unwrap(kept).persistable).next.date).toBe(stored.date);
 });
