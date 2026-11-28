@@ -28,7 +28,7 @@ export class Context {
     const map = new Map<object, Provider>();
     for (const p of providers) {
       // 復帰できない異常: 同じ差し込み口の provider を同じ bind に2つ渡している
-      if (map.has(p.slot)) throw new Panic(`bind: port "${p.name}" の provider が重複しています`);
+      if (map.has(p.slot)) throw new Panic(`bind: duplicate providers for port "${p.name}"`);
       map.set(p.slot, p);
     }
     this.#providers = map;

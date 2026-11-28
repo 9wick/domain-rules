@@ -52,7 +52,7 @@ test("bind ごとに provider を分ける", async () => {
 
 test("provider が足りない port があれば Panic にする", () => {
   // @ts-expect-error newId の provider がない
-  expect(() => bind([items], { providers: [provide.value(clock, 0)] })).toThrow("provider が足りない port: newId");
+  expect(() => bind([items], { providers: [provide.value(clock, 0)] })).toThrow("missing providers for ports: newId");
   // @ts-expect-error clock の provider がない
   expect(() => bind([items], { providers: [provide.value(newId, "i")] })).toThrow(Panic);
 });
@@ -60,7 +60,7 @@ test("provider が足りない port があれば Panic にする", () => {
 test("同じ名前でも、別に宣言した port の provider では満たせない", () => {
   const other = port("newId").of<() => string>();
   expect(() => bind([items], { providers: [provide.value(other, "x"), provide.value(clock, 0)] })).toThrow(
-    "provider が足りない port: newId",
+    "missing providers for ports: newId",
   );
 });
 
@@ -68,5 +68,5 @@ test("同じ port の provider と、同じ名前の rule の組は重ねて渡�
   const providers = [provide.value(newId, "i"), provide.value(clock, 0)] as const;
   expect(() => bind([items], { providers: [...providers, provide.value(clock, 1)] })).toThrow(Panic);
   // @ts-expect-error 同じ名前の rule の組は型でも弾く
-  expect(() => bind([items, items], { providers })).toThrow('bind: "item" の rule の組が重複しています');
+  expect(() => bind([items, items], { providers })).toThrow('bind: duplicate rule set name "item"');
 });

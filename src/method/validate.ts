@@ -32,7 +32,7 @@ export const pickEntries = (entries: object, input: State): State =>
 export const unknownKeys = (input: State, allowed: (key: string) => boolean): StandardSchemaV1.Issue[] =>
   Object.keys(input)
     .filter((key) => !allowed(key))
-    .map((key) => ({ message: `schema にない項目です: ${key}`, path: [key] }));
+    .map((key) => ({ message: `unknown field not in schema: ${key}`, path: [key] }));
 
 const definedEntries = (input: State): State =>
   Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined));

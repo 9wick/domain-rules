@@ -247,7 +247,7 @@ describe("封をした値", () => {
     const { domain } = setup();
     const p = Result.unwrap(await domain.article.create({ input: newArticle, actor: author }));
     // @ts-expect-error 作り直した値は封をした値の型にならない
-    expect(() => open({ ...p })).toThrow("open: メソッドが作った封をした値ではありません");
+    expect(() => open({ ...p })).toThrow("open: not a sealed value created by a method");
   });
 });
 

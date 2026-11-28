@@ -18,7 +18,7 @@ test("同じ差し込み口の provider を2つ渡すと Panic にする", () =>
   const a = new Slot<"a", () => number>("a");
   expect(() => new Context([a.provider(() => 1), a.provider(() => 2)])).toThrow(Panic);
   expect(() => new Context([a.provider(() => 1), a.provider(() => 2)])).toThrow(
-    'bind: port "a" の provider が重複しています',
+    'bind: duplicate providers for port "a"',
   );
 });
 
