@@ -11,6 +11,16 @@ test("immutable には next にある項目だけを渡せる", () => {
   immutable(track, ["slugg"]);
 });
 
+test("immutable には値で比べられる項目だけを渡せ、配列や object の項目は型エラー", () => {
+  type Tagged = { readonly slug: string; readonly memo?: string; readonly tags: readonly string[]; readonly at: Date };
+  const track = new Track<"save", "item", { readonly pre: Tagged | null; readonly next: Tagged }>("save", "item");
+  immutable(track, ["slug", "memo"]);
+  // @ts-expect-error 配列は別参照なら中身が同じでも変化と判定される
+  immutable(track, ["tags"]);
+  // @ts-expect-error Date も object なので値で比べられない
+  immutable(track, ["at"]);
+});
+
 test("immutable は保存の線路だけで使える", () => {
   const onDelete = new Track<"delete", "item", S>("delete", "item");
   // @ts-expect-error 削除の線路では項目は変わらない

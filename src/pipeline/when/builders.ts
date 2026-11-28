@@ -1,4 +1,5 @@
 import type { TrackKind } from "../../definition/track.ts";
+import type { ByValue } from "../../shared/by-value.ts";
 import {
   describeWhen,
   whenOf,
@@ -12,9 +13,11 @@ import {
 export const onCreate = whenOf<"save", { readonly pre: unknown }>({ kind: "onCreate" }, (s) => s.pre === null);
 
 type Fields<F extends string> = { readonly [P in F]: unknown };
-type Changed<F extends string> = { readonly pre: Fields<F> | null; readonly next: Fields<F> };
+// 変化は Object.is で判定するので、比べる項目は値で比べられるものに限る。配列や object の項目は別参照なら中身が同じでも変化と判定されるので、型エラーにする
+type ComparedFields<F extends string> = { readonly [P in F]: ByValue };
+type Changed<F extends string> = { readonly pre: ComparedFields<F> | null; readonly next: ComparedFields<F> };
 
-const fieldOf = <F extends string>(o: Fields<F>, field: F): unknown => o[field];
+const fieldOf = <F extends string>(o: ComparedFields<F>, field: F): ByValue => o[field];
 const matches = (m: Match | undefined, v: unknown) => m === undefined || Object.is(m, v);
 
 export const changed = <const F extends string>(

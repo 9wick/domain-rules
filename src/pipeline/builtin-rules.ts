@@ -1,6 +1,7 @@
 import * as Result from "../shared/result.ts";
 import type { Track, TrackKind } from "../definition/track.ts";
 import type { NoPorts } from "../port/port.ts";
+import type { ByValueKeys } from "../shared/by-value.ts";
 import { rule, type Rule } from "./rule.ts";
 import { changed, onCreate } from "./when/builders.ts";
 import { always } from "./when/step.ts";
@@ -12,7 +13,7 @@ type SaveTrackState = { readonly pre: object | null; readonly next: object };
 
 const immutableRule = <T extends string, S extends SaveTrackState, const I extends string>(
   track: Track<"save", T, S>,
-  fields: readonly (keyof S["next"] & string)[],
+  fields: readonly ByValueKeys<S["next"]>[],
   id: I,
 ) => {
   const changedField = (s: S) => fields.find((f) => !Object.is(valueOf(s.pre, f), valueOf(s.next, f)));
@@ -40,16 +41,16 @@ const immutableRule = <T extends string, S extends SaveTrackState, const I exten
 // id は既定で "immutable"。同じ線路に複数置いて失敗の step でも区別したいときだけ、id を渡して変える
 export function immutable<T extends string, S extends SaveTrackState>(
   track: Track<"save", T, S>,
-  fields: readonly (keyof S["next"] & string)[],
+  fields: readonly ByValueKeys<S["next"]>[],
 ): ReturnType<typeof immutableRule<T, S, "immutable">>;
 export function immutable<T extends string, S extends SaveTrackState, const I extends string>(
   track: Track<"save", T, S>,
-  fields: readonly (keyof S["next"] & string)[],
+  fields: readonly ByValueKeys<S["next"]>[],
   options: { readonly id: I },
 ): ReturnType<typeof immutableRule<T, S, I>>;
 export function immutable<T extends string, S extends SaveTrackState>(
   track: Track<"save", T, S>,
-  fields: readonly (keyof S["next"] & string)[],
+  fields: readonly ByValueKeys<S["next"]>[],
   options: { readonly id: string } = { id: "immutable" },
 ) {
   return immutableRule(track, fields, options.id);
