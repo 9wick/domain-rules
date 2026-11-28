@@ -27,7 +27,7 @@ describe("型", () => {
         | "input"
         | "load"
         | "memberOnly"
-        | "createDefaults"
+        | "defaultFields"
         | "allowedStatusTransition"
         | "immutable"
         | "blogExists"

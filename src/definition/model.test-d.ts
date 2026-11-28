@@ -19,7 +19,7 @@ type Key = { id?: string | undefined };
 
 test("保存の線路は、永続化の型か null の pre、key と value を合わせた next、actor を状態に持つ", () => {
   expectTypeOf(item.onSave).toEqualTypeOf<
-    Track<"save", "item", SaveState<Stored | null, { id?: string | undefined } & { n: number }, Operator>>
+    Track<"save", "item", SaveState<Stored | null, { id?: string | undefined } & { n: number }, Operator>, "id">
   >();
 });
 
@@ -68,7 +68,7 @@ describe("Zod の schema", () => {
       },
     });
     expectTypeOf(zodItem.onSave).toEqualTypeOf<
-      Track<"save", "zodItem", SaveState<Stored | null, { id?: string | undefined } & { n: number }, Operator>>
+      Track<"save", "zodItem", SaveState<Stored | null, { id?: string | undefined } & { n: number }, Operator>, "id">
     >();
   });
 

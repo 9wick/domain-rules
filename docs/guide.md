@@ -90,7 +90,7 @@ export type ExistingArticle = Omit<Article, "id"> & { id: ArticleIdExisted }; //
   - それでも value スキーマで変換する場合、更新では既存の値から引き継いだ変換後の値もこのスキーマに通ることに注意してください。`update` を作るモデル（`.load()` の後に `.save()` を書くモデル）では、スキーマが変換後の値もそのまま受け付けないと `.save()` が型エラーになります。型が変わらない変換（`trim` など）は、変換後の値にもう一度かけても同じ値になるものにしてください。
 - **`schema.persisted`**: 永続化時の型を決めるためのスキーマです。key と value より強い型（存在確認済み Brand 型など）を持たせられます。ライブラリはこのスキーマで実行時の検証を行いません（未確認の入力に Brand が付くのを防ぐため）。保存パイプラインの終端で `next` がこの型になっていることをコンパイル時に検査します。
 - **検証の順番**: 各操作で key と value がどこで検証され、`persisted` の型になるまでの流れは [入力が永続化の型になるまで](#入力が永続化の型になるまで) を参照してください。
-- **既定値**: key と value の `v.optional` には既定値を書けません（`model` が型エラーになります）。省略したときの値は、`next` を昇格させるルールで入れます（例: `status: next.status ?? "DRAFT"`）。
+- **既定値**: key と value の `v.optional` には既定値を書けません（`model` が型エラーになります）。作成時に省略したときの値は、[`defaultFields`](#組み込みヘルパー-immutable--defaultfields--alwaysallow) で入れます。
 - **`id` の扱い**: `model` 自身は `id` の取得や採番を行いません。既存レコードの取得は `modelRules(...).load({ requires, fetch })` に書き、新規 ID の採番も他のフィールドと同様にルールで型を昇格させます。
 
 ---
@@ -227,7 +227,7 @@ export const uniqueSlugInBlog = rule(article.onSave, {
 - 失敗の型は、`yield*` した port の失敗と、最後に返した `Result` の失敗を合わせたものになります。
 - 失敗で止まるときは generator を閉じるので、関数の中の `finally` や `using` の後始末は走ります。
 
-### 組み込みヘルパー (`immutable` / `alwaysAllow`)
+### 組み込みヘルパー (`immutable` / `defaultFields` / `alwaysAllow`)
 
 よく使われるパターンのヘルパーが用意されています。
 
@@ -246,6 +246,25 @@ export const articleImmutableFields = immutable(article.onSave, ["blogId", "auth
 export const slugIsFixed = immutable(article.onSave, ["slug"], { id: "slugIsFixed" });
 ```
 
+`defaultFields` は、作成時に省略した項目に既定値を入れます。値は固定値か、状態 `s`（`pre` / `next` / `input` / `actor` / `now`）から値を作る関数で書きます。
+
+```ts
+import { defaultFields } from "domain-rules";
+
+export const articleDefaults = defaultFields(article.onSave, {
+  status: "DRAFT",
+  approvedAt: null,
+  slug: (s) => `blog_at_${s.now}`,
+});
+```
+
+- 値を入れるのは、作成時に `next` の項目が `undefined` のときだけです。`null` を指定した項目は上書きしません。更新では既存の値を引き継ぐので、何もしません。
+- 既定値を書けるのは、value で省略できて、`schema.persisted` では必ずある項目だけです。それ以外の項目を書くと型エラーになります。省略できない項目には既定値が使われません。永続化の型でも省略できる項目は、更新後に値がある型にできません。key の項目（`id` など）は、採番のような port を使うルールで入れます。
+- 既定値の網羅は強制しません。省略できる項目に誰も値を入れなければ、保存パイプラインの終端の `persisted` の型検査で型エラーになります。
+- `when` は `always` です。通ったあとのルールは、指定した項目に値がある型で受け取れます。失敗はしません。
+- port は受け取りません。採番のように port が要る値は、`rule` で書きます（[`id` と `actor` の昇格例](#id-と-actor-の昇格例) を参照）。時刻は `s.now` を使います。
+- `id` は既定で `"defaultFields"`、`description` は `"作成時に省略したときの既定値: status, approvedAt, slug"` です。同じ線路に複数置くときは、`immutable` と同じく第 3 引数の `{ id }` で変えます。
+
 条件なしで削除を許可するモデルには、`.delete(ruleset(alwaysAllow))` を指定できます。`alwaysAllow` の `id` は `"alwaysAllow"` です。
 
 > **ルール定義オブジェクトを変数に切り出すときの注意**:
@@ -263,19 +282,13 @@ export const isPublished = (a: ArticleValue) => a.status === "PUBLISHED";
 export const isApproved = (a: ArticleValue) => a.approvedAt !== null;
 ```
 
-`schema.value` で省略可能にした項目の既定値は、`next` を昇格させるルールで入れます。そのあとのルールは `.assuming<...>()` で、既定値が入った状態を前提にします。
+`schema.value` で省略可能にした項目の既定値は、[`defaultFields`](#組み込みヘルパー-immutable--defaultfields--alwaysallow) で入れます。そのあとのルールは `.assuming<...>()` で、既定値が入った状態を前提にします。
 
 ```ts
 type Defaulted = { readonly next: { readonly status: ArticleStatus; readonly approvedAt: number | null } };
 const savedWithDefaults = article.onSave.assuming<Defaulted>();
 
-export const articleDefaults = rule(article.onSave, {
-  id: "createDefaults",
-  description: "作成時に省略した status は下書き、approvedAt は未承認",
-  when: always,
-  check: ({ next }) =>
-    Result.succeed({ next: { status: next.status ?? "DRAFT", approvedAt: next.approvedAt ?? null } }),
-});
+export const articleDefaults = defaultFields(article.onSave, { status: "DRAFT", approvedAt: null });
 
 // status を読むルールは savedWithDefaults に書く
 export const statusChangesAreAllowed = rule(savedWithDefaults, { ... });
