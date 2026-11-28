@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - id: release
-        uses: 9wick/release-flow/resolve@651af2d82c4ebad0fe0b74808d43c57a168dd49e # v1
+        uses: 9wick/release-flow/resolve@068cdf82d8673008a7eb2e89b72709cfa14a41de # v1
         with:
           production-branch: release
           staging-branch: main
