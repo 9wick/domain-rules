@@ -590,13 +590,23 @@ const handle = (e: ArticleEvent) => {
 };
 ```
 
-| 渡すもの                     | 得られる型                                           |
-| ---------------------------- | ---------------------------------------------------- |
-| `emit` の戻り値              | その `emit` の `event` が返す型                      |
-| `ruleset`                    | その `ruleset` に並べた `emit` のイベントの和        |
-| `modelRules` / `actionRules` | 保存・削除・判定の線路に置いた `emit` のイベントの和 |
+| 渡すもの                     | 得られる型                                              |
+| ---------------------------- | ------------------------------------------------------- |
+| `emit` の戻り値              | その `emit` の `event` が返す型                         |
+| `ruleset`                    | その `ruleset` に並べた `emit` のイベントの和           |
+| `modelRules` / `actionRules` | 保存・削除・判定の線路に置いた `emit` のイベントの和    |
+| `bind` の戻り値 (`domain`)   | `bind` に渡したすべてのモデルとアクションのイベントの和 |
 
-`emit` を 1 つも置いていなければ `never` です。複数のモデルやアクションのイベントをまとめて扱うときは、`DomainEvent<typeof articleRules> | DomainEvent<typeof previewArticleRules>` のように和を書きます。
+`emit` を 1 つも置いていなければ `never` です。ドメイン全体のイベントを 1 つの outbox やディスパッチャで受けるときは、`bind` の戻り値から取ります。
+
+```ts
+export const domain = bind([articleRules, previewArticleRules], { providers });
+
+type AppEvent = DomainEvent<typeof domain>;
+// = DomainEvent<typeof articleRules> | DomainEvent<typeof previewArticleRules>
+```
+
+`domain` の各メソッドが返す `events` の型から引くので、`bind` に渡すルール定義を足せば `AppEvent` にも加わります。
 
 ライブラリが扱わないこと:
 
