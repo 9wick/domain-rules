@@ -533,12 +533,22 @@ export const previewArticleRules = actionRules(previewArticle, {
 ```ts
 import { emit, changed } from "domain-rules";
 
-export const articlePublished = emit(savedWithDefaults, {
-  id: "articlePublished",
-  description: "公開されたらレビュアーに知らせる",
-  when: changed("status", { pre: "DRAFT", next: "PUBLISHED" }),
-  event: (s) => ({ type: "ARTICLE_PUBLISHED", articleId: s.next.id, reviewerId: s.next.reviewerId }) as const,
-});
+// id を確定するルールと、レビュアーの存在を確かめるルールのあとに置く前提で、昇格した型を assuming で受け取る
+export const articlePublished = emit(
+  savedWithDefaults.assuming<{ next: { id: Article["id"]; reviewerId: UserIdExisted } }>(),
+  {
+    id: "articlePublished",
+    description: "公開されたらレビュアーに知らせる",
+    when: changed("status", { pre: "DRAFT", next: "PUBLISHED" }),
+    event: (s) =>
+      ({
+        type: "ARTICLE_PUBLISHED",
+        articleId: s.next.id,
+        reviewerId: s.next.reviewerId,
+        publishedBy: s.actor.id,
+      }) as const,
+  },
+);
 
 export const articleRules = modelRules(article)
   .load({ ... })
@@ -546,7 +556,8 @@ export const articleRules = modelRules(article)
 ```
 
 - `emit` は `ruleset` に `rule` と並べて置けます。保存・削除・アクションのどの線路にも置けます。
-- `event` が受け取る状態は、置いた位置までに昇格した型です。ID を確定するルールのあとに置けば、`s.next.id` は確定した ID の型になります。
+- `event` が受け取る状態の型は、`rule` の `check` と同じく渡した線路の型です。前段のルールで昇格した型を使うときは、[`assuming`](#前段ルールの型昇格を前提にする-assuming) で前提にし、そのルールより後ろに置きます。前提にした昇格が起きない位置に置くと、`add` で型エラーになります。
+- イベントの型をリテラルのまま残したいときは、`event` の戻り値に `as const` を付けます。
 - `event` は同期の純関数で、port を受け取りません。通知先を決めるのに外部の値が要るとき（「その場所を担当する管理者」など）は、前段の `rule` で取得して状態に入れておきます。宛先のメールアドレスや表示名、リンクの URL など配送に要る値は、イベントには ID だけを入れ、配送する側で引いてください。
 - 1 つの `emit` が発行するイベントは 1 つです。複数のイベントを発行したいときは `emit` を並べます。
 - `when` が `false` ならイベントは発行されず、状態をそのまま次へ渡します。`emit` は状態を変えず、失敗もしません。

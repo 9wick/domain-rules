@@ -49,12 +49,12 @@ const contextWith = (find: (id: string) => Result.Result<Stored, LoadError>, now
 // 受け取った状態を記録し、next に id を付けて通す線路
 const recordingSave = () => {
   const seen: SaveState<Stored | null, Item, Operator>[] = [];
-  const rules: SaveRun<Stored, Item, Stored, Operator, Operator, "REJECTED"> = {
+  const rules: SaveRun<Stored, Item, Stored, Operator, Operator, "REJECTED", never> = {
     run: async (s) => (
       seen.push(s),
       s.next.n < 0
         ? Result.fail("REJECTED")
-        : Result.succeed({ next: { ...s.next, id: s.next.id ?? "new" }, actor: s.actor })
+        : Result.succeed({ state: { next: { ...s.next, id: s.next.id ?? "new" }, actor: s.actor }, events: [] })
     ),
   };
   return { rules, seen };
@@ -67,7 +67,11 @@ describe("create", () => {
     const { ctx } = contextWith(() => Result.succeed(stored));
     const { rules, seen } = recordingSave();
     const r = await createMethod(item, rules)(ctx)({ input: { tenantId: "t1", n: 1 }, actor: operator });
-    expect(open(Result.unwrap(r))).toEqual({ pre: null, next: { id: "new", tenantId: "t1", n: 1 }, actor: operator });
+    expect(open(Result.unwrap(r).persistable)).toEqual({
+      pre: null,
+      next: { id: "new", tenantId: "t1", n: 1 },
+      actor: operator,
+    });
     expect(seen).toEqual([
       { pre: null, next: { tenantId: "t1", n: 1 }, input: { tenantId: "t1", n: 1 }, actor: operator, now: 42 },
     ]);
@@ -115,7 +119,7 @@ describe("update", () => {
       input: { id: "i1", tenantId: "t1", n: 9 },
       actor: operator,
     });
-    const { pre, next } = open(Result.unwrap(r));
+    const { pre, next } = open(Result.unwrap(r).persistable);
     expect([pre, next]).toEqual([stored, { ...stored, n: 9 }]);
     expect([Object.isFrozen(pre), Object.isFrozen(next), Object.isFrozen(fromDb)]).toEqual([true, true, false]);
     expect(seen[0]?.pre).toEqual(stored);
@@ -183,14 +187,22 @@ describe("update", () => {
     const find: LoadRun<{ id?: number | undefined }, Operator, { id: number }, never> = {
       run: async ({ input }) => Result.succeed({ id: input.id }),
     };
-    const rules: SaveRun<{ id: number }, { id?: number | undefined }, { id: number }, Operator, Operator, never> = {
-      run: async (s) => Result.succeed({ next: { id: s.next.id ?? 0 }, actor: s.actor }),
+    const rules: SaveRun<
+      { id: number },
+      { id?: number | undefined },
+      { id: number },
+      Operator,
+      Operator,
+      never,
+      never
+    > = {
+      run: async (s) => Result.succeed({ state: { next: { id: s.next.id ?? 0 }, actor: s.actor }, events: [] }),
     };
     const r = await updateMethod(numbered, find, rules)({ invocation: () => invocationOf(new Context([]), 0) })({
       input: { id: "42" },
       actor: operator,
     });
-    expect(open(Result.unwrap(r)).pre.id).toBe(42);
+    expect(open(Result.unwrap(r).persistable).pre.id).toBe(42);
   });
 });
 
@@ -209,8 +221,9 @@ describe("項目をまたぐ検証", () => {
     },
   });
   const existing: Range = { id: "r1", from: 1, to: 5 };
-  const passThrough: SaveRun<Range, RangeValue, Range, Operator, Operator, never> = {
-    run: async (s) => Result.succeed({ next: { ...s.next, id: s.next.id ?? "new" }, actor: s.actor }),
+  const passThrough: SaveRun<Range, RangeValue, Range, Operator, Operator, never, never> = {
+    run: async (s) =>
+      Result.succeed({ state: { next: { ...s.next, id: s.next.id ?? "new" }, actor: s.actor }, events: [] }),
   };
   const setup = () => {
     const load: string[] = [];
@@ -234,7 +247,7 @@ describe("項目をまたぐ検証", () => {
 
   test("重ねた値が schema を満たせば、既存の値を引き継いで通る", async () => {
     const r = await setup().update({ input: { id: "r1", from: 3 }, actor: operator });
-    expect(open(Result.unwrap(r)).next).toEqual({ id: "r1", from: 3, to: 5 });
+    expect(open(Result.unwrap(r).persistable).next).toEqual({ id: "r1", from: 3, to: 5 });
   });
 
   test("項目単体で不正な差分は、既存の値を取得する前に失敗する", async () => {
@@ -250,9 +263,11 @@ describe("upsert", () => {
   test("id がなければ作成、あれば更新する", async () => {
     const { ctx, calls, loadItem } = contextWith(() => Result.succeed(stored));
     const upsert = upsertMethod(item, loadItem, recordingSave().rules)(ctx);
-    expect(open(Result.unwrap(await upsert({ input: { tenantId: "t1", n: 1 }, actor: operator }))).pre).toBeNull();
     expect(
-      open(Result.unwrap(await upsert({ input: { id: "i1", tenantId: "t1", n: 2 }, actor: operator }))).pre,
+      open(Result.unwrap(await upsert({ input: { tenantId: "t1", n: 1 }, actor: operator })).persistable).pre,
+    ).toBeNull();
+    expect(
+      open(Result.unwrap(await upsert({ input: { id: "i1", tenantId: "t1", n: 2 }, actor: operator })).persistable).pre,
     ).toEqual(stored);
     expect(calls.load.map((a) => a.input.id)).toEqual(["i1"]);
   });
@@ -261,8 +276,8 @@ describe("upsert", () => {
 // 受け取った状態を記録し、actor をそのまま通す削除の線路
 const recordingDelete = () => {
   const seen: DeleteState<Stored, Key, Operator>[] = [];
-  const rules: DeleteRun<Stored, Key, Operator, Operator, never> = {
-    run: async (s) => (seen.push(s), Result.succeed({ actor: s.actor })),
+  const rules: DeleteRun<Stored, Key, Operator, Operator, never, never> = {
+    run: async (s) => (seen.push(s), Result.succeed({ state: { actor: s.actor }, events: [] })),
   };
   return { rules, seen };
 };
@@ -272,7 +287,7 @@ describe("delete", () => {
     const { ctx, calls, loadItem } = contextWith(() => Result.succeed(stored));
     const { rules, seen } = recordingDelete();
     const r = await deleteMethod(item, loadItem, rules)(ctx)({ input: { id: "i1", tenantId: "t1" }, actor: operator });
-    expect(open(Result.unwrap(r))).toEqual({ pre: stored, actor: operator });
+    expect(open(Result.unwrap(r).deletable)).toEqual({ pre: stored, actor: operator });
     expect(calls.load).toEqual([{ input: { id: "i1", tenantId: "t1" }, actor: operator }]);
     expect(seen).toEqual([{ pre: stored, next: null, input: { id: "i1", tenantId: "t1" }, actor: operator, now: 42 }]);
     expect(seen.every((s) => Object.isFrozen(s.input))).toBe(true);
@@ -306,8 +321,9 @@ describe("Zod の schema", () => {
     },
   });
   const existing: Range = { id: "r1", from: 1, to: 5 };
-  const passThrough: SaveRun<Range, RangeValue, Range, Operator, Operator, never> = {
-    run: async (s) => Result.succeed({ next: { ...s.next, id: s.next.id ?? "new" }, actor: s.actor }),
+  const passThrough: SaveRun<Range, RangeValue, Range, Operator, Operator, never, never> = {
+    run: async (s) =>
+      Result.succeed({ state: { next: { ...s.next, id: s.next.id ?? "new" }, actor: s.actor }, events: [] }),
   };
   const ctx: BindCtx = { invocation: () => invocationOf(new Context([]), 0) };
   const find: LoadRun<{ id?: string | undefined }, Operator, Range, never> = {
@@ -319,7 +335,7 @@ describe("Zod の schema", () => {
     const created = await create({ input: { from: 1, to: 2 }, actor: operator });
     // @ts-expect-error schema にない項目を渡したときの実行時の振る舞いを確かめる
     const extra = await create({ input: { from: 1, to: 2, extra: 1 }, actor: operator });
-    expect(open(Result.unwrap(created)).next).toEqual({ id: "new", from: 1, to: 2 });
+    expect(open(Result.unwrap(created).persistable).next).toEqual({ id: "new", from: 1, to: 2 });
     expect(Result.unwrapError(extra)).toMatchObject({ step: "input", error: { issues: [{ path: ["extra"] }] } });
   });
 
@@ -329,7 +345,7 @@ describe("Zod の schema", () => {
     // @ts-expect-error 型に合わない入力を渡したときの実行時の振る舞いを確かめる
     const badField = await update({ input: { id: "r1", from: "x" }, actor: operator });
     const crossed = await update({ input: { id: "r1", from: 9 }, actor: operator });
-    expect(open(Result.unwrap(passed)).next).toEqual({ id: "r1", from: 3, to: 5 });
+    expect(open(Result.unwrap(passed).persistable).next).toEqual({ id: "r1", from: 3, to: 5 });
     expect([Result.unwrapError(badField), Result.unwrapError(crossed)]).toMatchObject([
       { step: "input", error: { issues: [{ path: ["from"] }] } },
       { step: "input", error: { issues: [{ message: "from は to 以下" }] } },

@@ -26,7 +26,7 @@ const { decide } = set.resolveIn({ invocation: () => invocationOf(new Context([]
 
 test("output が線路の最後の状態から組み立てた値と actor を、封をした値で返す", async () => {
   const r = await decide({ input: { fileId: "f1" }, actor: member });
-  expect(open(Result.unwrap(r))).toEqual({ value: "/files/f1", actor: member });
+  expect(open(Result.unwrap(r).decision)).toEqual({ value: "/files/f1", actor: member });
 });
 
 test("線路の失敗はそのまま返し、output は呼ばない", async () => {

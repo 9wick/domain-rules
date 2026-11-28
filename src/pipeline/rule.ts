@@ -17,8 +17,19 @@ declare const ruleTrack: unique symbol;
 
 // rule は線路の1つの step。run の型がそのまま、受け取る状態・成功の値・失敗の型を表す。
 // I は失敗を判別する識別子。説明文を直しても呼び出し側の分岐が壊れないよう、description とは分けて持つ。
-// P は requires に書いた port の record の型で、bind が provider の不足を型で確かめるために持つ
-export type Rule<K extends TrackKind, T extends string, I extends string, S, W extends WhenParam<K, S>, V, E, P> = {
+// P は requires に書いた port の record の型で、bind が provider の不足を型で確かめるために持つ。
+// Ev は emit が発行するイベントの型。emit で作った rule だけが event を持つ
+export type Rule<
+  K extends TrackKind,
+  T extends string,
+  I extends string,
+  S,
+  W extends WhenParam<K, S>,
+  V,
+  E,
+  P,
+  Ev = never,
+> = {
   readonly kind: "rule";
   // 型の上で rule と線路を合わせるための印。実行時には持たない。どの線路にも置ける alwaysAllow は印を持たない
   readonly [ruleTrack]?: { readonly kind: K; readonly target: T };
@@ -29,6 +40,8 @@ export type Rule<K extends TrackKind, T extends string, I extends string, S, W e
   // when に、状態をどう進めるかの step を付けたもの。always のように自分の step を持つ when は、その step が残る
   readonly when: W & { readonly step: ConditionalStep<S> };
   readonly run: (s: S, invocation: Invocation) => Promise<Result.Result<V, E>>;
+  // when が当たったときに線路が呼び、返した値をイベントとして溜める
+  readonly event?: (s: S) => Ev;
 };
 
 export function rule<

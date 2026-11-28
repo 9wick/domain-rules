@@ -28,21 +28,27 @@ export class ActionRules<N extends string = string, PN extends string = string, 
 const actorOf = <X extends { readonly actor: unknown }>(x: X): X["actor"] => x.actor;
 
 // output は線路の最後の step で、最後の状態から返す値を組み立てる
-export function actionRules<N extends string, In, Out, Act, D, E, PN extends string, T>(
+export function actionRules<N extends string, In, Out, Act, D, E, PN extends string, T, Ev = never>(
   a: Action<N, In, Out, Act>,
   def: {
-    readonly rules: RunnableRuleset<DecideState<Out, Act>, D, E, PN>;
+    readonly rules: RunnableRuleset<DecideState<Out, Act>, D, E, PN, Ev>;
     readonly output: (s: DecideState<Out, Act> & D) => T;
   },
-): ActionRules<N, PN, { readonly decide: DecideMethod<N, In, Out, Act, T, (DecideState<Out, Act> & D)["actor"], E> }> {
+): ActionRules<
+  N,
+  PN,
+  { readonly decide: DecideMethod<N, In, Out, Act, T, (DecideState<Out, Act> & D)["actor"], E, Ev> }
+> {
   const { rules, output } = def;
-  const decided: DecideRun<Out, Act, T, (DecideState<Out, Act> & D)["actor"], E> = {
+  const decided: DecideRun<Out, Act, T, (DecideState<Out, Act> & D)["actor"], E, Ev> = {
     run: async (s, call) => {
       const r = await rules.run(s, call);
-      return r.type === "Failure" ? r : Result.succeed({ value: output(r.value), actor: actorOf(r.value) });
+      if (r.type === "Failure") return r;
+      const { state, events } = r.value;
+      return Result.succeed({ decided: { value: output(state), actor: actorOf(state) }, events });
     },
   };
   return new ActionRules(a.name, { rules: rules.plan }, rules.ports, (ctx: BindCtx) =>
-    actionMethods<N, In, Out, Act, T, (DecideState<Out, Act> & D)["actor"], E>(ctx, a.input, decided),
+    actionMethods<N, In, Out, Act, T, (DecideState<Out, Act> & D)["actor"], E, Ev>(ctx, a.input, decided),
   );
 }

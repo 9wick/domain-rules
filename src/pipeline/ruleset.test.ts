@@ -2,6 +2,7 @@ import { Result } from "@praha/byethrow";
 import { expect, test } from "vite-plus/test";
 import { Track } from "../definition/track.ts";
 import { port } from "../port/port.ts";
+import { emit } from "./emit.ts";
 import { rule } from "./rule.ts";
 import { ruleset } from "./ruleset.ts";
 import { always } from "./when/step.ts";
@@ -27,7 +28,7 @@ const doubled = rule(track, {
 
 test("rule を先頭から順に当て、成功の値を状態に重ねる", async () => {
   expect(await ruleset(positive).add(doubled).run({ n: 2 }, inv)).toEqual(
-    Result.succeed({ n: 2, positive: true, doubled: 4 }),
+    Result.succeed({ state: { n: 2, positive: true, doubled: 4 }, events: [] }),
   );
 });
 
@@ -53,8 +54,45 @@ test("when が当たらない rule は check を呼ばず、状態を変えな�
     when: () => false,
     check: () => ((called = true), Result.fail("X")),
   });
-  expect(await ruleset(never).add(doubled).run({ n: 1 }, inv)).toEqual(Result.succeed({ n: 1, doubled: 2 }));
+  expect(await ruleset(never).add(doubled).run({ n: 1 }, inv)).toEqual(
+    Result.succeed({ state: { n: 1, doubled: 2 }, events: [] }),
+  );
   expect(called).toBe(false);
+});
+
+test("emit のイベントは状態に入れず、当たった emit の分だけ線路の順に溜める", async () => {
+  const big = emit(track.assuming<{ readonly doubled: number }>(), {
+    id: "big",
+    description: "大きい",
+    when: (s) => s.doubled > 2,
+    event: (s) => ({ type: "BIG", doubled: s.doubled }) as const,
+  });
+  const seen = emit(track, {
+    id: "seen",
+    description: "見た",
+    when: always,
+    event: (s) => ({ type: "SEEN", n: s.n }) as const,
+  });
+  const rules = ruleset(seen).add(doubled).add(big);
+  expect(await rules.run({ n: 2 }, inv)).toEqual(
+    Result.succeed({
+      state: { n: 2, doubled: 4 },
+      events: [
+        { type: "SEEN", n: 2 },
+        { type: "BIG", doubled: 4 },
+      ],
+    }),
+  );
+  expect(await rules.run({ n: 1 }, inv)).toEqual(
+    Result.succeed({ state: { n: 1, doubled: 2 }, events: [{ type: "SEEN", n: 1 }] }),
+  );
+});
+
+test("後ろの rule で失敗すると、前の emit のイベントも返さない", async () => {
+  const seen = emit(track, { id: "seen", description: "見た", when: always, event: () => "SEEN" });
+  expect(await ruleset(seen).add(positive).run({ n: -1 }, inv)).toEqual(
+    Result.fail({ step: "positive", error: "NOT_POSITIVE" }),
+  );
 });
 
 test("plan と ports は、足した rule の識別子・説明・when の説明・port を順に持つ", () => {

@@ -52,23 +52,27 @@ declare const startState: unique symbol;
 // when が状態をどう進めるか。線路は、rule の when が持つ step がこの型を満たすことを add で確かめる
 type Stepper<Cur, V, E, D> = <X extends Cur>(s: X, check: Check<X, V, E>) => Promise<Result.Result<X & D, E>>;
 
-type RunState<In, D, E> = <X extends In>(s: X, invocation: Invocation) => Promise<Result.Result<X & D, E>>;
+// イベントは状態に入れず、別に溜める。後ろの rule の when や check が、前の emit のイベントを見て判断しないようにする
+export type RunState<In, D, E, Ev> = <X extends In>(
+  s: X,
+  invocation: Invocation,
+) => Promise<Result.Result<{ readonly state: X & D; readonly events: readonly Ev[] }, E>>;
 
 // rule を先頭から順に当てる線路。rule を足すたびに、前の rule が作った状態の型を次の rule が受け取れるかを型で確かめる。
 // 状態は、開始の状態に rule が重ねた型 D を足したもの。開始の状態の型は走らせる側が決め、そのまま最後まで残る
-export class Ruleset<K extends TrackKind, T extends string, In extends {}, D, E, PN extends string> {
+export class Ruleset<K extends TrackKind, T extends string, In extends {}, D, E, PN extends string, Ev = never> {
   declare readonly [portNames]: PN;
-  declare readonly [rulesetTypes]: { readonly delta: D; readonly error: E };
+  declare readonly [rulesetTypes]: { readonly delta: D; readonly error: E; readonly events: Ev };
   // 開始の状態の型。走らせる側の開始の状態がこの型に代入できるかを、引数の型として確かめる
   declare readonly [startState]: (s: In) => void;
   readonly kind = "ruleset";
   readonly plan: readonly PlannedRule[];
   readonly ports: readonly AnyPort[];
-  readonly run: RunState<In, D, E>;
+  readonly run: RunState<In, D, E, Ev>;
 
   readonly #steps: readonly Step[];
 
-  constructor(steps: readonly Step[], run: RunState<In, D, E>) {
+  constructor(steps: readonly Step[], run: RunState<In, D, E, Ev>) {
     this.#steps = steps;
     this.plan = steps.map((s) => ({
       id: s.id,
@@ -81,24 +85,30 @@ export class Ruleset<K extends TrackKind, T extends string, In extends {}, D, E,
     Object.freeze(this);
   }
 
-  add<I extends string, W extends WhenParam<K, In & D>, V, E2, P extends Ports>(
-    r: Rule<K, T, I, In & D, W, V, E2, P> &
+  add<I extends string, W extends WhenParam<K, In & D>, V, E2, P extends Ports, Ev2 = never>(
+    r: Rule<K, T, I, In & D, W, V, E2, P, Ev2> &
       NarrowGuard<In & D, V> & {
         readonly when: { readonly step: Stepper<In & D, V, StepFailure<I, E2>, Delta<V, W>> };
       },
-  ): Ruleset<K, T, In, D & Delta<V, W>, E | StepFailure<I, E2>, PN | PortNames<P>> {
+  ): Ruleset<K, T, In, D & Delta<V, W>, E | StepFailure<I, E2>, PN | PortNames<P>, Ev | Ev2> {
     const previous = this.run;
     // r.when.step は、rule が付けた step と when 自身の step の交差型になる。add で確かめた型の方で呼ぶ
     const step: Stepper<In & D, V, StepFailure<I, E2>, Delta<V, W>> = r.when.step;
-    return new Ruleset<K, T, In, D & Delta<V, W>, E | StepFailure<I, E2>, PN | PortNames<P>>(
+    const { event } = r;
+    return new Ruleset<K, T, In, D & Delta<V, W>, E | StepFailure<I, E2>, PN | PortNames<P>, Ev | Ev2>(
       [...this.#steps, { id: r.id, description: r.description, when: describeWhen(r.when), ports: r.ports }],
       async <X extends In>(s0: X, invocation: Invocation) => {
         const prev = await previous(s0, invocation);
         if (prev.type === "Failure") return prev;
-        return step(prev.value, async (s) => {
-          const out = await r.run(s, invocation);
-          return out.type === "Failure" ? Result.fail({ step: r.id, error: out.error }) : out;
+        const { state, events } = prev.value;
+        const out = await step(state, async (s) => {
+          const checked = await r.run(s, invocation);
+          return checked.type === "Failure" ? Result.fail({ step: r.id, error: checked.error }) : checked;
         });
+        if (out.type === "Failure") return out;
+        // when は同期で状態だけを見るので、step が check を呼んだかどうかと同じ答えになる
+        const emitted: readonly (Ev | Ev2)[] = event !== undefined && r.when(state) ? [event(state)] : [];
+        return Result.succeed({ state: out.value, events: [...events, ...emitted] });
       },
     );
   }
@@ -113,21 +123,31 @@ const start = <
   V,
   E2,
   P extends Ports,
+  Ev2 = never,
 >(
-  first: Rule<K, T, I, S & {}, W, V, E2, P> &
+  first: Rule<K, T, I, S & {}, W, V, E2, P, Ev2> &
     NarrowGuard<S & {}, V> & {
       readonly when: { readonly step: Stepper<S & {}, V, StepFailure<I, E2>, Delta<V, W>> };
     },
-) => new Ruleset<K, T, S & {}, unknown, never, never>([], async (s) => Result.succeed(s)).add<I, W, V, E2, P>(first);
+) =>
+  new Ruleset<K, T, S & {}, unknown, never, never>([], async (s) => Result.succeed({ state: s, events: [] })).add<
+    I,
+    W,
+    V,
+    E2,
+    P,
+    Ev2
+  >(first);
 
 // 先頭の rule が受け取る状態から線路を始める
 export const ruleset = start;
 
 // 線路を走らせるのに要る部分。rule を足す add を含めないので、開始の状態の型だけで代入できるかが決まる
-export type RunnableRuleset<In extends {}, D, E, PN extends string> = Omit<
-  Ruleset<TrackKind, string, In, D, E, PN>,
+export type RunnableRuleset<In extends {}, D, E, PN extends string, Ev = never> = Omit<
+  Ruleset<TrackKind, string, In, D, E, PN, Ev>,
   "add" | "kind"
 >;
 export type RulesetOut<R> = R extends { readonly [rulesetTypes]: { readonly delta: infer D } } ? D : never;
 export type RulesetError<R> = R extends { readonly [rulesetTypes]: { readonly error: infer E } } ? E : never;
+export type RulesetEvents<R> = R extends { readonly [rulesetTypes]: { readonly events: infer Ev } } ? Ev : never;
 export type RulesetPorts<R> = R extends { readonly [portNames]: infer PN } ? PN : never;
