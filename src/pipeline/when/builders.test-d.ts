@@ -43,3 +43,14 @@ test("given は保存と削除の線路で使え、input にない項目名は�
   const onDecide: When<"decide", Saving> = given("status");
   expectTypeOf([status, onDelete, unknownField, unknownOnDelete, onDecide]).not.toBeNever();
 });
+
+test("changed に渡せるのは値で比べられる項目だけで、配列や object の項目は型エラー", () => {
+  type Tagged = { readonly status: string; readonly tags: readonly string[]; readonly at: Date };
+  type Saving = { readonly pre: Tagged | null; readonly next: Tagged };
+  const status: When<"save", Saving> = changed("status");
+  // @ts-expect-error 配列は別参照なら中身が同じでも変化と判定される
+  const tags: When<"save", Saving> = changed("tags");
+  // @ts-expect-error Date も object なので値で比べられない
+  const at: When<"save", Saving> = changed("at");
+  expectTypeOf([status, tags, at]).not.toBeNever();
+});

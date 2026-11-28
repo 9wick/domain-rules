@@ -1,4 +1,5 @@
 import * as Result from "../shared/result.ts";
+import type { ByValue } from "../shared/by-value.ts";
 import { Panic } from "../shared/panic.ts";
 import type { Invocation } from "./invocation.ts";
 import type { Context, Provider } from "./provider.ts";
@@ -22,7 +23,7 @@ const memoAt = <T, E>(root: Memo<T, E>, args: readonly unknown[]): Memo<T, E> =>
   }, root);
 
 // Map は object を同一性で比べ、中身が同じ別の object では結果を使い回せない。気づかないまま毎回呼ばないよう、cached の引数は値で比べられるものに限る
-export type CacheableArg = string | number | bigint | boolean | symbol | null | undefined;
+export type CacheableArg = ByValue;
 
 // port の差し込み口と、cached のときに結果を使い回す memo の封。cached で作った port も同じものを使うので、元の宣言の provider で満たせる
 type Declared<N extends string, A extends readonly unknown[], T, E> = {
