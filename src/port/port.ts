@@ -7,7 +7,22 @@ import { Brand, Slot } from "./slot.ts";
 declare const portTypes: unique symbol;
 
 type ImplOf<A extends readonly unknown[], T, E> = (...args: A) => Result.Result<T, E> | Result.ResultAsync<T, E>;
-type Memo<T, E> = Map<string, Promise<Result.Result<T, E>>>;
+// 引数を1つずつ Map で引く木。文字列に直さず値そのもので比べるので、undefined と null、Map の中身の違いを取り違えず、BigInt も扱える
+type Memo<T, E> = { readonly children: Map<unknown, Memo<T, E>>; result: Promise<Result.Result<T, E>> | undefined };
+
+const emptyMemo = <T, E>(): Memo<T, E> => ({ children: new Map(), result: undefined });
+
+const memoAt = <T, E>(root: Memo<T, E>, args: readonly unknown[]): Memo<T, E> =>
+  args.reduce<Memo<T, E>>((node, arg) => {
+    const found = node.children.get(arg);
+    if (found !== undefined) return found;
+    const child = emptyMemo<T, E>();
+    node.children.set(arg, child);
+    return child;
+  }, root);
+
+// Map は object を同一性で比べ、中身が同じ別の object では結果を使い回せない。気づかないまま毎回呼ばないよう、cached の引数は値で比べられるものに限る
+export type CacheableArg = string | number | bigint | boolean | symbol | null | undefined;
 
 // port の差し込み口と、cached のときに結果を使い回す memo の封。cached で作った port も同じものを使うので、元の宣言の provider で満たせる
 type Declared<N extends string, A extends readonly unknown[], T, E> = {
@@ -47,12 +62,10 @@ export class Port<N extends string, in out A extends readonly unknown[], in out 
     if (impl === undefined) throw new Panic(`no provider for port "${this.name}"`);
     if (!this.cached) return impl(...args);
     // 同じ引数の呼び出しを1回の呼び出しの中で使い回す
-    const memo = this.#memoIn(invocation);
-    const key = JSON.stringify(args);
-    const hit = memo.get(key);
-    if (hit !== undefined) return hit;
+    const node = memoAt(this.#memoIn(invocation), args);
+    if (node.result !== undefined) return node.result;
     const pending = Promise.resolve(impl(...args));
-    memo.set(key, pending);
+    node.result = pending;
     return pending;
   };
 
@@ -61,7 +74,7 @@ export class Port<N extends string, in out A extends readonly unknown[], in out 
     const boxed = invocation.memos.get(slot);
     const found = boxed === undefined ? undefined : brand.open(boxed);
     if (found !== undefined) return found;
-    const memo: Memo<T, E> = new Map();
+    const memo = emptyMemo<T, E>();
     invocation.memos.set(slot, brand.box(memo));
     return memo;
   }
@@ -110,5 +123,6 @@ export const port = <const N extends string>(name: N) => ({
     new Port<N, Parameters<F>, ReturnType<F>, E>(name, false, { slot: new Slot(name), memo: new Brand() }),
 });
 
-export const cached = <N extends string, A extends readonly unknown[], T, E>(p: Port<N, A, T, E>): Port<N, A, T, E> =>
-  p.withCache();
+export const cached = <N extends string, A extends readonly CacheableArg[], T, E>(
+  p: Port<N, A, T, E>,
+): Port<N, A, T, E> => p.withCache();
