@@ -44,7 +44,7 @@ export class Port<N extends string, in out A extends readonly unknown[], in out 
   readonly callIn = async (invocation: Invocation, args: A): Promise<Result.Result<T, E>> => {
     const impl = this.#declared.slot.implIn(invocation.context);
     // bind が provider の不足を確かめてから呼ぶので、ここに来るのは壊れたときだけ
-    if (impl === undefined) throw new Panic(`port "${this.name}" の provider がありません`);
+    if (impl === undefined) throw new Panic(`no provider for port "${this.name}"`);
     if (!this.cached) return impl(...args);
     // 同じ引数の呼び出しを1回の呼び出しの中で使い回す
     const memo = this.#memoIn(invocation);
@@ -81,7 +81,7 @@ export class Port<N extends string, in out A extends readonly unknown[], in out 
       if (r.type === "Failure") {
         yield r;
         // safeTry は失敗を受け取ったら generator を再開しないので、ここに来るのは壊れたときだけ
-        throw new Panic(`port "${name}" の失敗を yield した後に再開されました`);
+        throw new Panic(`port "${name}" was resumed after yielding a failure`);
       }
       return r.value;
     };

@@ -56,15 +56,17 @@ type PersistedGuard<M extends Model, End> = [End] extends [never]
   ? unknown
   : [End] extends [{ readonly next: Persisted<M> }]
     ? unknown
-    : { readonly "最後の next が永続化の型にならない": End extends { readonly next: infer X } ? X : never };
+    : {
+        readonly "the final next does not match the persisted type": End extends { readonly next: infer X } ? X : never;
+      };
 
 // update は重ねた値をもう一度 value の schema に通すので、schema は自分の出力もそのまま受け付けなければならない
 type ReparseGuard<VI, VO> = [VO] extends [VI]
   ? unknown
-  : { readonly "update で重ねた値を schema に通すため、schema.value は自分の出力も受け付けなければならない": VO };
+  : { readonly "schema.value must accept its own output, because update re-parses the merged value": VO };
 
 // update と delete は id で既存の値を指すので、load を書くには key の schema に id が要る
-type KeyHasId<KO> = "id" extends keyof KO ? unknown : { readonly "key の schema に id が要る": never };
+type KeyHasId<KO> = "id" extends keyof KO ? unknown : { readonly "the key schema must have id": never };
 
 type Methods<Ms> = (ctx: BindCtx) => Ms;
 export type PlannedLoad = { readonly ports: readonly string[] };

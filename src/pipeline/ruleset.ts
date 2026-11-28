@@ -21,10 +21,10 @@ type Narrowing<S, O> = {
 // input は呼び出し時の意思なので変えさせない。Partial なので、狭めたつもりの値で項目が消えても型では気づけない
 type NarrowGuard<S, O> = [O] extends [object]
   ? "input" extends keyof O
-    ? { readonly 呼び出し時の入力は変えられない: O }
+    ? { readonly "input given at call time cannot be changed": O }
     : O extends Narrowing<S, O>
       ? unknown
-      : { readonly 状態の項目を別の型に置き換えている: O }
+      : { readonly "state fields can only be narrowed, not replaced with another type": O }
   : unknown;
 
 export type StepFailure<I, E> = { readonly step: I; readonly error: E };

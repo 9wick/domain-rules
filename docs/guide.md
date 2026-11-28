@@ -238,7 +238,7 @@ import { immutable } from "domain-rules";
 export const articleImmutableFields = immutable(article.onSave, ["blogId", "authorId"]);
 ```
 
-`immutable` が返すルールの `id` は指定した項目によらず既定で `"immutable"`、`description` は `"作成後に変えられない項目: blogId, authorId"` になり、更新時に該当フィールドが変わると `{ code: "IMMUTABLE_FIELD_CHANGED", field: "blogId" }` で失敗します。
+`immutable` が返すルールの `id` は指定した項目によらず既定で `"immutable"`、`description` は `"fields immutable after creation: blogId, authorId"` になり、更新時に該当フィールドが変わると `{ code: "IMMUTABLE_FIELD_CHANGED", field: "blogId" }` で失敗します。
 
 同じ線路に `immutable` を複数置いて、失敗の `step` でも区別したいときは、第 3 引数で `id` を変えられます。
 
@@ -263,7 +263,7 @@ export const articleDefaults = defaultFields(article.onSave, {
 - 既定値の網羅は強制しません。省略できる項目に誰も値を入れなければ、保存パイプラインの終端の `persisted` の型検査で型エラーになります。
 - `when` は `always` です。通ったあとのルールは、指定した項目に値がある型で受け取れます。失敗はしません。
 - port は受け取りません。採番のように port が要る値は、`rule` で書きます（[`id` と `actor` の昇格例](#id-と-actor-の昇格例) を参照）。時刻は `s.now` を使います。
-- `id` は既定で `"defaultFields"`、`description` は `"作成時に省略したときの既定値: status, approvedAt, slug"` です。同じ線路に複数置くときは、`immutable` と同じく第 3 引数の `{ id }` で変えます。
+- `id` は既定で `"defaultFields"`、`description` は `"defaults for fields omitted on create: status, approvedAt, slug"` です。同じ線路に複数置くときは、`immutable` と同じく第 3 引数の `{ id }` で変えます。
 
 条件なしで削除を許可するモデルには、`.delete(ruleset(alwaysAllow))` を指定できます。`alwaysAllow` の `id` は `"alwaysAllow"` です。
 

@@ -18,7 +18,7 @@ const immutableRule = <T extends string, S extends SaveTrackState, const I exten
   const changedField = (s: S) => fields.find((f) => !Object.is(valueOf(s.pre, f), valueOf(s.next, f)));
   return rule(track, {
     id,
-    description: `作成後に変えられない項目: ${fields.join(", ")}`,
+    description: `fields immutable after creation: ${fields.join(", ")}`,
     // 説明は and(not(onCreate), or(changed(...))) と同じ形にする。判定は項目の数によらず1つの関数で書く
     when: whenOf<"save", S>(
       {
@@ -82,7 +82,7 @@ type DefaultSpec<S, Key extends string> = { readonly [F in Defaultable<S, Key>]?
 type OnlyDefaultable<D, S, Key extends string> = [Exclude<keyof D, Defaultable<S, Key>>] extends [never]
   ? unknown
   : {
-      readonly "既定値を書けるのは、value で省略できて永続化の型では必ずある項目だけ": Exclude<
+      readonly "defaults are allowed only for fields optional in value and required in the persisted type": Exclude<
         keyof D,
         Defaultable<S, Key>
       >;
@@ -117,7 +117,7 @@ const defaultFieldsRule = <T extends string, S extends SaveTrackState, const I e
     );
   return rule(track, {
     id,
-    description: `作成時に省略したときの既定値: ${fields.join(", ")}`,
+    description: `defaults for fields omitted on create: ${fields.join(", ")}`,
     // 後ろの rule が値のある型で受け取れるよう、昇格は必ず起きる always にする。値を入れるのは作成時だけ
     when: always,
     check: (s) => (s.pre === null ? Result.succeed({ next: filled(s) }) : Result.succeed()),
@@ -160,7 +160,7 @@ export const alwaysAllow: Rule<TrackKind, string, "alwaysAllow", unknown, Always
   {
     kind: "rule",
     id: "alwaysAllow",
-    description: "常に許可",
+    description: "always allow",
     ports: [],
     when: always,
     run: async () => Result.succeed(),

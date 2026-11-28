@@ -133,7 +133,7 @@ const parseKeyed = <KO extends { readonly id?: unknown }, Rest>(
     return Result.fail(inputFailure(failedIssues([...unknown], rest, key)));
   }
   const { id } = key.value;
-  if (id === undefined || id === null) return Result.fail(inputFailure([{ message: "id は必須です", path: ["id"] }]));
+  if (id === undefined || id === null) return Result.fail(inputFailure([{ message: "id is required", path: ["id"] }]));
   return Result.succeed({ key: { ...key.value, id }, rest: rest.value });
 };
 

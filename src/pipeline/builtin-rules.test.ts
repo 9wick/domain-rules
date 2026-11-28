@@ -26,7 +26,7 @@ test("immutable は作成時と、指定していない項目だけが変わっ�
 
 test("immutable の識別子は項目によらず同じで、説明は指定した項目を表す", () => {
   expect(fixed.id).toBe("immutable");
-  expect(fixed.description).toBe("作成後に変えられない項目: slug, n");
+  expect(fixed.description).toBe("fields immutable after creation: slug, n");
   expect(fixed.when.description).toEqual({
     kind: "and",
     conditions: [
@@ -81,7 +81,7 @@ test("defaultFields は更新では何もしない", async () => {
 
 test("defaultFields は常に当たり、識別子は既定で defaultFields、説明は指定した項目を表す", () => {
   expect(withDefaults.id).toBe("defaultFields");
-  expect(withDefaults.description).toBe("作成時に省略したときの既定値: title, memo");
+  expect(withDefaults.description).toBe("defaults for fields omitted on create: title, memo");
   expect(withDefaults.when.description).toEqual({ kind: "always" });
   expect(defaultFields(draftTrack, { memo: null }, { id: "memoDefault" }).id).toBe("memoDefault");
 });
