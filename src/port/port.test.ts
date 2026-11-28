@@ -53,6 +53,39 @@ test("同じ宣言から作った cached の port どうしは、1回の呼び�
   expect(calls).toEqual([1]);
 });
 
+test("cached の port は、文字列にすると同じになる別の引数を取り違えない", async () => {
+  const raw = port("lookup").of<(v?: string | number | null) => string>();
+  const lookup = cached(raw);
+  const inv = invocationWith(raw.provider((v) => Result.succeed(String(v))));
+  expect(await lookup.callIn(inv, [null])).toEqual(Result.succeed("null"));
+  expect(await lookup.callIn(inv, [undefined])).toEqual(Result.succeed("undefined"));
+  expect(await lookup.callIn(inv, [Number.NaN])).toEqual(Result.succeed("NaN"));
+  expect(await lookup.callIn(inv, [])).toEqual(Result.succeed("undefined"));
+});
+
+test("cached の port は、NaN と BigInt の引数でも同じ引数の結果を使い回す", async () => {
+  const raw = port("lookup").of<(v: number | bigint) => number>();
+  const lookup = cached(raw);
+  const calls: (number | bigint)[] = [];
+  const inv = invocationWith(raw.provider((v) => (calls.push(v), Result.succeed(calls.length))));
+  await lookup.callIn(inv, [Number.NaN]);
+  await lookup.callIn(inv, [Number.NaN]);
+  await lookup.callIn(inv, [1n]);
+  await lookup.callIn(inv, [1n]);
+  expect(calls).toEqual([Number.NaN, 1n]);
+});
+
+test("cached の port は、引数の並びごとに結果を分ける", async () => {
+  const raw = port("pair").of<(a: string, b: string) => string>();
+  const lookup = cached(raw);
+  const calls: string[] = [];
+  const inv = invocationWith(raw.provider((a, b) => (calls.push(`${a}|${b}`), Result.succeed(a + b))));
+  await lookup.callIn(inv, ["a", "b"]);
+  await lookup.callIn(inv, ["b", "a"]);
+  await lookup.callIn(inv, ["a", "b"]);
+  expect(calls).toEqual(["a|b", "b|a"]);
+});
+
 test("cached でない port は、同じ呼び出しの中でも毎回実装を呼ぶ", async () => {
   const lookup = port("lookup").of<(n: number) => number>();
   const calls: number[] = [];
