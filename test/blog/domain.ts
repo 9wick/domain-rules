@@ -6,6 +6,7 @@ import {
   and,
   cached,
   changed,
+  defaultFields,
   domainDefinitionKit,
   immutable,
   modelRules,
@@ -97,13 +98,7 @@ export const newArticleId = port("newArticleId").of<() => ArticleIdNew, InfraErr
 type Defaulted = { readonly next: { readonly status: ArticleStatus; readonly approvedAt: number | null } };
 const savedWithDefaults = article.onSave.assuming<Defaulted>();
 
-export const articleDefaults = rule(article.onSave, {
-  id: "createDefaults",
-  description: "作成時に省略した status は下書き、approvedAt は未承認",
-  when: always,
-  check: ({ next }) =>
-    Result.succeed({ next: { status: next.status ?? "DRAFT", approvedAt: next.approvedAt ?? null } }),
-});
+export const articleDefaults = defaultFields(article.onSave, { status: "DRAFT", approvedAt: null });
 
 export const isDraft = (a: ArticleValue) => a.status === "DRAFT";
 export const isPublished = (a: ArticleValue) => a.status === "PUBLISHED";
