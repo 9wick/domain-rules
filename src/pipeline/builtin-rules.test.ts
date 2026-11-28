@@ -42,6 +42,13 @@ test("immutable の識別子は項目によらず同じで、説明は指定し�
   });
 });
 
+test("immutable に id を渡すと、説明と判定はそのままで id だけが変わる", () => {
+  const named = immutable(track, ["slug", "n"], { id: "slugAndNFixed" });
+  expect(named.id).toBe("slugAndNFixed");
+  expect(named.description).toBe(fixed.description);
+  expect(named.when.description).toEqual(fixed.when.description);
+});
+
 test("alwaysAllow は常に当たり、何も確かめずに成功する", async () => {
   expect(alwaysAllow.when.description).toEqual({ kind: "always" });
   expect(await alwaysAllow.run(undefined, inv)).toEqual(Result.succeed());

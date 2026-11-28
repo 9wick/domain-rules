@@ -8,13 +8,16 @@ import { describeWhen, whenOf, type Always } from "./when/when.ts";
 
 const valueOf = (o: object | null, f: string): unknown => (o === null ? undefined : new Map(Object.entries(o)).get(f));
 
-export const immutable = <T extends string, S extends { readonly pre: object | null; readonly next: object }>(
+type SaveTrackState = { readonly pre: object | null; readonly next: object };
+
+const immutableRule = <T extends string, S extends SaveTrackState, const I extends string>(
   track: Track<"save", T, S>,
   fields: readonly (keyof S["next"] & string)[],
+  id: I,
 ) => {
   const changedField = (s: S) => fields.find((f) => !Object.is(valueOf(s.pre, f), valueOf(s.next, f)));
   return rule(track, {
-    id: "immutable",
+    id,
     description: `作成後に変えられない項目: ${fields.join(", ")}`,
     // 説明は and(not(onCreate), or(changed(...))) と同じ形にする。判定は項目の数によらず1つの関数で書く
     when: whenOf<"save", S>(
@@ -33,6 +36,24 @@ export const immutable = <T extends string, S extends { readonly pre: object | n
     },
   });
 };
+
+// id は既定で "immutable"。同じ線路に複数置いて失敗の step でも区別したいときだけ、id を渡して変える
+export function immutable<T extends string, S extends SaveTrackState>(
+  track: Track<"save", T, S>,
+  fields: readonly (keyof S["next"] & string)[],
+): ReturnType<typeof immutableRule<T, S, "immutable">>;
+export function immutable<T extends string, S extends SaveTrackState, const I extends string>(
+  track: Track<"save", T, S>,
+  fields: readonly (keyof S["next"] & string)[],
+  options: { readonly id: I },
+): ReturnType<typeof immutableRule<T, S, I>>;
+export function immutable<T extends string, S extends SaveTrackState>(
+  track: Track<"save", T, S>,
+  fields: readonly (keyof S["next"] & string)[],
+  options: { readonly id: string } = { id: "immutable" },
+) {
+  return immutableRule(track, fields, options.id);
+}
 
 // 何も確かめずに通す rule。条件なしで削除してよい model の delete に ruleset(alwaysAllow) として渡す
 export const alwaysAllow: Rule<TrackKind, string, "alwaysAllow", unknown, Always, void, never, NoPorts> = Object.freeze(

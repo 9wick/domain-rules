@@ -237,7 +237,13 @@ import { immutable } from "domain-rules";
 export const articleImmutableFields = immutable(article.onSave, ["blogId", "authorId"]);
 ```
 
-`immutable` が返すルールの `id` は指定した項目によらず `"immutable"`、`description` は `"作成後に変えられない項目: blogId, authorId"` になり、更新時に該当フィールドが変わると `{ code: "IMMUTABLE_FIELD_CHANGED", field: "blogId" }` で失敗します。
+`immutable` が返すルールの `id` は指定した項目によらず既定で `"immutable"`、`description` は `"作成後に変えられない項目: blogId, authorId"` になり、更新時に該当フィールドが変わると `{ code: "IMMUTABLE_FIELD_CHANGED", field: "blogId" }` で失敗します。
+
+同じ線路に `immutable` を複数置いて、失敗の `step` でも区別したいときは、第 3 引数で `id` を変えられます。
+
+```ts
+export const slugIsFixed = immutable(article.onSave, ["slug"], { id: "slugIsFixed" });
+```
 
 条件なしで削除を許可するモデルには、`.delete(ruleset(alwaysAllow))` を指定できます。`alwaysAllow` の `id` は `"alwaysAllow"` です。
 
