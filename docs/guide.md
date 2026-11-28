@@ -569,6 +569,35 @@ if (Result.isSuccess(r)) {
 - `events` の要素は `event` が返した値そのものです。ライブラリは何も付け足しません。区別が要るなら `type` などをイベントに持たせ、ハンドラに要る `actor` や時刻も `event` の中で状態から入れてください。
 - `events` は封の外にある読み取り専用のデータなので、`open()` せずに読めます。
 
+### イベントの型を取り出す (`DomainEvent`)
+
+配送する側のハンドラや outbox の型は、`DomainEvent` で定義から取り出せます。イベントの型を別に書き起こさないので、`event` の戻り値を変えればハンドラの型も追従します。
+
+```ts
+import type { DomainEvent } from "domain-rules";
+
+type ArticlePublished = DomainEvent<typeof articlePublished>;
+// { readonly type: "ARTICLE_PUBLISHED"; readonly articleId: ...; readonly reviewerId: ... }
+
+type ArticleEvent = DomainEvent<typeof articleRules>;
+// articleRules の保存と削除の線路に置いた emit が発行しうるイベントの和
+
+const handle = (e: ArticleEvent) => {
+  switch (e.type) {
+    case "ARTICLE_PUBLISHED":
+      return notifyReviewer(e.reviewerId, e.articleId);
+  }
+};
+```
+
+| 渡すもの                     | 得られる型                                           |
+| ---------------------------- | ---------------------------------------------------- |
+| `emit` の戻り値              | その `emit` の `event` が返す型                      |
+| `ruleset`                    | その `ruleset` に並べた `emit` のイベントの和        |
+| `modelRules` / `actionRules` | 保存・削除・判定の線路に置いた `emit` のイベントの和 |
+
+`emit` を 1 つも置いていなければ `never` です。複数のモデルやアクションのイベントをまとめて扱うときは、`DomainEvent<typeof articleRules> | DomainEvent<typeof previewArticleRules>` のように和を書きます。
+
 ライブラリが扱わないこと:
 
 - **イベントの配送**: `events` を受け取ってメールを送る・キューに積むのは、ユースケース層や基盤の責務です。ライブラリはハンドラを呼びません。
