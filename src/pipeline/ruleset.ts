@@ -27,12 +27,22 @@ type NarrowGuard<S, O> = [O] extends [object]
       : { readonly 状態の項目を別の型に置き換えている: O }
   : unknown;
 
-export type StepFailure<N, E> = { readonly step: N; readonly error: E };
+export type StepFailure<I, E> = { readonly step: I; readonly error: E };
 
-export type PlannedRule = { readonly name: string; readonly when: WhenDescription; readonly ports: readonly string[] };
+export type PlannedRule = {
+  readonly id: string;
+  readonly description: string;
+  readonly when: WhenDescription;
+  readonly ports: readonly string[];
+};
 
 // 線路に並べた rule。plan と ports はこれだけから作り、別々に積み上げない
-type Step = { readonly name: string; readonly when: WhenDescription; readonly ports: readonly AnyPort[] };
+type Step = {
+  readonly id: string;
+  readonly description: string;
+  readonly when: WhenDescription;
+  readonly ports: readonly AnyPort[];
+};
 
 // 使う port の名前を型の上で持つ印。bind に渡す rule の組も同じ印で持ち、bind は kind を見ずに port を引く
 export declare const portNames: unique symbol;
@@ -60,29 +70,34 @@ export class Ruleset<K extends TrackKind, T extends string, In extends {}, D, E,
 
   constructor(steps: readonly Step[], run: RunState<In, D, E>) {
     this.#steps = steps;
-    this.plan = steps.map((s) => ({ name: s.name, when: s.when, ports: s.ports.map((p) => p.name) }));
+    this.plan = steps.map((s) => ({
+      id: s.id,
+      description: s.description,
+      when: s.when,
+      ports: s.ports.map((p) => p.name),
+    }));
     this.ports = steps.flatMap((s) => s.ports);
     this.run = run;
     Object.freeze(this);
   }
 
-  add<N extends string, W extends WhenParam<K, In & D>, V, E2, P extends Ports>(
-    r: Rule<K, T, N, In & D, W, V, E2, P> &
+  add<I extends string, W extends WhenParam<K, In & D>, V, E2, P extends Ports>(
+    r: Rule<K, T, I, In & D, W, V, E2, P> &
       NarrowGuard<In & D, V> & {
-        readonly when: { readonly step: Stepper<In & D, V, StepFailure<N, E2>, Delta<V, W>> };
+        readonly when: { readonly step: Stepper<In & D, V, StepFailure<I, E2>, Delta<V, W>> };
       },
-  ): Ruleset<K, T, In, D & Delta<V, W>, E | StepFailure<N, E2>, PN | PortNames<P>> {
+  ): Ruleset<K, T, In, D & Delta<V, W>, E | StepFailure<I, E2>, PN | PortNames<P>> {
     const previous = this.run;
     // r.when.step は、rule が付けた step と when 自身の step の交差型になる。add で確かめた型の方で呼ぶ
-    const step: Stepper<In & D, V, StepFailure<N, E2>, Delta<V, W>> = r.when.step;
-    return new Ruleset<K, T, In, D & Delta<V, W>, E | StepFailure<N, E2>, PN | PortNames<P>>(
-      [...this.#steps, { name: r.name, when: describeWhen(r.when), ports: r.ports }],
+    const step: Stepper<In & D, V, StepFailure<I, E2>, Delta<V, W>> = r.when.step;
+    return new Ruleset<K, T, In, D & Delta<V, W>, E | StepFailure<I, E2>, PN | PortNames<P>>(
+      [...this.#steps, { id: r.id, description: r.description, when: describeWhen(r.when), ports: r.ports }],
       async <X extends In>(s0: X, invocation: Invocation) => {
         const prev = await previous(s0, invocation);
         if (prev.type === "Failure") return prev;
         return step(prev.value, async (s) => {
           const out = await r.run(s, invocation);
-          return out.type === "Failure" ? Result.fail({ step: r.name, error: out.error }) : out;
+          return out.type === "Failure" ? Result.fail({ step: r.id, error: out.error }) : out;
         });
       },
     );
@@ -93,17 +108,17 @@ const start = <
   K extends TrackKind,
   T extends string,
   S,
-  N extends string,
+  I extends string,
   W extends WhenParam<K, S & {}>,
   V,
   E2,
   P extends Ports,
 >(
-  first: Rule<K, T, N, S & {}, W, V, E2, P> &
+  first: Rule<K, T, I, S & {}, W, V, E2, P> &
     NarrowGuard<S & {}, V> & {
-      readonly when: { readonly step: Stepper<S & {}, V, StepFailure<N, E2>, Delta<V, W>> };
+      readonly when: { readonly step: Stepper<S & {}, V, StepFailure<I, E2>, Delta<V, W>> };
     },
-) => new Ruleset<K, T, S & {}, unknown, never, never>([], async (s) => Result.succeed(s)).add<N, W, V, E2, P>(first);
+) => new Ruleset<K, T, S & {}, unknown, never, never>([], async (s) => Result.succeed(s)).add<I, W, V, E2, P>(first);
 
 // 先頭の rule が受け取る状態から線路を始める
 export const ruleset = start;

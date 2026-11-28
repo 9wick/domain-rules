@@ -23,7 +23,8 @@ const item = defineModel<string>()({
 });
 const newId = port("newId").of<() => string>();
 const stamped = rule(item.onSave, {
-  name: "id と時刻",
+  id: "idAndTime",
+  description: "id と時刻",
   requires: { newId },
   when: always,
   check: async ({ now }, { newId }) =>

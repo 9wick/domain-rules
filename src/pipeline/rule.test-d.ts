@@ -11,7 +11,8 @@ const track = new Track<"save", "item", S>("save", "item");
 
 test("check は線路の状態の型を受け取り、成功と失敗の型を run の型に残す", () => {
   const r = rule(track, {
-    name: "x",
+    id: "x",
+    description: "x",
     when: always,
     check: (s) => {
       expectTypeOf(s).toEqualTypeOf<S>();
@@ -24,9 +25,9 @@ test("check は線路の状態の型を受け取り、成功と失敗の型を r
 test("線路で使えない when は渡せない", () => {
   const onDelete = new Track<"delete", "item", S>("delete", "item");
   const saveOnly = whenOf<"save", S>({ kind: "custom" }, () => true);
-  rule(track, { name: "x", when: saveOnly, check: () => Result.succeed() });
+  rule(track, { id: "x", description: "x", when: saveOnly, check: () => Result.succeed() });
   // @ts-expect-error 保存の線路だけで使える when を、削除の線路の rule に渡している
-  rule(onDelete, { name: "x", when: saveOnly, check: () => Result.succeed() });
+  rule(onDelete, { id: "x", description: "x", when: saveOnly, check: () => Result.succeed() });
 });
 
 test("check が受け取る port は requires の値からしか決まらない", () => {
@@ -34,21 +35,22 @@ test("check が受け取る port は requires の値からしか決まらない"
   rule<"save", "item", S, "x", typeof always, Result.Result<void, never>, { readonly p: typeof p }>(
     track,
     // @ts-expect-error port の型を明示して requires を省くと、check が受け取る port の値がない
-    { name: "x", when: always, check: () => Result.succeed() },
+    { id: "x", description: "x", when: always, check: () => Result.succeed() },
   );
   const ports: Readonly<Record<string, typeof p>> = { p };
   // @ts-expect-error index signature の record では、型にある key が値にないことがある
-  rule(track, { name: "y", requires: ports, when: always, check: () => Result.succeed() });
+  rule(track, { id: "y", description: "y", requires: ports, when: always, check: () => Result.succeed() });
   const optional: { readonly p?: typeof p } = {};
   // @ts-expect-error 省略できる key は、型にあるのに値にないことがある
-  rule(track, { name: "z", requires: optional, when: always, check: () => Result.succeed() });
+  rule(track, { id: "z", description: "z", requires: optional, when: always, check: () => Result.succeed() });
 });
 
 test("check の safeTry は、yield* した port の失敗と body が返した Result を合わせて run の型に残す", () => {
   const a = port("a").of<(n: number) => string, "A_DOWN">();
   const b = port("b").of<() => boolean, "B_DOWN">();
   const r = rule(track, {
-    name: "x",
+    id: "x",
+    description: "x",
     requires: { a, b },
     when: always,
     check: (s, _, { safeTry }) =>
@@ -67,7 +69,8 @@ test("check の safeTry は、yield* した port の失敗と body が返した 
 test("safeTry で受け取れるのは requires に書いた port だけ", () => {
   const a = port("a").of<() => string, "A_DOWN">();
   rule(track, {
-    name: "x",
+    id: "x",
+    description: "x",
     requires: { a },
     when: always,
     check: (_, __, { safeTry }) =>

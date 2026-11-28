@@ -72,13 +72,15 @@ const findArticleById = port("findArticleById").of<(id: string) => Persisted<typ
 const newArticleId = port("newArticleId").of<() => string, never>();
 
 const publishRequiresLongTitle = rule(article.onSave, {
-  name: "公開時はタイトルが5文字以上",
+  id: "publishRequiresLongTitle",
+  description: "公開時はタイトルが5文字以上",
   when: changed("status", { next: "PUBLISHED" }),
   check: ({ next }) => (next.title.length >= 5 ? Result.succeed() : Result.fail("TITLE_TOO_SHORT")),
 });
 
 const assignArticleId = rule(article.onSave, {
-  name: "ID を確定する",
+  id: "assignArticleId",
+  description: "ID を確定する",
   requires: { newArticleId },
   when: always,
   check: async ({ pre }, { newArticleId }) => {

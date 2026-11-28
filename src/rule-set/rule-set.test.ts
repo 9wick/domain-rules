@@ -20,17 +20,18 @@ test("plan は model の rule の組なら save と delete の線路を、action
     },
   });
   const assignId = rule(item.onSave, {
-    name: "id",
+    id: "id",
+    description: "id",
     when: always,
     check: () => Result.succeed({ next: { id: "i" } }),
   });
   expect(plan(modelRules(item).save(ruleset(assignId)))).toEqual({
-    save: [{ name: "id", when: { kind: "always" }, ports: [] }],
+    save: [{ id: "id", description: "id", when: { kind: "always" }, ports: [] }],
   });
 
   const ping = defineAction<unknown>()({ name: "ping", input: v.object({}) });
-  const pong = rule(ping.onDecide, { name: "pong", when: always, check: () => Result.succeed() });
+  const pong = rule(ping.onDecide, { id: "pong", description: "pong", when: always, check: () => Result.succeed() });
   expect(plan(actionRules(ping, { rules: ruleset(pong), output: () => "pong" }))).toEqual({
-    rules: [{ name: "pong", when: { kind: "always" }, ports: [] }],
+    rules: [{ id: "pong", description: "pong", when: { kind: "always" }, ports: [] }],
   });
 });

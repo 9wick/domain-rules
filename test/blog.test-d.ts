@@ -26,22 +26,22 @@ describe("型", () => {
       expectTypeOf(r.error.step).toEqualTypeOf<
         | "input"
         | "load"
-        | "記事を変更できるのはメンバーだけ"
-        | "作成時に省略した status は下書き、approvedAt は未承認"
-        | "status は許可された変化だけ"
-        | `作成後に変えられない項目: ${string}`
-        | "ブログが存在する"
-        | "レビュアーが存在する"
-        | "著者とレビュアーは別の人"
-        | "slug はブログ内で一意"
-        | "公開日時は未来"
-        | "公開できるのは今のレビュアーだけ"
-        | "作成後にレビュアーを変えられるのは著者だけ"
-        | "公開後の slug を変えられるのは管理者だけ"
-        | "公開中の記事は承認済み"
-        | "投稿を受け付けているブログ"
-        | "既存の記事の id"
-        | "新しい記事に id を付ける"
+        | "memberOnly"
+        | "createDefaults"
+        | "allowedStatusTransition"
+        | "immutable"
+        | "blogExists"
+        | "reviewerExists"
+        | "reviewerIsNotAuthor"
+        | "uniqueSlug"
+        | "publishAtInFuture"
+        | "publishByReviewer"
+        | "reviewerChangeByAuthor"
+        | "slugChangeAfterPublishByAdmin"
+        | "publishedIsApproved"
+        | "blogAcceptsPosts"
+        | "keepExistingId"
+        | "assignNewId"
       >();
       return;
     }
@@ -58,7 +58,7 @@ describe("型", () => {
       input: { blogId: "blg_1", authorId: "usr_1", reviewerId: "usr_2", slug: "s", publishAt: 1 },
       actor: { id: v.parse(UserIdSchema, "usr_1"), role: "MEMBER" },
     });
-    if (Result.isFailure(r) && r.error.step === "レビュアーが存在する") {
+    if (Result.isFailure(r) && r.error.step === "reviewerExists") {
       expectTypeOf(r.error.error).toEqualTypeOf<
         "USER_NOT_FOUND" | { readonly type: "INFRA"; readonly cause: unknown }
       >();

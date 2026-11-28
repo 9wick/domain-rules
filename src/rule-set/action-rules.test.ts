@@ -15,7 +15,8 @@ const member: Operator = { role: "MEMBER" };
 
 const download = defineAction<Operator>()({ name: "download", input: v.object({ fileId: v.string() }) });
 const allowed = rule(download.onDecide, {
-  name: "メンバーだけ",
+  id: "memberOnly",
+  description: "メンバーだけ",
   when: always,
   check: ({ actor, input }) =>
     actor.role === "MEMBER" ? Result.succeed({ url: `/files/${input.fileId}` }) : Result.fail("FORBIDDEN"),
@@ -30,11 +31,13 @@ test("output が線路の最後の状態から組み立てた値と actor を、
 
 test("線路の失敗はそのまま返し、output は呼ばない", async () => {
   const r = await decide({ input: { fileId: "f1" }, actor: { role: "GUEST" } });
-  expect(Result.unwrapError(r)).toEqual({ step: "メンバーだけ", error: "FORBIDDEN" });
+  expect(Result.unwrapError(r)).toEqual({ step: "memberOnly", error: "FORBIDDEN" });
 });
 
 test("rule の組は action の名前と、線路の plan と ports を持つ", () => {
   expect([set.kind, set.name]).toEqual(["actionRules", "download"]);
-  expect(set.plan).toEqual({ rules: [{ name: "メンバーだけ", when: { kind: "always" }, ports: [] }] });
+  expect(set.plan).toEqual({
+    rules: [{ id: "memberOnly", description: "メンバーだけ", when: { kind: "always" }, ports: [] }],
+  });
   expect(set.ports).toEqual([]);
 });
