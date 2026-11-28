@@ -1,8 +1,9 @@
 import * as Result from "../../shared/result.ts";
 import type { TrackKind } from "../../definition/track.ts";
+import type { ByValue } from "../../shared/by-value.ts";
 
-// undefined は「条件なし」を表すので比べる値に含めない。値は Object.is で比べる
-export type Match = string | number | bigint | boolean | symbol | null;
+// undefined は「条件なし」を表すので比べる値に含めない
+export type Match = Exclude<ByValue, undefined>;
 
 export type WhenDescription =
   | { readonly kind: "always" }
